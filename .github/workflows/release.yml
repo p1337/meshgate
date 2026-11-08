@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build_and_release:
-    name: Build & Draft Release
+    name: Build & Release
     runs-on: ubuntu-24.04
 
     steps:
@@ -37,7 +37,10 @@ jobs:
             ${{ runner.os }}-pio-
 
       - name: Install PlatformIO Core & Dependencies
-        run: pip install -U platformio protobuf grpcio-tools
+        run: |
+          pip install -U platformio protobuf grpcio-tools
+          pio pkg install -e arduino_nano_esp32_idf5 --no-save
+          "$HOME/.platformio/penv/bin/python" -m pip install -U protobuf grpcio-tools
 
       - name: Inject Version into Firmware
         run: |

@@ -21,6 +21,12 @@ git submodule update --init --recursive
 pip install protobuf grpcio-tools
 ```
 
+PIOArduino creates a second Python environment at `~/.platformio/penv` while
+installing the IDF-5 platform. Clean CI runners must install the packages into
+that environment too, after `pio pkg install` has created it. Installing them
+only into the outer runner Python makes `generate_protos.py` fail even though
+`pip` reports them as installed.
+
 Verify the installation by running:
 ```bash
 pio --version
