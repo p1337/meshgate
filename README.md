@@ -73,6 +73,16 @@ is currently scoped to the `arduino_nano_esp32_idf5` production environment;
 the remaining platforms still provide local TCP, MQTT proxying, OTA and
 classic WireGuard.
 
+## Recommended and tested hardware
+
+MeshGate's production firmware is developed and tested on the **Arduino Nano
+ESP32 (ESP32-S3, without headers)** shown below. This is the recommended board
+for native Tailscale, BLE-to-TCP bridging, MQTT and one-click OTA updates.
+
+[![Arduino Nano ESP32 tested with MeshGate](web/assets/arduino-nano-esp32.png)](https://link.amazon/B0bHRPLPo)
+
+**[Buy the tested Arduino Nano ESP32 on Amazon](https://link.amazon/B0bHRPLPo)**
+
 ## Install
 
 Use the [MeshGate Web Flasher](https://p1337.github.io/meshgate/) in Chrome,

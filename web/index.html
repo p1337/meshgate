@@ -32,6 +32,8 @@
     .card h3 { margin:0 0 8px; color:var(--accent); font:700 15px var(--mono); }
     .card p { margin:0 0 16px; color:var(--dim); }
     .meta { margin-top:auto; color:var(--muted); font:11px var(--mono); }
+    .product-image { width:100%; max-height:330px; margin:0 0 18px; border-radius:3px; background:#fff; object-fit:contain; }
+    .product-link { display:block; margin-top:14px; padding:10px 14px; border:1px solid var(--accent); border-radius:3px; color:#07110b; background:var(--accent); text-align:center; text-decoration:none; font:700 12px var(--mono); letter-spacing:.05em; text-transform:uppercase; }
     .install { margin-top:14px; }
     .install button { width:100%; padding:10px 14px; border:1px solid var(--accent); border-radius:3px; background:var(--accent); color:#07110b; cursor:pointer; font:700 12px var(--mono); letter-spacing:.05em; text-transform:uppercase; }
     .links { display:flex; flex-wrap:wrap; gap:10px 18px; margin-top:24px; font:500 12px var(--mono); }
@@ -57,6 +59,18 @@
         <p>ESP32-S3 production build with MicroLink/Tailscale, secure OTA, BLE-to-TCP and MQTT proxy support.</p>
         <div class="meta">Arduino Core 3.3.9 · ESP-IDF 5.5.4</div>
         <div class="install"><esp-web-install-button manifest="manifest_arduino_nano_esp32_idf5.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
+      </article>
+    </section>
+
+    <h2>Recommended &amp; tested hardware</h2>
+    <section class="grid">
+      <article class="card primary">
+        <span class="badge">Tested with MeshGate</span>
+        <a href="https://link.amazon/B0bHRPLPo"><img class="product-image" src="assets/arduino-nano-esp32.png" alt="Arduino Nano ESP32 without headers"></a>
+        <h3>Arduino Nano ESP32 · ESP32-S3</h3>
+        <p>MeshGate's production firmware and one-click OTA flow are developed and tested on this board. It is the recommended hardware for native Tailscale, BLE-to-TCP bridging and MQTT.</p>
+        <div class="meta">ESP32-S3 · USB-C · Wi-Fi · Bluetooth · no headers</div>
+        <a class="product-link" href="https://link.amazon/B0bHRPLPo">View tested board on Amazon</a>
       </article>
     </section>
 
