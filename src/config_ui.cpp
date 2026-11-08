@@ -47,6 +47,18 @@ static bool isValidOtaToken(const String& token) {
     return true;
 }
 
+static bool isValidBlePin(const String& pin) {
+    if (pin.length() != 6) {
+        return false;
+    }
+    for (size_t i = 0; i < pin.length(); ++i) {
+        if (pin[i] < '0' || pin[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void ensureOtaToken() {
     String token = preferences.getString("ota_token", "");
     if (!isValidOtaToken(token)) {
@@ -107,67 +119,70 @@ static void writeStoredConfiguration(Preferences& target, const BridgeConfig& cf
  */
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Meshtastic Bridge Setup</title>
+<title>MeshGate Control</title>
 <style>
+  :root { --bg:#0a0c10; --panel:#0f1318; --panel2:#111a24; --border:#1e2a38; --accent:#5eed97; --accent2:#ff6b35; --green:#39ff14; --yellow:#ffd60a; --red:#ff3860; --muted:#7d8daa; --text:#c8d6e5; --dim:#8ea2bb; --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace; --sans:"Segoe UI","Exo 2",sans-serif; }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 16px; max-width: 480px; margin: auto; background-color: #f0f2f5; color: #1c1e21; }
-  h2 { color: #1a1a1a; text-align: center; margin-bottom: 20px; font-size: 22px; }
-  .card { background: white; padding: 18px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 16px; }
-  .card-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 14px; }
-  .card-title { font-weight: bold; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  body { font-family:var(--sans); padding:16px; max-width:540px; margin:auto; background:var(--bg); color:var(--text); }
+  h2 { margin:8px 0 2px; color:var(--accent); text-align:center; font:700 22px var(--mono); letter-spacing:3px; text-shadow:0 0 12px rgba(94,237,151,.2); }
+  .brand-subtitle { margin:0 0 20px; color:var(--dim); text-align:center; font:11px var(--mono); letter-spacing:2px; text-transform:uppercase; }
+  .card { background:linear-gradient(135deg,var(--panel),var(--panel2)); padding:18px; border:1px solid var(--border); border-radius:4px; box-shadow:0 8px 28px rgba(0,0,0,.25); margin-bottom:16px; }
+  .card-header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px; margin-bottom:14px; }
+  .card-title { color:var(--accent); font:700 14px var(--mono); letter-spacing:1px; text-transform:uppercase; display:flex; align-items:center; gap:8px; }
   .info-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 14px; }
-  .info-label { color: #65676b; font-weight: 500; }
-  .info-val { font-family: monospace; font-weight: 600; color: #050505; word-break: break-all; }
-  label { font-weight: 600; margin-top: 12px; display: block; color: #444; font-size: 13px; }
-  input, select { width: 100%; padding: 10px; margin: 6px 0 12px; border: 1px solid #ccd0d5; border-radius: 6px; font-size: 14px; background: #fff; }
-  button { width: 100%; padding: 10px; margin: 6px 0; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background-color 0.2s, opacity 0.2s; }
+  .info-label { color:var(--dim); font-weight:500; }
+  .info-val { font-family:var(--mono); font-weight:600; color:var(--text); word-break:break-all; }
+  label { font-weight:600; margin-top:12px; display:block; color:var(--text); font-size:13px; }
+  input, select, textarea { width:100%; padding:10px; margin:6px 0 12px; border:1px solid var(--border)!important; border-radius:3px!important; color:var(--text); font:14px var(--mono); background:var(--bg)!important; }
+  input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  button { width:100%; padding:10px; margin:6px 0; border:1px solid var(--border); border-radius:3px; cursor:pointer; font:600 13px var(--mono); letter-spacing:.3px; transition:background-color .2s,opacity .2s,border-color .2s; }
   button:hover { opacity: 0.92; }
   button:disabled { opacity: 0.55 !important; cursor: not-allowed; }
-  .btn-primary { background-color: #0066cc; color: white; }
-  .btn-success { background-color: #28a745; color: white; }
-  .btn-secondary { background-color: #e4e6eb; color: #1c1e21; }
-  .btn-warning { background-color: #ff9800; color: white; }
-  .btn-danger { background-color: #dc3545; color: white; margin-top: 8px; }
-  .btn-danger:hover { background-color: #c82333; }
-  .btn-edit { width: auto; padding: 6px 16px; font-size: 13px; margin: 0; background-color: #0066cc; color: white; border-radius: 6px; font-weight: 600; }
-  .btn-edit:hover { background-color: #0052a3; opacity: 1; }
+  .btn-primary,.btn-success { background:var(--accent); color:#07110b; border-color:var(--accent); }
+  .btn-secondary { background:transparent; color:var(--text); }
+  .btn-warning { background:transparent; color:var(--yellow); border-color:var(--yellow); }
+  .btn-danger { background:transparent; color:var(--red); border-color:var(--red); margin-top:8px; }
+  .btn-edit { width:auto; padding:6px 14px; font-size:12px; margin:0; background:transparent; color:var(--accent); border:1px solid var(--accent); border-radius:3px; font-weight:600; }
+  .btn-edit:hover { background:rgba(94,237,151,.08); opacity:1; }
   .btn-group { display: flex; gap: 8px; margin-top: 8px; }
   .btn-group button { flex: 1; }
   .password-field { position: relative; display: flex; align-items: center; margin-bottom: 12px; }
   .password-field input { padding-right: 65px; margin: 0; }
-  .btn-toggle-pass { position: absolute; right: 5px; width: auto; padding: 6px 10px; font-size: 12px; margin: 0; background: #e4e6eb; color: #333; border-radius: 4px; }
-  .spinner { display: none; margin: 10px 0; color: #0066cc; font-style: italic; font-size: 13px; text-align: center; }
-  .alert { display: none; padding: 10px; border-radius: 6px; font-size: 13px; margin: 10px 0; }
-  .alert-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-  .alert-error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-  .alert-warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
-  .alert-info { background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+  .btn-toggle-pass { position:absolute; right:5px; width:auto; padding:6px 10px; font-size:12px; margin:0; background:var(--panel2); color:var(--accent); border-radius:3px; }
+  .spinner { display:none; margin:10px 0; color:var(--accent); font-style:italic; font-size:13px; text-align:center; }
+  .alert { display:none; padding:10px; border-radius:3px; font-size:13px; margin:10px 0; }
+  .alert-success { background:rgba(57,255,20,.06); color:var(--green); border:1px solid var(--green); }
+  .alert-error { background:rgba(255,56,96,.06); color:var(--red); border:1px solid var(--red); }
+  .alert-warning { background:rgba(255,214,10,.06); color:var(--yellow); border:1px solid var(--yellow); }
+  .alert-info { background:rgba(94,237,151,.05); color:var(--text); border:1px solid var(--accent); }
   .status-pill { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-  .status-pill.disabled { background-color: #e4e6eb; color: #65676b; }
-  .status-pill.connected { background-color: #d4edda; color: #155724; }
-  .status-pill.waiting { background-color: #fff3cd; color: #856404; }
-  .status-pill.connecting { background-color: #d1ecf1; color: #0c5460; }
-  .status-pill.error { background-color: #f8d7da; color: #721c24; }
-  .progress-track { width: 100%; background: #e4e6eb; border-radius: 4px; height: 8px; overflow: hidden; margin-top: 4px; }
+  .status-pill.disabled { background:rgba(125,141,170,.12); color:var(--muted); }
+  .status-pill.connected { background:rgba(57,255,20,.08); color:var(--green); }
+  .status-pill.waiting { background:rgba(255,214,10,.08); color:var(--yellow); }
+  .status-pill.connecting { background:rgba(94,237,151,.08); color:var(--accent); }
+  .status-pill.error { background:rgba(255,56,96,.08); color:var(--red); }
+  .progress-track { width:100%; background:var(--border); border-radius:2px; height:6px; overflow:hidden; margin-top:4px; }
   .progress-fill { height: 100%; border-radius: 4px; transition: width 0.3s ease, background-color 0.3s ease; }
-  .progress-green { background-color: #28a745; }
-  .progress-yellow { background-color: #ff9800; }
-  .progress-red { background-color: #dc3545; }
+  .progress-green { background-color:var(--green); }
+  .progress-yellow { background-color:var(--yellow); }
+  .progress-red { background-color:var(--red); }
   .queue-box { margin: 10px 0; }
-  .queue-header { display: flex; justify-content: space-between; font-size: 13px; font-weight: 500; color: #444; }
-  .queue-stats { font-family: monospace; font-size: 12px; color: #050505; }
-  .section-divider { border-top: 1px solid #eee; margin: 14px 0 10px; padding-top: 10px; font-weight: bold; font-size: 14px; color: #1c1e21; }
-  .footer { text-align: center; font-size: 12px; color: #65676b; margin-top: 24px; padding-bottom: 20px; }
-  .footer a { color: #0066cc; text-decoration: none; font-weight: 600; }
+  .queue-header { display:flex; justify-content:space-between; font-size:13px; font-weight:500; color:var(--text); }
+  .queue-stats { font-family:var(--mono); font-size:12px; color:var(--accent); }
+  .section-divider { border-top:1px solid var(--border); margin:14px 0 10px; padding-top:10px; font-weight:bold; font-size:14px; color:var(--text); }
+  .card small { color:var(--dim)!important; }
+  .footer { text-align:center; font:12px var(--mono); color:var(--muted); margin-top:24px; padding-bottom:20px; }
+  .footer a { color:var(--accent); text-decoration:none; font-weight:600; }
   .footer a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
-  <h2>Meshtastic Bridge</h2>
+  <h2>◇ MESH GATE</h2>
+  <p class="brand-subtitle">Meshtastic remote access gateway</p>
 
   <!-- WiFi Configuration Card -->
   <div class="card" id="card-wifi">
@@ -271,7 +286,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <input type="text" id="input-ble-mac" placeholder="AA:BB:CC:DD:EE:FF">
 
       <label>BLE PIN (6-digit):</label>
-      <input type="number" id="input-ble-pin" min="0" max="999999" placeholder="123456">
+      <input type="password" id="input-ble-pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="Leave empty to keep stored PIN">
 
       <div id="ble-edit-alert" class="alert"></div>
 
@@ -294,7 +309,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <span class="info-label">Tailnet:</span>
         <span class="info-val"><span id="view-tailscale-status" class="status-pill disabled">Disabled</span></span>
       </div>
-      <div class="info-row"><span class="info-label">Device name:</span><span class="info-val" id="view-tailscale-name">meshgate-torun</span></div>
+      <div class="info-row"><span class="info-label">Device name:</span><span class="info-val" id="view-tailscale-name">meshgate</span></div>
       <div class="info-row"><span class="info-label">Tailscale IP:</span><span class="info-val" id="view-tailscale-ip">(Not connected)</span></div>
       <div class="info-row"><span class="info-label">Known peers:</span><span class="info-val" id="view-tailscale-peers">0</span></div>
       <div class="info-row"><span class="info-label">Auth key:</span><span class="info-val" id="view-tailscale-auth">(Not set)</span></div>
@@ -308,7 +323,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <input type="checkbox" id="input-tailscale-enabled" style="width:20px; height:20px; margin:0;">
       </div>
       <label>Tailnet device name:</label>
-      <input type="text" id="input-tailscale-name" maxlength="63" placeholder="meshgate-torun">
+      <input type="text" id="input-tailscale-name" maxlength="63" placeholder="meshgate">
       <label>Tailscale auth key:</label>
       <div class="password-field">
         <input type="password" id="input-tailscale-auth" maxlength="128" placeholder="Leave empty to keep stored key">
@@ -338,7 +353,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <span class="info-val"><span id="view-wireguard-status" class="status-pill disabled">Disabled</span></span>
       </div>
       <div class="info-row"><span class="info-label">Tunnel IP:</span><span class="info-val" id="view-wireguard-ip">(Not configured)</span></div>
-      <div class="info-row"><span class="info-label">German LAN:</span><span class="info-val" id="view-wireguard-remote">(Not configured)</span></div>
+      <div class="info-row"><span class="info-label">Remote LAN:</span><span class="info-val" id="view-wireguard-remote">(Not configured)</span></div>
       <div class="info-row"><span class="info-label">Endpoint:</span><span class="info-val" id="view-wireguard-endpoint">(Not configured)</span></div>
       <div class="info-row"><span class="info-label">Private key:</span><span class="info-val" id="view-wireguard-private">(Not set)</span></div>
       <div class="info-row"><span class="info-label">Preshared key:</span><span class="info-val" id="view-wireguard-psk">(Not set)</span></div>
@@ -355,8 +370,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       <input type="text" id="input-wireguard-local-ip" placeholder="192.168.1.254">
       <label>Remote LAN (CIDR):</label>
       <input type="text" id="input-wireguard-remote-cidr" placeholder="192.168.1.0/24">
-      <label>FRITZ!Box endpoint (host or public IP):</label>
-      <input type="text" id="input-wireguard-endpoint" placeholder="example.myfritz.net">
+      <label>WireGuard endpoint (host or public IP):</label>
+      <input type="text" id="input-wireguard-endpoint" placeholder="vpn.example.net">
       <label>Endpoint UDP port:</label>
       <input type="number" id="input-wireguard-endpoint-port" min="1" max="65535" value="51820">
       <label>ESP32 private key:</label>
@@ -364,7 +379,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <input type="password" id="input-wireguard-private-key" maxlength="44" placeholder="Leave empty to keep stored key">
         <button type="button" class="btn-toggle-pass" onclick="togglePassVisibility('input-wireguard-private-key', this)">Show</button>
       </div>
-      <label>FRITZ!Box public key:</label>
+      <label>Remote peer public key:</label>
       <input type="text" id="input-wireguard-public-key" maxlength="44" placeholder="Base64 public key">
       <label>Preshared key (optional):</label>
       <div class="password-field">
@@ -424,6 +439,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="alert alert-info" style="display:block; margin-bottom: 12px;">
         The bridge automatically queries your radio for its MQTT settings (hostname, credentials, and root topic) and connects
         to that server.<br/>
+        <br/>
+        The factory standard is <strong>meshradar.pl:8883</strong>, TLS enabled, root <strong>msh</strong>.
+        A complete custom broker configuration received from the radio replaces it.<br/>
         <br/>
         <strong>NOTE</strong>: Make sure your radio has both <strong>MQTT Enabled</strong> and <strong>MQTT Proxy Enabled</strong> configured.
       </div>
@@ -546,7 +564,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 
   <script>
-    let currentConfig = { wifi_ssid: '', wifi_has_pass: false, ble_mac: '', ble_pin: '' };
+    let currentConfig = { wifi_ssid: '', wifi_has_pass: false, ble_mac: '', ble_has_pin: false };
     let pollInterval = null;
     let wifiPollInterval = null;
 
@@ -641,19 +659,19 @@ const char index_html[] PROGMEM = R"rawliteral(
             deviceDisplay = cfg.ble_name ? cfg.ble_name + ' (' + cfg.ble_mac + ')' : '(' + cfg.ble_mac + ')';
           }
           document.getElementById('view-ble-device').innerText = deviceDisplay;
-          document.getElementById('view-ble-pin').innerText = cfg.ble_pin ? '••••••' : '(Not set)';
+          document.getElementById('view-ble-pin').innerText = cfg.ble_has_pin ? '•••••• (stored)' : '(Not set)';
 
           document.getElementById('input-wifi-ssid').value = cfg.wifi_ssid || '';
           document.getElementById('input-ble-name').value = cfg.ble_name || '';
           document.getElementById('input-ble-mac').value = cfg.ble_mac || '';
-          document.getElementById('input-ble-pin').value = cfg.ble_pin || '';
+          document.getElementById('input-ble-pin').value = '';
           document.getElementById('sys-debug-logs').checked = !!cfg.debug_logs;
 
           // Tailscale fields. The auth key is write-only.
-          document.getElementById('view-tailscale-name').innerText = cfg.tailscale_device_name || 'meshgate-torun';
+          document.getElementById('view-tailscale-name').innerText = cfg.tailscale_device_name || 'meshgate';
           document.getElementById('view-tailscale-auth').innerText = cfg.tailscale_has_auth_key ? '•••••••• (stored)' : '(Not set)';
           document.getElementById('input-tailscale-enabled').checked = !!cfg.tailscale_enabled;
-          document.getElementById('input-tailscale-name').value = cfg.tailscale_device_name || 'meshgate-torun';
+          document.getElementById('input-tailscale-name').value = cfg.tailscale_device_name || 'meshgate';
           document.getElementById('input-tailscale-auth').value = '';
           document.getElementById('input-tailscale-clear-auth').checked = false;
           document.getElementById('btn-edit-tailscale').disabled = !cfg.tailscale_supported;
@@ -721,7 +739,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
       if (edit && currentConfig) {
         document.getElementById('input-tailscale-enabled').checked = !!currentConfig.tailscale_enabled;
-        document.getElementById('input-tailscale-name').value = currentConfig.tailscale_device_name || 'meshgate-torun';
+        document.getElementById('input-tailscale-name').value = currentConfig.tailscale_device_name || 'meshgate';
         document.getElementById('input-tailscale-auth').value = '';
         document.getElementById('input-tailscale-clear-auth').checked = false;
       }
@@ -1189,7 +1207,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (edit && currentConfig) {
         document.getElementById('input-ble-name').value = currentConfig.ble_name || '';
         document.getElementById('input-ble-mac').value = currentConfig.ble_mac || '';
-        document.getElementById('input-ble-pin').value = currentConfig.ble_pin || '';
+        document.getElementById('input-ble-pin').value = '';
       }
 
       document.getElementById('ble-view').style.display = edit ? 'none' : 'block';
@@ -1338,8 +1356,12 @@ const char index_html[] PROGMEM = R"rawliteral(
         showAlert('ble-edit-alert', 'error', 'Target BLE MAC address cannot be empty.');
         return;
       }
-      if (!pin) {
-        showAlert('ble-edit-alert', 'error', 'BLE 6-digit PIN cannot be empty.');
+      if (!pin && !(currentConfig && currentConfig.ble_has_pin)) {
+        showAlert('ble-edit-alert', 'error', 'Enter the 6-digit BLE PIN.');
+        return;
+      }
+      if (pin && !/^\d{6}$/.test(pin)) {
+        showAlert('ble-edit-alert', 'error', 'The BLE PIN must contain exactly 6 digits.');
         return;
       }
 
@@ -1378,8 +1400,12 @@ const char index_html[] PROGMEM = R"rawliteral(
         showAlert('ble-edit-alert', 'error', 'Please enter or select a BLE MAC address first.');
         return;
       }
-      if (!pin) {
+      if (!pin && !(currentConfig && currentConfig.ble_has_pin)) {
         showAlert('ble-edit-alert', 'error', 'Please enter the 6-digit pairing PIN.');
+        return;
+      }
+      if (pin && !/^\d{6}$/.test(pin)) {
+        showAlert('ble-edit-alert', 'error', 'The BLE PIN must contain exactly 6 digits.');
         return;
       }
 
@@ -1621,11 +1647,11 @@ BridgeConfig config_ui_load() {
 
     // Tailscale preferences
     cfg.tailscale_enabled = getBool("ts_enabled", false);
-    cfg.tailscale_device_name = getString("ts_name", "meshgate-torun");
+    cfg.tailscale_device_name = getString("ts_name", "meshgate");
     cfg.tailscale_auth_key = getString("ts_auth");
 
     // MQTT preferences
-    cfg.mqtt_enabled = getBool("mqtt_enabled", false);
+    cfg.mqtt_enabled = getBool("mqtt_enabled", true);
     cfg.mqtt_tls_insecure = getBool("mqtt_tls_insec", false);
     cfg.mqtt_custom_ca = getString("mqtt_custom_ca");
     return cfg;
@@ -1678,9 +1704,9 @@ void config_ui_start_server() {
         utils_escape_json_print(*response, cfg.ble_name);
         response->print("\",\"ble_mac\":\"");
         utils_escape_json_print(*response, cfg.ble_mac);
-        response->print("\",\"ble_pin\":\"");
-        utils_escape_json_print(*response, cfg.ble_pin);
-        response->print("\",\"debug_logs\":");
+        response->print("\",\"ble_has_pin\":");
+        response->print(cfg.ble_pin.isEmpty() ? "false" : "true");
+        response->print(",\"debug_logs\":");
         response->print(cfg.debug_logs ? "true" : "false");
         response->print(",\"mqtt_enabled\":");
         response->print(cfg.mqtt_enabled ? "true" : "false");
@@ -1946,7 +1972,13 @@ void config_ui_start_server() {
         if (request->hasParam("ble_mac", true) && request->hasParam("ble_pin", true)) {
             String mac = request->getParam("ble_mac", true)->value();
             String pin = request->getParam("ble_pin", true)->value();
-
+            if (pin.isEmpty()) {
+                pin = config_ui_load().ble_pin;
+            }
+            if (!isValidBlePin(pin)) {
+                request->send(400, "application/json", "{\"success\":false,\"error\":\"BLE PIN must contain exactly 6 digits.\"}");
+                return;
+            }
             ble_client_start_test(mac, pin);
             request->send(200, "application/json", "{\"status\":\"started\"}");
         } else {
@@ -2001,6 +2033,13 @@ void config_ui_start_server() {
             String mac = request->getParam("ble_mac", true)->value();
             String pin = request->getParam("ble_pin", true)->value();
             String name = request->hasParam("ble_name", true) ? request->getParam("ble_name", true)->value() : "";
+            if (pin.isEmpty()) {
+                pin = config_ui_load().ble_pin;
+            }
+            if (mac.isEmpty() || !isValidBlePin(pin)) {
+                request->send(400, "application/json", "{\"success\":false,\"error\":\"A target MAC and a 6-digit BLE PIN are required.\"}");
+                return;
+            }
             preferences.putString("ble_name", name);
             preferences.putString("ble_mac", mac);
             preferences.putString("ble_pin", pin);

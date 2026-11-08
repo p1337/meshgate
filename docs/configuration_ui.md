@@ -3,7 +3,14 @@
 ## Overview
 To provide a seamless setup experience without requiring hard-coded credentials, the ESP32 bridge implements a Captive Portal. This allows the user to connect to the ESP32's own WiFi network and configure both the local network (WiFi) and the target Bluetooth (BLE) settings from a mobile device or laptop browser.
 
-The UI is built with a clean, modular card-based interface that allows inspecting current settings, updating WiFi and Bluetooth parameters independently, scanning for nearby BLE devices, and verifying live BLE connectivity and PIN pairing before rebooting into normal bridge mode.
+The UI is built with a dark, modular card-based interface that follows the
+MeshRadar visual language: near-black panels, green operational accents,
+orange highlights, compact uppercase labels, and monospaced status values. The
+embedded version uses only local system-font fallbacks so the captive portal
+remains fully functional without internet access. It allows inspecting current
+settings, updating WiFi and Bluetooth parameters independently, scanning for
+nearby BLE devices, and verifying live BLE connectivity and PIN pairing before
+rebooting into normal bridge mode.
 
 ## User Interface & Features
 
@@ -15,7 +22,7 @@ The UI is built with a clean, modular card-based interface that allows inspectin
   * Features a **🔍 Scan for Networks** button (with scan in progress indicator and scan/save buttons disabled during scans).
   * Independent **Save WiFi** button persists network credentials without affecting BLE settings.
 * **Bluetooth Target Card:**
-  * Displays the configured target device: `Target Device: <Name> (<MAC>)` (or `(<MAC>)` if unnamed), masked PIN, live Bluetooth connection status pill (`Connected` / `Disconnected`), and live Bluetooth **Traffic** counters (sent, received, invalid).
+  * Displays the configured target device: `Target Device: <Name> (<MAC>)` (or `(<MAC>)` if unnamed), write-only PIN presence, live Bluetooth connection status pill (`Connected` / `Disconnected`), and live Bluetooth **Traffic** counters (sent, received, invalid).
   * In Edit mode, offers a live scan dropdown with RSSI signal strengths, manual MAC entry, and 6-digit PIN input.
   * Features a **⚡ Test Connection** button to verify BLE pairing and Meshtastic GATT services live.
   * Independent **Save Bluetooth** button persists target device name, MAC, and PIN.
@@ -65,17 +72,17 @@ The UI is built with a clean, modular card-based interface that allows inspectin
 
 2. **Web Server Endpoints (`config_ui.cpp`)**:
    * **`GET /`**: Serves the single-page HTML/CSS/JS application directly from flash (`PROGMEM`) via `AsyncProgmemResponse` with zero heap allocation.
-   * **`GET /config`**: Returns current settings as JSON, including WiFi/BLE/MQTT/WireGuard values plus `tailscale_enabled`, `tailscale_supported`, `tailscale_device_name`, and `tailscale_has_auth_key`. Secret WiFi, WireGuard, OTA, and Tailscale values are never returned.
+   * **`GET /config`**: Returns current settings as JSON, including WiFi/BLE/MQTT/WireGuard values plus `tailscale_enabled`, `tailscale_supported`, `tailscale_device_name`, and `tailscale_has_auth_key`. Secret WiFi, BLE PIN, WireGuard, OTA, and Tailscale values are never returned. `ble_has_pin` reports only whether a PIN is stored.
    * **`GET /status`**: Returns unified live diagnostic and telemetry JSON polled every 7 seconds by the client: contains `uptime_seconds`, `heap` (free, min_free, max_alloc), `wifi` (connected, is_ap_mode, ip, rssi, mdns_host), `ble` (connected, rx_count, tx_count, invalid_count), `tcp` (connected_clients, max_clients, rx_count, tx_count, invalid_count), `traffic` (ble, tcp, mqtt rx/tx/invalid), `queues` (waiting, capacity, dropped for `tcp_to_ble`, `ble_to_tcp`, `mqtt_to_ble`), `stacks` (ble_task, net_task free bytes), and `mqtt` (gateway_enabled, state, radio_proxy_enabled, broker, root, published, received, dropped, invalid).
    * **`GET /metrics`**: Standards-compliant Prometheus / OpenMetrics scraping endpoint (`text/plain; version=0.0.4; charset=utf-8`). Streams line-by-line metrics (`meshbridge_*`) directly into lwIP network output buffers via `AsyncResponseStream` with zero large heap allocations. Suitable for scraping by Prometheus, VictoriaMetrics, Grafana Agent, and Home Assistant.
    * **`GET /start_scan_wifi`**: Initiates an asynchronous WiFi network scan.
    * **`GET /scan_wifi_results`**: Polls WiFi scan progress and returns JSON array of discovered networks: `[{"ssid":"MyWiFi","rssi":-58,"is_open":false}]`.
    * **`GET /start_scan`**: Initiates an asynchronous 4-second BLE scan.
    * **`GET /scan_results`**: Polls scan progress and returns JSON array of discovered devices: `[{"name":"Meshtastic_xxxx","mac":"AA:BB:CC:DD:EE:FF","rssi":-68}]`.
-   * **`POST /start_test_ble`**: Launches a background FreeRTOS task to test BLE pairing and GATT service discovery for the given MAC and PIN.
+   * **`POST /start_test_ble`**: Launches a background FreeRTOS task to test BLE pairing and GATT service discovery. An empty PIN reuses the stored value without returning it to the browser.
    * **`GET /test_ble_status`**: Polls the test task state and returns result JSON (`{"status":"done","success":true,"message":"..."}`).
    * **`POST /save_wifi`**: Saves `wifi_ssid` and `wifi_pass` to NVS.
-   * **`POST /save_ble`**: Saves `ble_name`, `ble_mac`, and `ble_pin` to NVS.
+   * **`POST /save_ble`**: Saves `ble_name`, `ble_mac`, and a validated six-digit `ble_pin` to NVS. An empty PIN preserves the stored value.
    * **`POST /save_mqtt`**: Saves `mqtt_enabled`, `mqtt_tls_insec`, and `mqtt_custom_ca` to NVS and applies changes live if in Normal mode.
    * **`POST /save_tailscale`**: Saves `enabled`, `device_name`, `auth_key`, and `clear_auth_key` redundantly. A reboot starts the selected tunnel.
    * **`GET /tailscale_status`**: Reports `enabled`, `connected`, state name, assigned VPN IP, and peer count without returning credentials.

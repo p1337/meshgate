@@ -5,8 +5,8 @@
 This document details the architectural plan, feasibility analysis, protocol details, and implementation tasks for adding an **optional MQTT Gateway / Proxy** feature to the `meshtastic-esp32-bt-bridge`.
 
 ### Goals
-* **Completely Optional:** The feature is disabled by default. If disabled, existing TCP bridging operation is 100% unaffected.
-* **Auto-Sync from Radio (Zero-Config):** Automatically inherits broker address, port, credentials, encryption (TLS), and root topic directly from the connected Meshtastic radio's `ModuleConfig.mqtt` payload. Eliminates configuration duplication and prevents topic mismatch bugs.
+* **Optional with Public Default:** The feature is enabled by default with MeshRadar's published shared uplink profile and can be disabled at any time. Existing TCP bridging remains independent.
+* **Auto-Sync from Radio:** A complete custom broker address, port, credentials, encryption (TLS), and root topic received from the connected Meshtastic radio's `ModuleConfig.mqtt` payload replaces the public standard. This eliminates configuration drift for private brokers.
 * **3-Tier TLS Security Architecture:**
   * **Tier 1 (Public CA):** Built-in Mozilla Root CA bundle for zero-config public brokers (`mqtt.meshtastic.org`, AWS IoT, HiveMQ, etc.).
   * **Tier 2 (Custom / Private CA):** Upload / paste custom CA root certificates in PEM format for private/enterprise brokers.
@@ -32,8 +32,9 @@ This document details the architectural plan, feasibility analysis, protocol det
 ### 2.3 Memory Footprint & Safety
 * **Plain MQTT (Port 1883):** Requires ~4–6 KB of RAM for socket buffers, state machines, and queues.
 * **Secure MQTT / MQTTS (Port 8883 / TLS):** Requires mbedTLS (`WiFiClientSecure`). The TLS 1.2/1.3 handshake and cipher buffers require ~30–40 KB of heap during active connections.
-* **Heap Margin:** The ESP32 currently has >150 KB free internal SRAM (and S3 models often have 2MB–8MB PSRAM). Even without PSRAM, a 35 KB TLS allocation leaves >110 KB of safety margin.
-* **Heap Fragmentation Immunity:** We maintain the project's zero-fragmentation rule by keeping MQTT packet buffers statically or stack-allocated and reusing queues.
+* **IDF-5 Nano coexistence:** Tailscale DERP and MQTTS are two simultaneous TLS clients. MeshGate sends mbedTLS allocations of at least 4 KB to the Nano's PSRAM, keeps every FreeRTOS task stack in internal RAM, uses a 4 KB AsyncTCP stack and a 6 KB MQTT stack, and starts MQTT only after DERP is usable.
+* **Measured margin:** The production Nano held both verified TLS sessions with about 50 KB heap free and a 24 KB observed minimum during startup. The exact margin varies by target and enabled services, so `/status`, `/metrics`, and the diagnostic log remain authoritative.
+* **Static packet queues:** MQTT packet buffers are statically allocated and reused. The IDF-5 Tailscale profile deliberately uses smaller bounded queues than legacy profiles to preserve complete-packet buffering without starving TLS.
 
 ---
 
@@ -63,7 +64,11 @@ In the Meshtastic App (or Web UI / CLI), navigate to **Radio Configuration ➔ M
 6. **`Root Topic` (`root`):** Root topic prefix for your mesh (e.g. `msh` or `msh/US`).
 7. **Channel Uplink / Downlink:** In **Channels ➔ [Channel Name] ➔ Module Settings**, ensure **Uplink Enabled** and/or **Downlink Enabled** is toggled ON for the channel(s) you wish to bridge to MQTT.
 
-During the initial BLE connection, the bridge sends a `want_config_id` packet and receives `FromRadio.moduleConfig.mqtt`, automatically initializing the gateway session.
+Before the first radio configuration arrives, the bridge uses the public
+MeshRadar preset (`meshradar.pl:8883`, user/password `meshradar`, TLS enabled,
+root `msh`). During the initial BLE connection, the bridge sends a
+`want_config_id` packet and receives `FromRadio.moduleConfig.mqtt`. A complete
+radio configuration then becomes authoritative.
 
 ---
 
@@ -160,19 +165,18 @@ To prevent high-volume MQTT mesh traffic from blocking interactive phone app com
 1. **`tcp_to_ble_queue` (High Priority):** Carries locally generated phone app commands and chat packets. `bridgeBleTask` always checks and drains this queue first.
 2. **`mqtt_to_ble_queue` (Normal Priority):** Carries incoming remote mesh packets received from the MQTT broker. Polled only when the TCP command queue is empty. Uses non-blocking `xQueueSend(..., 0)` to prevent blocking the MQTT networking loop.
 3. **Static Allocation (.bss segment):** All packet queues are statically reserved with zero dynamic `malloc` overhead:
-   * **Unified Default Sizing:** `BRIDGE_QUEUE_SIZE = 32` (18.7 KB each), `MQTT_QUEUE_SIZE = 16` (9.3 KB) — total ~46.7 KB `.bss` queue RAM.
-   * **Runtime Headroom:** Preserves **~106 KB free heap on ESP32-S3** and **~95 KB on Classic ESP32 (`esp32dev`)**, preventing heap starvation during simultaneous TLS handshakes, mDNS resolution, and WebUI HTTP serving.
+   * **Legacy profile sizing:** `BRIDGE_QUEUE_SIZE = 32`, `MQTT_QUEUE_SIZE = 16`.
+   * **Nano IDF-5 sizing:** `BRIDGE_QUEUE_SIZE = 4`, `MQTT_QUEUE_SIZE = 2`, selected for simultaneous DERP, MQTTS, Web UI, BLE and TCP operation.
 
 ### 4.6 Connection Lifecycle & Disconnect Grace Period Model
 
 ```mermaid
 flowchart TD
     A[ESP32 Normal Boot] --> B[Connect to WiFi Station]
-    B --> C{Bluetooth Connected?}
-    C -- No --> D[Set State: Waiting for Radio<br>Broker Connection Deferred]
-    C -- Yes --> E[Request Radio Config want_config_id<br>Wait for FromRadio.moduleConfig.mqtt]
-    D -->|BLE Connects & Subscribes| E
-    E -->|Config Received + proxy_to_client_enabled=true| F[Connect to Synced Broker]
+    B --> C{Tailscale enabled?}
+    C -- Yes --> D[Wait for DERP data channel]
+    C -- No --> F[Connect to factory-standard broker]
+    D --> F
     F --> G[MQTT Active & Subscribed]
     G --> H{Bluetooth Drops?}
     H -- No --> G
@@ -183,7 +187,7 @@ flowchart TD
     K --> M{Timer > 60s?}
     L --> M
     M -- Yes --> N[Stop MQTT Client<br>Clear mqtt_to_ble_queue<br>State: Waiting for Radio]
-    N --> C
+    N --> F
     M -- No --> O{Bluetooth Reconnects?}
     O -- No --> I
     O -- Yes --> P{Broker Config Identical?}
@@ -194,9 +198,9 @@ flowchart TD
 ```
 
 #### Detailed Lifecycle & State Transition Rules:
-1. **Bluetooth-Gated Broker Startup & Immediate Query:**
-   * On initial boot, the bridge waits for the Bluetooth link to establish and immediately sends a `want_config_id` packet over BLE to prompt the radio for its `ModuleConfig.mqtt` configuration.
-   * The MQTT client starts only if `proxy_to_client_enabled == true` on the radio.
+1. **Remote-First Broker Startup & Radio Query:**
+   * The factory-standard MeshRadar broker profile can connect before Bluetooth. If Tailscale is enabled, broker startup waits until DERP is ready so remote administration keeps priority; otherwise it follows Wi-Fi immediately.
+   * When Bluetooth connects, the bridge sends `want_config_id` and a complete radio `ModuleConfig.mqtt` replaces the factory standard. The radio still controls whether proxy envelopes and channel uplinks are emitted.
 2. **Bluetooth Disconnect Grace Period (Default: 60 Seconds):**
    * If Bluetooth drops, the bridge starts a 60-second grace timer (`MQTT_BLE_GRACE_PERIOD_SECONDS`).
    * The MQTT broker TCP/TLS socket **remains open**, allowing up to 16 incoming downlink packets to buffer in `mqtt_to_ble_queue`.
@@ -218,7 +222,7 @@ flowchart TD
 
 | Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `mqtt_enabled` | bool | `false` | Master toggle to enable/disable MQTT gateway on the bridge |
+| `mqtt_enabled` | bool | `true` | Master toggle to enable/disable MQTT gateway on the bridge |
 | `mqtt_tls_insec` | bool | `false` | Skip certificate & hostname validation (for local self-signed brokers) |
 | `mqtt_custom_ca` | string | `""` | Optional PEM-encoded Root CA / Server Certificate for private brokers |
 
@@ -390,10 +394,11 @@ To support verified TLS connections to public MQTT brokers (such as `mqtt.meshta
 - [x] Route `MqttClientProxyMessage` packets to `mqtt_net` for publishing.
 - [x] Route downlink MQTT packets from `mqtt_net` into `tcp_to_ble_queue`.
 - [x] Add packet filtering to prevent echoing proxy packets to TCP clients.
-- [x] Gate initial MQTT broker connection on active Bluetooth connection (`bridge_is_ble_connected()`), while preserving MQTT broker connectivity across transient BLE drops.
+- [x] Start from the MeshRadar factory standard, prioritize Tailscale DERP when enabled, and preserve MQTT connectivity across transient BLE drops.
 
-### Phase 6: Verification & Testing 🔲
+### Phase 6: Verification & Testing
 - [x] Multi-target compiler verification across `seeed_xiao_esp32s3`, `esp32dev`, and `esp32-s3-devkitc-1`.
+- [x] Hardware test: Arduino Nano ESP32 IDF-5 with simultaneous Tailscale DERP and verified TLS to `meshradar.pl:8883`, subscribed to `msh/#`.
 - [ ] Hardware test: Auto-Sync mode with radio configured for public `mqtt.meshtastic.org:8883` (Mozilla Root CA verification).
 - [ ] Hardware test: Custom broker with self-signed TLS (`mqtt_tls_insec = true`) and private Custom Root CA PEM verification.
 - [ ] Hardware test: Simultaneous TCP client connection (Meshtastic App / Web UI) during active MQTT proxying (verify dual-queue arbitration and `MqttClientProxyMessage` filtering).

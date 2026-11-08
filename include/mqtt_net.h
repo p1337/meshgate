@@ -6,6 +6,8 @@
 enum MqttState {
     MQTT_STATE_DISABLED = 0,
     MQTT_STATE_WAITING_RADIO_CONFIG,
+    MQTT_STATE_WAITING_BLE,
+    MQTT_STATE_WAITING_REMOTE_ACCESS,
     MQTT_STATE_CONNECTING,
     MQTT_STATE_CONNECTED,
     MQTT_STATE_DISCONNECTED,
@@ -16,7 +18,7 @@ enum MqttState {
  * Configuration for MQTT.
  */
 struct MqttConfig {
-    bool enabled = false;
+    bool enabled = true;
     bool tls_insecure = false;
     String custom_ca = "";
 };

@@ -1,68 +1,103 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Meshtastic BLE-to-TCP Bridge Flasher</title>
-    <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 40px auto; line-height: 1.6; color: #1c1e21; background: #f0f2f5; }
-        h1 { text-align: center; color: #1a1a1a; margin-bottom: 10px; }
-        .subtitle { text-align: center; color: #65676b; margin-bottom: 20px; }
-        .card { background: white; border: 1px solid #ddd; padding: 24px; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-        .card h3 { margin-top: 0; color: #0066cc; }
-        .btn-container { margin-top: 20px; }
-        .docs-link { display: block; text-align: center; font-weight: bold; margin-bottom: 20px; }
-        .docs-link a { color: #0066cc; text-decoration: none; }
-        .docs-link a:hover { text-decoration: underline; }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0c10">
+  <title>MeshGate Web Flasher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root { --bg:#0a0c10; --panel:#0f1318; --panel2:#111a24; --border:#1e2a38; --accent:#5eed97; --accent2:#ff6b35; --yellow:#ffd60a; --muted:#7d8daa; --text:#c8d6e5; --dim:#8ea2bb; --mono:'JetBrains Mono',monospace; --sans:'Exo 2',sans-serif; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(circle at top,#111a24 0,#0a0c10 46%); color:var(--text); font-family:var(--sans); line-height:1.55; }
+    main { width:min(940px,calc(100% - 32px)); margin:0 auto; padding:46px 0 64px; }
+    header { padding:28px 24px; border:1px solid var(--border); background:linear-gradient(135deg,var(--panel),var(--panel2)); box-shadow:0 18px 50px rgba(0,0,0,.28); }
+    h1 { margin:0; color:var(--accent); font:700 clamp(26px,5vw,44px)/1 var(--mono); letter-spacing:.15em; text-shadow:0 0 18px rgba(94,237,151,.2); }
+    h1 span { color:var(--accent2); }
+    .kicker,.version { color:var(--dim); font:500 12px var(--mono); letter-spacing:.16em; text-transform:uppercase; }
+    .kicker { margin:0 0 10px; }
+    .version { margin:12px 0 0; }
+    .lede { max-width:720px; margin:18px 0 0; color:var(--text); font-size:18px; }
+    a { color:var(--accent); }
+    .notice { margin:22px 0; padding:14px 16px; border-left:3px solid var(--yellow); background:rgba(255,214,10,.05); color:var(--text); }
+    .notice strong { color:var(--yellow); }
+    h2 { margin:34px 0 14px; color:var(--text); font:700 17px var(--mono); letter-spacing:.08em; text-transform:uppercase; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+    .card { display:flex; flex-direction:column; min-height:230px; padding:20px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(135deg,var(--panel),var(--panel2)); }
+    .card.primary { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
+    .badge { align-self:flex-start; margin-bottom:12px; padding:2px 7px; border:1px solid var(--accent); color:var(--accent); font:500 10px var(--mono); letter-spacing:.08em; text-transform:uppercase; }
+    .card h3 { margin:0 0 8px; color:var(--accent); font:700 15px var(--mono); }
+    .card p { margin:0 0 16px; color:var(--dim); }
+    .meta { margin-top:auto; color:var(--muted); font:11px var(--mono); }
+    .install { margin-top:14px; }
+    .install button { width:100%; padding:10px 14px; border:1px solid var(--accent); border-radius:3px; background:var(--accent); color:#07110b; cursor:pointer; font:700 12px var(--mono); letter-spacing:.05em; text-transform:uppercase; }
+    .links { display:flex; flex-wrap:wrap; gap:10px 18px; margin-top:24px; font:500 12px var(--mono); }
+    footer { margin-top:34px; padding-top:16px; border-top:1px solid var(--border); color:var(--muted); font:11px var(--mono); }
+  </style>
 </head>
 <body>
-    <h1>📡 Meshtastic BLE-to-TCP Bridge</h1>
-    <p class="subtitle" id="version-display">Zero-install Web Flasher</p>
+  <main>
+    <header>
+      <p class="kicker">Meshtastic remote access gateway</p>
+      <h1>◇ MESH<span>GATE</span></h1>
+      <p class="lede">Flash an ESP32 bridge that turns a Bluetooth-only Meshtastic radio into a local or Tailscale-reachable TCP node.</p>
+      <p class="version" id="version-display">Zero-install WebSerial flasher</p>
+    </header>
 
-    <div class="docs-link">
-        <p>For full documentation, setup instructions, and troubleshooting, please see the <br>
-            <a href="https://github.com/sourcelaborg/meshtastic-esp32-bt-bridge" target="_blank">GitHub Repository README</a>.</p>
-    </div>
+    <div class="notice"><strong>Upgrade:</strong> leave <em>Erase device</em> unchecked to preserve Wi-Fi, BLE, VPN, MQTT and OTA configuration. Use erase only for a deliberate factory reset.</div>
 
-    <div class="card">
-        <p>Welcome to the web flasher! This tool will install the transparent bridge firmware directly to your ESP32 via USB using WebSerial. You must use a supported browser (Chrome, Edge, or Opera) on a desktop operating system.</p>
+    <h2>Select hardware</h2>
+    <section class="grid">
+      <article class="card primary">
+        <span class="badge">Production · IDF 5</span>
+        <h3>Arduino Nano ESP32</h3>
+        <p>ESP32-S3 production build with MicroLink/Tailscale, secure OTA, BLE-to-TCP and MQTT proxy support.</p>
+        <div class="meta">Arduino Core 3.3.9 · ESP-IDF 5.5.4</div>
+        <div class="install"><esp-web-install-button manifest="manifest_arduino_nano_esp32_idf5.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
+      </article>
 
-        <h4 style="color: #d97706; margin-bottom: 5px;">⚠️ Upgrading from a previous version?</h4>
-        <p style="margin-top: 0; font-size: 0.9em;">When prompted by the installer, <strong>DO NOT check the "Erase device" box!</strong> If you leave it unchecked, all of your saved WiFi credentials and Bluetooth pairings will be preserved. Checking the box will wipe the device back to factory Setup Mode.</p>
-    </div>
+      <article class="card">
+        <span class="badge">Recommended</span>
+        <h3>Seeed XIAO ESP32-S3</h3>
+        <p>Compact ESP32-S3 board with native USB and a supported status LED configuration.</p>
+        <div class="meta">Local bridge · WireGuard · OTA</div>
+        <div class="install"><esp-web-install-button manifest="manifest_seeed_xiao_esp32s3.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
+      </article>
 
-    <h2>Select Your Hardware</h2>
+      <article class="card">
+        <span class="badge">ESP32-S3</span>
+        <h3>Generic ESP32-S3 DevKitC</h3>
+        <p>Standard S3 development boards with native USB and the generic DevKitC pin map.</p>
+        <div class="meta">Local bridge · WireGuard · OTA</div>
+        <div class="install"><esp-web-install-button manifest="manifest_esp32-s3-devkitc-1.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
+      </article>
 
-    <div class="card">
-        <h3>Seeed Studio XIAO ESP32-S3</h3>
-        <p>The officially recommended board. Includes native USB support and active-low LED configuration.</p>
-        <div class="btn-container">
-            <esp-web-install-button manifest="manifest_seeed_xiao_esp32s3.json">
-                <button slot="activate" style="background:#0066cc;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:14px;font-weight:bold">Connect & Install</button>
-            </esp-web-install-button>
-        </div>
-    </div>
+      <article class="card">
+        <span class="badge">Recovery · IDF 4</span>
+        <h3>Arduino Nano ESP32</h3>
+        <p>Proven recovery image without native Tailscale. Keep this option available for USB recovery.</p>
+        <div class="meta">Arduino Core 2.0.17 · ESP-IDF 4.4.7</div>
+        <div class="install"><esp-web-install-button manifest="manifest_arduino_nano_esp32.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
+      </article>
 
-    <div class="card">
-        <h3>Generic ESP32-S3 DevKit</h3>
-        <p>Standard ESP32-S3 development boards with native USB.</p>
-        <div class="btn-container">
-            <esp-web-install-button manifest="manifest_esp32-s3-devkitc-1.json">
-                <button slot="activate" style="background:#0066cc;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:14px;font-weight:bold">Connect & Install</button>
-            </esp-web-install-button>
-        </div>
-    </div>
+      <article class="card">
+        <span class="badge">Classic ESP32</span>
+        <h3>WROOM-32 / NodeMCU</h3>
+        <p>Classic ESP32 boards using a CP2102 or CH340 USB-to-serial interface.</p>
+        <div class="meta">Local bridge · WireGuard · OTA</div>
+        <div class="install"><esp-web-install-button manifest="manifest_esp32dev.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
+      </article>
+    </section>
 
-    <div class="card">
-        <h3>Generic ESP32 (WROOM-32 / NodeMCU)</h3>
-        <p>Classic ESP32 boards using hardware UART (CP2102/CH340) for USB communication.</p>
-        <div class="btn-container">
-            <esp-web-install-button manifest="manifest_esp32dev.json">
-                <button slot="activate" style="background:#0066cc;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:14px;font-weight:bold">Connect & Install</button>
-            </esp-web-install-button>
-        </div>
-    </div>
+    <nav class="links">
+      <a href="https://github.com/p1337/meshgate">Documentation</a>
+      <a href="https://github.com/p1337/meshgate/releases">Release binaries</a>
+      <a href="https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge">Upstream project</a>
+    </nav>
+    <footer>MeshGate is an independent open-source fork. Meshtastic is a trademark of its respective owner.</footer>
+  </main>
 </body>
 </html>

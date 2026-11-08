@@ -270,5 +270,5 @@ Follow these steps to trigger the CI/CD pipeline:
    * Add any specific release notes and click **Publish Release**.
 5. **Wait for the Web Flasher Pipeline**:
    * As soon as you click Publish, the **Deploy Web Flasher to GitHub Pages** action will automatically trigger.
-   * It will securely download your newly compiled release binaries, automatically generate the `manifest.json` configurations for ESP Web Tools, and deploy them to `https://sourcelaborg.github.io/meshtastic-esp32-bt-bridge/`.
+   * It will securely download the release binaries, automatically generate the `manifest.json` configurations for ESP Web Tools, and deploy them to `https://p1337.github.io/meshgate/`.
    * The web flasher will instantly update to show "Firmware Version: v1.2.0".

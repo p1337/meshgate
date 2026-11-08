@@ -106,8 +106,8 @@ void setup() {
         // Normal boot, log config
         log_i("\n==========================================");
         log_i("[BOOT] Mode: Normal Operating Mode");
-        log_i("[BOOT] Target WiFi: %s", cfg.wifi_ssid.c_str());
-        log_i("[BOOT] Target BLE:  %s (%s)", cfg.ble_name.c_str(), cfg.ble_mac.c_str());
+        log_i("[BOOT] Target WiFi: configured");
+        log_i("[BOOT] Target BLE:  configured");
         log_i("==========================================");
 
         // Start Medium Blink to indicate 'searching for bluetooth and wifi'
@@ -117,13 +117,6 @@ void setup() {
         if (wifi_net_connect_sta(cfg.wifi_ssid, cfg.wifi_pass)) {
             // Start mDNS advertising.
             wifi_net_start_mdns(cfg);
-
-            // Apply saved MQTT configuration
-            MqttConfig mqttCfg;
-            mqttCfg.enabled = cfg.mqtt_enabled;
-            mqttCfg.tls_insecure = cfg.mqtt_tls_insecure;
-            mqttCfg.custom_ca = cfg.mqtt_custom_ca;
-            mqtt_net_apply_config(mqttCfg);
 
             // Start up the captive portal web server.
             config_ui_start_server();
@@ -143,6 +136,14 @@ void setup() {
                 wireguard_net_start(cfg);
             }
             reliability_manager_start(cfg);
+
+            // MQTT is deliberately applied after remote access startup. Its
+            // TLS allocation is deferred until Tailscale DERP is established.
+            MqttConfig mqttCfg;
+            mqttCfg.enabled = cfg.mqtt_enabled;
+            mqttCfg.tls_insecure = cfg.mqtt_tls_insecure;
+            mqttCfg.custom_ca = cfg.mqtt_custom_ca;
+            mqtt_net_apply_config(mqttCfg);
         } else {
             log_i("[BOOT] WiFi Connection Failed! Falling back to Setup Mode.");
             wifi_net_start_ap();

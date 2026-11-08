@@ -51,14 +51,22 @@ That path expects a factory partition, while this project's 16 MB layout uses
 two 6.25 MiB OTA application slots and has no factory application. Leaving the
 stock recovery hook enabled caused a reboot loop after rapid resets.
 
-The precompiled Arduino ESP-IDF 5 mbedTLS library uses internal-memory
-allocation. A DERP TLS context therefore needs a sufficiently large contiguous
-internal block even when the Nano has 8 MiB PSRAM. The IDF-5 deployment creates
-the 14 KiB DERP and 12 KiB coordination task stacks in PSRAM so that
-`mbedtls_ssl_setup()` can allocate its internal buffers. The 8 KiB network-I/O
-and WireGuard-manager stacks must remain internal: those tasks can run while
-the flash cache is disabled, and putting them in PSRAM triggers
+The precompiled Arduino ESP-IDF 5 mbedTLS library normally allocates its TLS
+record buffers from internal RAM. Running both Tailscale DERP and MQTTS then
+fails with `mbedtls_ssl_setup() == -0x7F00`, even though the Nano has 8 MiB
+PSRAM. MeshGate installs a PSRAM-aware mbedTLS allocator before either client
+starts: allocations of at least 4 KiB prefer PSRAM, while small allocations
+prefer internal RAM and both paths have a safe alternate heap. The MicroLink
+DERP and coordination task stacks also use PSRAM. All application, network-I/O
+and WireGuard-manager task stacks remain internal: task stacks can be inspected
+while the flash cache is disabled, and putting them in PSRAM triggers
 `esp_task_stack_is_sane_cache_disabled()` or an IPC stack-canary panic.
+
+The IDF-5 profile reduces AsyncTCP's supported task stack from its 16 KiB
+default to 4 KiB and uses a 6 KiB MQTT task stack. This preserves contiguous
+internal RAM without weakening TLS or moving cache-sensitive task stacks. On
+the production Nano, simultaneous DERP and verified MQTTS left about 50 KiB
+heap free with a 24 KiB observed minimum during connection setup.
 
 The Tailscale profile compiles the BLE/TCP queues as 4/4 packets, the MQTT
 downlink queue as 2 packets, and the MicroLink peer table for four peers. This
@@ -66,6 +74,17 @@ leaves runtime headroom for DERP/WireGuard plus an active Meshtastic TCP client
 while retaining complete-packet buffering in both directions. The deployed
 Nano accepted three simultaneous port-4403 clients without queue drops. Legacy
 profiles keep their original queue and peer sizing.
+
+The MQTT gateway is enabled by default with MeshRadar's public shared uplink
+profile (`meshradar.pl:8883`, TLS, root `msh`). Those published service values
+are the factory standard. A complete custom `ModuleConfig.mqtt` received from the radio
+replaces the broker, port, credentials, TLS mode and root topic. The radio must
+still enable MQTT proxy-to-client and channel uplink for packets to reach the
+bridge; a default broker connection cannot manufacture radio proxy envelopes.
+BLE is not required for broker startup. If Tailscale is enabled, MQTT enters
+`Waiting for Remote Access` until the DERP data channel is ready; MQTT/TLS then
+starts without endangering the primary remote-administration path. Without
+Tailscale, the standard broker session starts immediately after Wi-Fi.
 
 ESP-IDF 5 also enforces lwIP core locking. MicroLink's WireGuard manager
 registers its raw `netif` and UDP PCB while holding `LOCK_TCPIP_CORE`; direct

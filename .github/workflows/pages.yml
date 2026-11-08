@@ -37,7 +37,7 @@ jobs:
           echo "Latest release is $LATEST_TAG. Downloading binaries..."
           
           # Inject the version string into the HTML
-          sed -i "s/id=\"version-display\">.*</id=\"version-display\">Firmware Version: ${LATEST_TAG}</g" web/index.html
+          sed -i "s|id=\"version-display\">[^<]*|id=\"version-display\">Firmware Version: ${LATEST_TAG}|" web/index.html
           
           # Add a cache-buster to the manifest URLs to prevent browser caching issues
           # We use GITHUB_RUN_ID so even manual re-runs on the same tag bypass the cache
@@ -57,7 +57,7 @@ jobs:
             rm "$zip"
             
             # Determine bootloader offset and chip family based on architecture
-            if [[ "$board" == *"s3"* ]]; then
+            if [[ "$board" == *"s3"* || "$board" == arduino_nano_esp32* ]]; then
               bootloader_offset="0"
               chip_family="ESP32-S3"
             else

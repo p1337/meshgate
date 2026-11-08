@@ -2,15 +2,57 @@
 #include "web_log.h"
 #include "bridge.h"
 #include "build_options.h"
+#include "tailscale_net.h"
 #include <mqtt_client.h>
 #include <esp_crt_bundle.h>
+#include <esp_heap_caps.h>
 #include <esp_idf_version.h>
+#include <mbedtls/platform.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
 #include "meshtastic/mesh.pb.h"
 #include "meshtastic/module_config.pb.h"
 #include "utils.h"
 #include <atomic>
+
+// MeshRadar publishes these shared credentials publicly for Meshtastic map
+// uplinks. They are the factory default, not a private deployment secret.
+// A complete custom MQTT configuration received from the radio can replace it.
+static constexpr const char* MQTT_DEFAULT_SERVER = "meshradar.pl";
+static constexpr uint16_t MQTT_DEFAULT_PORT = 8883;
+static constexpr const char* MQTT_DEFAULT_USER = "meshradar";
+static constexpr const char* MQTT_DEFAULT_PASSWORD = "meshradar";
+static constexpr const char* MQTT_DEFAULT_ROOT = "msh";
+static constexpr bool MQTT_DEFAULT_TLS = true;
+static constexpr size_t TLS_PSRAM_THRESHOLD = 4096;
+
+#ifdef ESP_IDF5_MIGRATION_BUILD
+// The Nano ESP32 has 8 MB PSRAM but relatively little contiguous internal
+// memory. Two simultaneous TLS clients (Tailscale DERP and MQTT) otherwise
+// compete for 16 KB record buffers. Data buffers are safe in PSRAM; FreeRTOS
+// task stacks deliberately remain in internal RAM.
+static void* tls_psram_calloc(size_t count, size_t size) {
+    if (count != 0 && size > SIZE_MAX / count) {
+        return nullptr;
+    }
+
+    const size_t total = count * size;
+    const bool preferPsram = total >= TLS_PSRAM_THRESHOLD;
+    const uint32_t preferredCaps = preferPsram
+        ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+        : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t alternateCaps = preferPsram
+        ? (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+        : (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    void* result = heap_caps_calloc(count, size, preferredCaps);
+    return result != nullptr ? result : heap_caps_calloc(count, size, alternateCaps);
+}
+
+static void tls_psram_free(void* ptr) {
+    heap_caps_free(ptr);
+}
+#endif
 
 /**
  * Embedded Mozilla Root CA Bundle
@@ -73,13 +115,24 @@ static MqttConfig currentConfig;
  * MqttStatus contains the live telemetry properties (radio_server, radio_user, radio_root, active_server, etc.)
  * queried for /status.
  */
-static MqttStatus currentStatus;
+static MqttStatus makeDefaultMqttStatus() {
+    MqttStatus status;
+    status.radio_proxy_enabled = true;
+    status.radio_server = MQTT_DEFAULT_SERVER;
+    status.radio_port = MQTT_DEFAULT_PORT;
+    status.radio_tls = MQTT_DEFAULT_TLS;
+    status.radio_user = MQTT_DEFAULT_USER;
+    status.radio_root = MQTT_DEFAULT_ROOT;
+    return status;
+}
+
+static MqttStatus currentStatus = makeDefaultMqttStatus();
 
 /**
  * The mqtt broker password configured on the radio is excluded from MqttStatus explicitly
  * to avoid leaking it via the telemetry end points.
  */
-static String radioPassword = "";
+static String radioPassword = MQTT_DEFAULT_PASSWORD;
 
 /**
  * Details about the currently connected mqtt client.
@@ -100,6 +153,7 @@ static MqttDownlinkCallback downlinkCallback = nullptr;
  */
 static std::atomic<uint32_t> s_ble_disconnected_at{0};
 static std::atomic<bool> s_in_grace_period{false};
+static std::atomic<bool> s_start_deferred{false};
 
 /**
  * Resets grace timer state (assumes caller holds mqttMutex / MqttLockGuard).
@@ -138,6 +192,8 @@ static const char* mqtt_state_to_str(MqttState state) {
     switch (state) {
         case MQTT_STATE_DISABLED: return "Disabled";
         case MQTT_STATE_WAITING_RADIO_CONFIG: return "Waiting for Radio Config";
+        case MQTT_STATE_WAITING_BLE: return "Waiting for Bluetooth";
+        case MQTT_STATE_WAITING_REMOTE_ACCESS: return "Waiting for Remote Access";
         case MQTT_STATE_CONNECTING: return "Connecting...";
         case MQTT_STATE_CONNECTED: return "Connected";
         case MQTT_STATE_DISCONNECTED: return "Disconnected";
@@ -446,14 +502,14 @@ static void mqtt_net_start_client(const String& server, uint16_t port, const Str
         mqtt_cfg.session.keepalive = MQTT_CLIENT_KEEPALIVE_SECONDS;
         mqtt_cfg.network.reconnect_timeout_ms = MQTT_RECONNECT_TIME_MS;
         mqtt_cfg.task.priority = 2; // Keep below AsyncTCP (3) and LwIP (18) so WebUI and network sockets are never starved
-        mqtt_cfg.task.stack_size = 8192; // 8KB stack for Nanopb encode/decode and TLS handshake safety
+        mqtt_cfg.task.stack_size = 6144; // Balanced for TLS/Nanopb while preserving internal RAM for DERP
 #else
         mqtt_cfg.buffer_size = MQTT_CLIENT_BUFFER_SIZE;
         mqtt_cfg.out_buffer_size = MQTT_CLIENT_BUFFER_SIZE;
         mqtt_cfg.keepalive = MQTT_CLIENT_KEEPALIVE_SECONDS;
         mqtt_cfg.reconnect_timeout_ms = MQTT_RECONNECT_TIME_MS;
         mqtt_cfg.task_prio = 2; // Keep below AsyncTCP (3) and LwIP (18) so WebUI and network sockets are never starved
-        mqtt_cfg.task_stack = 8192; // 8KB stack for Nanopb encode/decode and TLS handshake safety
+        mqtt_cfg.task_stack = 6144; // Balanced for TLS/Nanopb while preserving internal RAM for remote access
         mqtt_cfg.event_handle = mqtt_event_handler;
 #endif
 
@@ -520,7 +576,7 @@ static void mqtt_net_start_synced_client() {
             log_i("[MQTT] Refusing to start MQTT client, MQTT Proxy is disabled on radio.");
             return;
         }
-        server = currentStatus.radio_server.isEmpty() ? "mqtt.meshtastic.org" : currentStatus.radio_server;
+        server = currentStatus.radio_server.isEmpty() ? MQTT_DEFAULT_SERVER : currentStatus.radio_server;
         port = currentStatus.radio_port;
         user = currentStatus.radio_user;
         pass = radioPassword;
@@ -532,10 +588,39 @@ static void mqtt_net_start_synced_client() {
     mqtt_net_start_client(server, port, user, pass, tls, tls_insec, custom_ca);
 }
 
+// Remote administration is the primary service. When Tailscale is enabled,
+// let its coordination/DERP TLS session settle before allocating a second TLS
+// client for MQTT. Installations without Tailscale start MQTT immediately.
+static void mqtt_net_start_or_defer() {
+    if (tailscale_net_is_enabled() && !tailscale_net_is_derp_connected()) {
+        s_start_deferred.store(true, std::memory_order_relaxed);
+        mqtt_net_set_state(MQTT_STATE_WAITING_REMOTE_ACCESS);
+        log_i("[MQTT] Waiting for Tailscale DERP before starting broker TLS...");
+        return;
+    }
+
+    s_start_deferred.store(false, std::memory_order_relaxed);
+    mqtt_net_start_synced_client();
+}
+
 void mqtt_net_init() {
+    static bool initialized = false;
+    if (initialized) {
+        return;
+    }
+    initialized = true;
+
     if (!mqttMutex) {
         mqttMutex = xSemaphoreCreateRecursiveMutex();
     }
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    const int allocatorResult = mbedtls_platform_set_calloc_free(tls_psram_calloc, tls_psram_free);
+    if (allocatorResult == 0) {
+        log_i("[TLS] Large mbedTLS buffers use PSRAM; task stacks remain internal");
+    } else {
+        log_w("[TLS] Unable to install PSRAM-aware allocator (%d)", allocatorResult);
+    }
+#endif
 #if ESP_IDF_VERSION_MAJOR >= 5
     esp_crt_bundle_set(rootca_crt_bundle_start, rootca_crt_bundle_end - rootca_crt_bundle_start);
 #else
@@ -544,6 +629,16 @@ void mqtt_net_init() {
 }
 
 void mqtt_net_loop() {
+    if (s_start_deferred.load(std::memory_order_relaxed)) {
+        if (!tailscale_net_is_enabled() || tailscale_net_is_derp_connected()) {
+            s_start_deferred.store(false, std::memory_order_relaxed);
+            log_i("[MQTT] Remote access is ready. Starting broker connection...");
+            mqtt_net_start_synced_client();
+        } else {
+            return;
+        }
+    }
+
     // Fast lock-free check: if not in grace period or 60s has not elapsed, return immediately.
     if (!s_in_grace_period.load(std::memory_order_relaxed) ||
         (millis() - s_ble_disconnected_at.load(std::memory_order_relaxed) < (uint32_t)MQTT_BLE_GRACE_PERIOD_SECONDS * 1000)) {
@@ -560,7 +655,7 @@ void mqtt_net_loop() {
             mqtt_net_reset_grace_timer();
             mqtt_net_stop_client();
             bridge_clear_mqtt_to_ble_queue();
-            mqtt_net_set_state(MQTT_STATE_WAITING_RADIO_CONFIG, "BLE disconnected (grace expired)");
+            mqtt_net_set_state(MQTT_STATE_WAITING_BLE, "BLE disconnected (grace expired)");
         }
     }
 }
@@ -600,13 +695,16 @@ void mqtt_net_apply_config(const MqttConfig& cfg) {
     currentConfig = cfg;
 
     if (!currentConfig.enabled) {
+        s_start_deferred.store(false, std::memory_order_relaxed);
         log_i("[MQTT] Feature disabled in configuration, shutting down mqtt client...");
         mqtt_net_stop_client();
         bridge_clear_mqtt_to_ble_queue();
         return;
     }
 
-    // If radio config is not yet discovered or proxy is disabled on radio
+    // The public MeshRadar standard is preloaded, so a fresh installation can
+    // start without duplicating those shared values in the Web UI. A radio
+    // ModuleConfig received later remains authoritative.
     if (currentStatus.radio_server.isEmpty()) {
         log_i("[MQTT] Enabled. Waiting for radio ModuleConfig.mqtt packets over Bluetooth...");
         mqtt_net_set_state(MQTT_STATE_WAITING_RADIO_CONFIG);
@@ -614,6 +712,7 @@ void mqtt_net_apply_config(const MqttConfig& cfg) {
             mqtt_net_request_radio_config();
         }
     } else if (!currentStatus.radio_proxy_enabled) {
+        s_start_deferred.store(false, std::memory_order_relaxed);
         log_w("[MQTT] Radio configuration detected, but MQTT proxy is inactive on the radio.");
         mqtt_net_stop_client();
         bridge_clear_mqtt_to_ble_queue();
@@ -623,10 +722,10 @@ void mqtt_net_apply_config(const MqttConfig& cfg) {
             "[MQTT] Applying Auto-Sync MQTT configuration -> %s:%u (Root: %s)",
             currentStatus.radio_server.c_str(), currentStatus.radio_port, currentStatus.radio_root.c_str()
         );
-        mqtt_net_start_synced_client();
+        mqtt_net_start_or_defer();
     } else {
-        log_i("[MQTT] Radio configuration ready. Waiting for Bluetooth connection before connecting to broker...");
-        mqtt_net_set_state(MQTT_STATE_WAITING_RADIO_CONFIG);
+        log_i("[MQTT] Factory broker profile ready; Bluetooth is not required for broker startup.");
+        mqtt_net_start_or_defer();
     }
 }
 
@@ -661,7 +760,7 @@ void mqtt_net_on_ble_connected() {
             "[MQTT] Bluetooth radio connected! Connecting to Synced MQTT broker -> %s:%u",
             currentStatus.radio_server.c_str(), currentStatus.radio_port
         );
-        mqtt_net_start_synced_client();
+        mqtt_net_start_or_defer();
     }
 
     // Always query the radio on connect to ensure any changed settings (swapped radio, updated credentials) are detected
@@ -745,13 +844,14 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
             {
                 MqttLockGuard lock;
                 String rawAddress = String(mqtt_cfg.address);
+                const bool useMeshRadarPreset = rawAddress.isEmpty() || rawAddress.equalsIgnoreCase(MQTT_DEFAULT_SERVER);
                 currentStatus.radio_proxy_enabled = (mqtt_cfg.enabled && mqtt_cfg.proxy_to_client_enabled);
-                currentStatus.radio_root = String(mqtt_cfg.root).isEmpty() ? "msh" : String(mqtt_cfg.root);
-                currentStatus.radio_tls = mqtt_cfg.tls_enabled;
-                currentStatus.radio_user = String(mqtt_cfg.username);
-                radioPassword = String(mqtt_cfg.password);
+                currentStatus.radio_root = useMeshRadarPreset ? MQTT_DEFAULT_ROOT : (String(mqtt_cfg.root).isEmpty() ? "msh" : String(mqtt_cfg.root));
+                currentStatus.radio_tls = useMeshRadarPreset ? MQTT_DEFAULT_TLS : mqtt_cfg.tls_enabled;
+                currentStatus.radio_user = useMeshRadarPreset ? MQTT_DEFAULT_USER : String(mqtt_cfg.username);
+                radioPassword = useMeshRadarPreset ? MQTT_DEFAULT_PASSWORD : String(mqtt_cfg.password);
 
-                String server = rawAddress.isEmpty() ? "mqtt.meshtastic.org" : rawAddress;
+                String server = useMeshRadarPreset ? MQTT_DEFAULT_SERVER : rawAddress;
                 uint16_t port = currentStatus.radio_tls ? 8883 : 1883;
 
                 // If the radio address explicitly specifies a port (e.g. "160.16.104.222:1883" or "broker.local:8883")
@@ -803,7 +903,7 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
             }
 
             if (shouldStart) {
-                mqtt_net_start_synced_client();
+                mqtt_net_start_or_defer();
             }
         }
     }

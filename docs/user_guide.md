@@ -21,78 +21,66 @@ If you need to change your WiFi credentials or the target Bluetooth device:
 
 ## Remote access and OTA updates
 
-### Target deployment: standalone Raspberry Pi gateway
-
-The production gateway in Poland is a Raspberry Pi with WiFi and Bluetooth.
-It runs the Linux BLE-to-TCP bridge, exposes the Meshtastic PhoneAPI on TCP
-port 4403, and joins the private Tailscale network for remote access from
-Germany. The Raspberry Pi connects directly to the RAK node over BLE; the
-ESP32-S3 is not part of this production data path.
-
-Keep the ESP32-S3 connected to the Raspberry Pi over USB only as an isolated
-development and recovery target. Experimental OTA firmware may add future
-fallback paths, but failure or reboot of the ESP32-S3 must not interrupt the
-Raspberry Pi-to-RAK bridge. The Raspberry Pi should retain the ESP32 firmware
-image, USB flashing tool, and serial logs so the fallback device can be
-recovered remotely after its initial USB/OTA provisioning.
-
 Use Tailscale or another authenticated VPN for TCP 4403. Meshtastic PhoneAPI
 over TCP is plaintext and must never be exposed directly to the public
 internet.
 
-VPN discovery is not automatic because mDNS does not cross a routed WireGuard
-tunnel. In the Meshtastic app, configure the bridge manually as a TCP device at
-`192.168.1.202:4403`. Local Polish access remains `192.168.0.217:4403`.
+### Native Tailscale on the IDF 5 Nano build
 
-The WireGuard status `connected` means that the ESP32 has negotiated a valid
-WireGuard session key with the configured FRITZ!Box peer. It does not prove
-that the FRITZ!Box forwards traffic from a second VPN client to that peer. To
-separate bridge faults from VPN routing faults, first open
-`http://192.168.1.202/status` from the remote VPN client. If this fails while
-`http://192.168.0.217/status` and TCP port 4403 work in the Polish LAN, the
-Meshtastic bridge is healthy and the missing route is upstream of it.
+The `arduino_nano_esp32_idf5` image can join a tailnet directly through
+MicroLink. No public IP, dynamic DNS, inbound firewall rule or additional Linux
+computer is required.
 
-Never activate one exported WireGuard profile on multiple devices. The
-temporary `192.168.1.202` deployment reuses the profile also used by the
-Schwaebisch Gmuend FRITZ!Box client. That client and the ESP32 must not be
-active simultaneously. Their handshakes and 25-second keepalives move the one
-peer identity between two public endpoints, so whichever endpoint spoke most
-recently becomes reachable and the other one stops receiving traffic. The
-ESP32 needs its own Waiblingen FRITZ!Box peer, with a different private key and
-tunnel address. Reusing the same profile on any second device creates the same
-failure.
+1. Open the MeshGate Web UI on the local network.
+2. In **Tailscale Remote Access**, enable Tailscale, choose a lowercase device
+   name and paste an enrollment auth key.
+3. Save and reboot.
+4. Wait until the status reports both control-plane connectivity and a ready
+   DERP data channel.
+5. From another tailnet device, open `http://<tailscale-ip>/` and configure the
+   Meshtastic app manually as `<tailscale-ip>:4403`.
 
-In the current deployment the iPhone instead uses an IPsec tunnel. Therefore
-it cannot collide with the ESP32's WireGuard identity. If the iPhone reaches
-the German home network over IPsec but cannot open
-`http://192.168.1.202/status`, and the ESP32 simultaneously reports a valid
-WireGuard session, the failed hop is forwarding from the FRITZ!Box IPsec VPN
-participant to its WireGuard VPN participant. Use a separate WireGuard profile
-for the iPhone or place a TCP relay on an always-on device in the German LAN;
-changing Meshtastic or MQTT settings cannot repair this routing boundary.
+mDNS is link-local and normally does not cross a VPN. Manual IP entry is
+therefore expected. A machine appearing in the Tailscale console proves only
+registration; successful HTTP or TCP 4403 traffic proves the data plane.
 
-Creating a dedicated FRITZ!Box WireGuard peer is a security-sensitive action
-that requires an additional confirmation. A physical button is not required
-when TOTP confirmation was already configured for the logged-in FRITZ!Box
-user: the six-digit code from that user's authenticator app can be entered
-remotely. MyFRITZ! account two-factor authentication is separate and does not
-replace the FRITZ!Box user's confirmation. If no authenticator was configured,
-enabling it normally requires one local confirmation first. A locally attached
-analog or DECT telephone can also enter the displayed confirmation code, while
-IP telephones such as FRITZ!App Fon cannot.
+Enrollment auth keys can expire, but the joined machine continues using its
+own node key. For a trusted unattended gateway, review and disable device key
+expiry in the Tailscale Machines page after enrollment.
 
-The Arduino Nano ESP32 build has two firmware partitions. After the one-time
-USB partition migration, future firmware binaries can be installed locally or
-through WireGuard with `tools/upload_ota.ps1`. The uploader reads the private,
-git-ignored `.ota-token`, verifies device capacity, supplies an MD5 checksum,
-and confirms the partition switch after reboot. WiFi, BLE, and WireGuard
-settings are held in NVS and are not erased by OTA.
+### Classic WireGuard
+
+Each MeshGate requires its own WireGuard peer identity, private key and tunnel
+address. Never activate one exported profile on multiple devices: the peer's
+endpoint will move to whichever device sent the most recent handshake and the
+other device will stop receiving traffic.
+
+A WireGuard status of `connected` proves the ESP32 negotiated a session key;
+it does not prove that a remote router forwards traffic between two different
+VPN clients. Test the MeshGate `/status` endpoint before diagnosing the
+Meshtastic protocol.
+
+Tailscale and classic WireGuard are mutually exclusive in the IDF 5 image.
+
+### OTA
+
+The Arduino Nano ESP32 profile uses two application partitions. After the
+one-time USB partition-table migration, later firmware can be installed over
+the LAN or tailnet with `tools/upload_ota.ps1`. The uploader reads the private,
+git-ignored `.ota-token`, verifies image capacity, supplies an MD5 checksum and
+confirms the partition switch after reboot. Wi-Fi, BLE, VPN and MQTT settings
+are stored in NVS and are not erased by an ordinary OTA update.
 
 ---
 
 ## Configuring the MQTT Gateway & Proxy (Optional)
 
 To use the bridge as an autonomous 24/7 MQTT gateway for your Bluetooth radio:
+
+MeshGate starts with MeshRadar's public preset: broker `meshradar.pl`, port
+`8883`, username and password `meshradar`, TLS enabled, and root topic `msh`.
+These values are published by the service. A complete custom broker
+configuration stored on the radio overrides the preset.
 
 ### 1. Configure the Radio (via Meshtastic Mobile App)
 In the Meshtastic App on your phone:

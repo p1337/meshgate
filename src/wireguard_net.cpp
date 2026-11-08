@@ -134,8 +134,8 @@ bool initializeTunnel() {
     }
 
     // lwIP selects an interface by its IP/netmask. Keeping the tunnel address
-    // inside the configured remote subnet lets replies to the German LAN use
-    // WireGuard while ordinary internet traffic continues over Polish WiFi.
+    // inside the configured remote subnet lets replies to the remote LAN use
+    // WireGuard while ordinary internet traffic continues over local WiFi.
     if (!addressIsInNetwork(localIp, remoteNetwork, remoteMask)) {
         log_e("[WireGuard] Tunnel IP %s is not inside remote subnet %s",
               s_config.wireguard_local_ip.c_str(), s_config.wireguard_remote_cidr.c_str());

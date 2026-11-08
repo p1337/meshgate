@@ -30,7 +30,7 @@ void controlledRestart(const char* reason) {
     ESP.restart();
 }
 void reliabilityTask(void*) {
-    // Poland and Germany currently share the same EU CET/CEST transition rules.
+    // The configured deployment timezone uses EU CET/CEST transition rules.
     setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
     tzset();
     configTime(0, 0, "pool.ntp.org", "time.cloudflare.com", "time.google.com");
@@ -114,6 +114,8 @@ void reliabilityTask(void*) {
 void reliability_manager_start(const BridgeConfig& cfg) {
     s_tailscaleExpected = cfg.tailscale_enabled;
     s_wireguardExpected = cfg.wireguard_enabled && !cfg.tailscale_enabled;
+    // Keep the stack internal: the task participates in flash-backed logging
+    // and must remain runnable while the external-memory cache is disabled.
     xTaskCreatePinnedToCore(reliabilityTask, "reliability_task", 4096, nullptr, 1, nullptr, 0);
 }
 

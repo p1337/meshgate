@@ -730,10 +730,10 @@ void bridge_start() {
     tcpServer->begin();
     log_i("[Bridge] TCP Server started on port %d", TCP_PORT);
 
-    // Starts the BLE task and pins to CPU core 1
+    // Task stacks must stay in internal RAM. ESP-IDF temporarily disables the
+    // external-memory cache during flash operations; a PSRAM-backed task stack
+    // can therefore trigger esp_task_stack_is_sane_cache_disabled assertions.
     xTaskCreatePinnedToCore(bridgeBleTask, "bridge_ble", 8192, NULL, 1, &bridgeBleTaskHandle, 1);
-
-    // Starts the TCP/Net task and pins to CPU core 0
     xTaskCreatePinnedToCore(bridgeNetTask, "bridge_net", 4096, NULL, 1, &bridgeNetTaskHandle, 0);
 }
 
