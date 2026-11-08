@@ -139,6 +139,27 @@ Each `BridgePacket` holds a 576-byte payload plus length metadata ($\approx 584\
   - **Classic ESP32 (`esp32dev`):** **~95 KB free heap** (Min: ~78 KB, MaxBlock: ~80 KB).
 * **Why This Matters:** LwIP networking, AsyncWebServer, and MbedTLS require ~15 KB of contiguous free memory. Sizing the queues to 32/16 ensures $>5\times$ safety margin on all targets without risking memory exhaustion or socket starvation.
 
+#### IDF-5 / MicroLink queue sizing
+
+The `arduino_nano_esp32_idf5` profile overrides `BRIDGE_QUEUE_SIZE=4`,
+`MQTT_QUEUE_SIZE=2`, and `CONFIG_ML_MAX_PEERS=4`. It also places only the DERP
+and coordination task stacks in PSRAM. This preserves a contiguous internal
+block for the mbedTLS DERP context and enough runtime memory for TCP clients.
+The network-I/O and WireGuard-manager stacks must remain internal because they
+can execute during flash-cache-disabled operations; moving either to PSRAM
+causes an immediate cache-safety assertion or IPC stack-canary panic. Do not
+change these overrides without an on-device boot, DERP-handshake, OTA, BLE, and
+three-client TCP stress test.
+
+`GET /tailscale_status` must show both `connected: true` and
+`derp_connected: true`. The first value alone only proves Tailscale control-plane
+registration and does not prove that HTTP or TCP 4403 can traverse the tailnet.
+
+The vendored MicroLink WireGuard-interface initialization must retain its
+TCPIP-core lock around raw lwIP `netif`/PCB registration. On ESP-IDF 5, removing
+that lock produces `netif_set_up ... Required to lock TCPIP core functionality!`
+on serial and an automatic reboot loop before Tailscale can register.
+
 ### Task Prioritization & Multithreading Architecture
 To prevent high-bandwidth network traffic from starving BLE operations or locking up the WebUI:
 

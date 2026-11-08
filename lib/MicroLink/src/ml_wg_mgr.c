@@ -206,7 +206,14 @@ static err_t wg_udp_output_cb(uint32_t dest_ip, uint16_t dest_port,
     IP_SET_TYPE_VAL(dst, IPADDR_TYPE_V4);
     ip4_addr_set_u32(ip_2_ip4(&dst), dest_ip);  /* already network byte order */
 
+    const bool acquired = !sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER);
+    if (acquired) {
+        LOCK_TCPIP_CORE();
+    }
     err_t err = udp_sendto(s_wg_output_pcb, p, &dst, dest_port);
+    if (acquired) {
+        UNLOCK_TCPIP_CORE();
+    }
     pbuf_free(p);
     return err;
 }
@@ -236,10 +243,16 @@ static esp_err_t wg_init_interface(microlink_t *ml) {
     /* Disable internal socket binding (we use magicsock mode) */
     wireguardif_disable_socket_bind();
 
+    /* ESP-IDF 5 enables LWIP_ASSERT_CORE_LOCKED. The WireGuard init path
+     * touches raw lwIP state (netif_list and UDP PCBs), so serialize the
+     * complete registration with the TCPIP core. */
+    LOCK_TCPIP_CORE();
+
     /* Initialize WireGuard netif */
     netif->state = &wg_init;
     err_t err = wireguardif_init(netif);
     if (err != ERR_OK) {
+        UNLOCK_TCPIP_CORE();
         ESP_LOGE(TAG, "wireguardif_init failed: %d", err);
         free(netif);
         return ESP_FAIL;
@@ -291,6 +304,8 @@ static esp_err_t wg_init_interface(microlink_t *ml) {
     /* Register output callbacks for magicsock mode */
     wireguardif_set_derp_output(netif, wg_derp_output_cb, ml);
     wireguardif_set_udp_output(netif, wg_udp_output_cb, ml);
+
+    UNLOCK_TCPIP_CORE();
 
     /* On cellular AT socket bridge, force all WG output through DERP relay.
      * AT sockets are TCP-only, so direct UDP is impossible.
@@ -1642,11 +1657,13 @@ void ml_wg_mgr_task(void *arg) {
     /* Shutdown WireGuard interface */
     if (ml->wg_netif) {
         struct netif *netif = (struct netif *)ml->wg_netif;
+        LOCK_TCPIP_CORE();
         wireguardif_shutdown(netif);
         netif_set_link_down(netif);
         netif_set_down(netif);
-        vTaskDelay(pdMS_TO_TICKS(100));
         netif_remove(netif);
+        UNLOCK_TCPIP_CORE();
+        vTaskDelay(pdMS_TO_TICKS(100));
         free(netif);
         ml->wg_netif = NULL;
     }

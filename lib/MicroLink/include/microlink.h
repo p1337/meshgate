@@ -148,6 +148,11 @@ microlink_state_t microlink_get_state(const microlink_t *ml);
 bool microlink_is_connected(const microlink_t *ml);
 
 /**
+ * @brief Check whether the DERP relay data channel completed its handshake
+ */
+bool microlink_is_derp_connected(const microlink_t *ml);
+
+/**
  * @brief Get our assigned VPN IP
  * @return VPN IP in host byte order, 0 if not yet assigned
  */

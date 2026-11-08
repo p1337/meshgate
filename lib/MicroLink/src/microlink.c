@@ -371,28 +371,42 @@ skip_bsd_socket:
     BaseType_t ret;
 
     ret = xTaskCreatePinnedToCore(ml_net_io_task, "ml_net_io", ML_TASK_NET_IO_STACK,
-                                   ml, ML_TASK_NET_IO_PRIO, &ml->net_io_task, ML_TASK_NET_IO_CORE);
+                                  ml, ML_TASK_NET_IO_PRIO, &ml->net_io_task, ML_TASK_NET_IO_CORE);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create net_io task");
         return ESP_FAIL;
     }
 
+#ifdef MICROLINK_DERP_STACK_PSRAM
+    ret = xTaskCreatePinnedToCoreWithCaps(ml_derp_tx_task, "ml_derp_tx", ML_TASK_DERP_TX_STACK,
+                                          ml, ML_TASK_DERP_TX_PRIO, &ml->derp_tx_task,
+                                          ML_TASK_DERP_TX_CORE,
+                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
     ret = xTaskCreatePinnedToCore(ml_derp_tx_task, "ml_derp_tx", ML_TASK_DERP_TX_STACK,
                                    ml, ML_TASK_DERP_TX_PRIO, &ml->derp_tx_task, ML_TASK_DERP_TX_CORE);
+#endif
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create derp_tx task");
         return ESP_FAIL;
     }
 
+#ifdef MICROLINK_COORD_STACK_PSRAM
+    ret = xTaskCreatePinnedToCoreWithCaps(ml_coord_task, "ml_coord", ML_TASK_COORD_STACK,
+                                          ml, ML_TASK_COORD_PRIO, &ml->coord_task,
+                                          ML_TASK_COORD_CORE,
+                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
     ret = xTaskCreatePinnedToCore(ml_coord_task, "ml_coord", ML_TASK_COORD_STACK,
-                                   ml, ML_TASK_COORD_PRIO, &ml->coord_task, ML_TASK_COORD_CORE);
+                                  ml, ML_TASK_COORD_PRIO, &ml->coord_task, ML_TASK_COORD_CORE);
+#endif
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create coord task");
         return ESP_FAIL;
     }
 
     ret = xTaskCreatePinnedToCore(ml_wg_mgr_task, "ml_wg_mgr", ML_TASK_WG_MGR_STACK,
-                                   ml, ML_TASK_WG_MGR_PRIO, &ml->wg_mgr_task, ML_TASK_WG_MGR_CORE);
+                                  ml, ML_TASK_WG_MGR_PRIO, &ml->wg_mgr_task, ML_TASK_WG_MGR_CORE);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create wg_mgr task");
         return ESP_FAIL;
@@ -587,6 +601,10 @@ microlink_state_t microlink_get_state(const microlink_t *ml) {
 
 bool microlink_is_connected(const microlink_t *ml) {
     return ml && ml->state == ML_STATE_CONNECTED;
+}
+
+bool microlink_is_derp_connected(const microlink_t *ml) {
+    return ml && ml->derp.connected;
 }
 
 uint32_t microlink_get_vpn_ip(const microlink_t *ml) {

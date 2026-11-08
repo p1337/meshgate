@@ -43,6 +43,25 @@
 #include "lwip/timeouts.h"
 #include "lwip/tcpip.h"
 
+/* WireGuard packet processing can run either on MicroLink's manager task or
+ * on lwIP's TCPIP task. ESP-IDF 5 asserts on netif mutation unless the caller
+ * owns the core lock, while blindly locking from the TCPIP task would
+ * deadlock. Acquire the lock only when the current context does not own it. */
+static void wireguardif_set_link_state(struct netif *netif, bool up) {
+	bool acquired = !sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER);
+	if (acquired) {
+		LOCK_TCPIP_CORE();
+	}
+	if (up) {
+		netif_set_link_up(netif);
+	} else {
+		netif_set_link_down(netif);
+	}
+	if (acquired) {
+		UNLOCK_TCPIP_CORE();
+	}
+}
+
 #include "wireguard.h"
 #include "crypto.h"
 #include "lwip_compat.h"
@@ -391,7 +410,7 @@ static void wireguardif_process_response_message(struct wireguard_device *device
 		wireguardif_send_keepalive(device, peer);
 
 		// Set the IF-UP flag on netif
-		netif_set_link_up(device->netif);
+		wireguardif_set_link_state(device->netif, true);
 		printf("[WG] *** WIREGUARD SESSION ESTABLISHED wg_idx=%u ***\n", wg_idx);
 	} else {
 		// Packet bad
@@ -482,7 +501,7 @@ static void wireguardif_process_data_message(struct wireguard_device *device, st
 					}
 
 					// Make sure that link is reported as up
-					netif_set_link_up(device->netif);
+					wireguardif_set_link_state(device->netif, true);
 
 					if (pbuf->tot_len > 0) {
 						//4a. Once the packet payload is decrypted, the interface has a plaintext packet. If this is not an IP packet, it is dropped.
@@ -1155,7 +1174,7 @@ static void wireguardif_tmr(void *arg) {
 
 	if (!link_up) {
 		// Clear the IF-UP flag on netif
-		netif_set_link_down(device->netif);
+		wireguardif_set_link_state(device->netif, false);
 	}
 }
 
@@ -1205,7 +1224,7 @@ void wireguardif_periodic(struct netif *netif) {
 		}
 	}
 	if (!link_up) {
-		netif_set_link_down(device->netif);
+		wireguardif_set_link_state(device->netif, false);
 	}
 }
 

@@ -631,7 +631,11 @@ void ml_derp_tx_task(void *arg) {
     }
 
     ESP_LOGI(TAG, "DERP I/O task exiting");
+#ifdef MICROLINK_DERP_STACK_PSRAM
+    vTaskDeleteWithCaps(NULL);
+#else
     vTaskDelete(NULL);
+#endif
 }
 
 /* ============================================================================
@@ -714,19 +718,43 @@ esp_err_t ml_derp_connect(microlink_t *ml) {
     mbedtls_entropy_init(&ml->derp.entropy);
     mbedtls_ctr_drbg_init(&ml->derp.ctr_drbg);
 
-    mbedtls_ctr_drbg_seed(&ml->derp.ctr_drbg, mbedtls_entropy_func,
-                           &ml->derp.entropy, NULL, 0);
+    int ret = mbedtls_ctr_drbg_seed(&ml->derp.ctr_drbg, mbedtls_entropy_func,
+                                     &ml->derp.entropy, NULL, 0);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "CTR-DRBG seed failed: -0x%04x", -ret);
+        ml_close_sock(sock);
+        ml->derp.sockfd = -1;
+        return ESP_FAIL;
+    }
 
-    mbedtls_ssl_config_defaults(&ml->derp.ssl_conf,
-                                 MBEDTLS_SSL_IS_CLIENT,
-                                 MBEDTLS_SSL_TRANSPORT_STREAM,
-                                 MBEDTLS_SSL_PRESET_DEFAULT);
+    ret = mbedtls_ssl_config_defaults(&ml->derp.ssl_conf,
+                                      MBEDTLS_SSL_IS_CLIENT,
+                                      MBEDTLS_SSL_TRANSPORT_STREAM,
+                                      MBEDTLS_SSL_PRESET_DEFAULT);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "TLS config defaults failed: -0x%04x", -ret);
+        ml_close_sock(sock);
+        ml->derp.sockfd = -1;
+        return ESP_FAIL;
+    }
     mbedtls_ssl_conf_authmode(&ml->derp.ssl_conf, MBEDTLS_SSL_VERIFY_NONE);
     mbedtls_ssl_conf_rng(&ml->derp.ssl_conf, mbedtls_ctr_drbg_random, &ml->derp.ctr_drbg);
     mbedtls_ssl_conf_read_timeout(&ml->derp.ssl_conf, DERP_CONNECT_TIMEOUT_MS);
 
-    mbedtls_ssl_setup(&ml->derp.ssl, &ml->derp.ssl_conf);
-    mbedtls_ssl_set_hostname(&ml->derp.ssl, derp_host);
+    ret = mbedtls_ssl_setup(&ml->derp.ssl, &ml->derp.ssl_conf);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "TLS context setup failed: -0x%04x", -ret);
+        ml_close_sock(sock);
+        ml->derp.sockfd = -1;
+        return ESP_FAIL;
+    }
+    ret = mbedtls_ssl_set_hostname(&ml->derp.ssl, derp_host);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "TLS hostname setup failed: -0x%04x", -ret);
+        ml_close_sock(sock);
+        ml->derp.sockfd = -1;
+        return ESP_FAIL;
+    }
     /* Store socket fd BEFORE setting bio.
      * Use custom BIO callbacks that route through ml_read_sock/ml_write_sock,
      * which transparently support both lwIP and AT socket backends.
@@ -736,7 +764,6 @@ esp_err_t ml_derp_connect(microlink_t *ml) {
                          ml_derp_bio_send, NULL, ml_derp_bio_recv_timeout);
 
     /* TLS handshake - socket has 10s SO_RCVTIMEO from connect phase. */
-    int ret;
     while ((ret = mbedtls_ssl_handshake(&ml->derp.ssl)) != 0) {
         if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
             continue;

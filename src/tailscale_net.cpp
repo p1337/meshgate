@@ -70,7 +70,7 @@ void tailscale_net_start(const BridgeConfig& cfg) {
     config.enable_derp = true;
     config.enable_stun = true;
     config.enable_disco = true;
-    config.max_peers = 16;
+    config.max_peers = 4;
 
     s_microlink = microlink_init(&config);
     if (s_microlink == nullptr) {
@@ -97,6 +97,14 @@ bool tailscale_net_is_enabled() {
 bool tailscale_net_is_connected() {
 #ifdef ESP_IDF5_MIGRATION_BUILD
     return s_microlink != nullptr && microlink_is_connected(s_microlink);
+#else
+    return false;
+#endif
+}
+
+bool tailscale_net_is_derp_connected() {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    return s_microlink != nullptr && microlink_is_derp_connected(s_microlink);
 #else
     return false;
 #endif
@@ -130,6 +138,53 @@ int tailscale_net_peer_count() {
     }
 #endif
     return s_peerCount.load(std::memory_order_relaxed);
+}
+
+namespace {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+bool getPeerInfo(int index, microlink_peer_info_t& info) {
+    return s_microlink != nullptr &&
+           microlink_get_peer_info(s_microlink, index, &info) == ESP_OK;
+}
+#endif
+}
+
+String tailscale_net_peer_ip(int index) {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    microlink_peer_info_t info = {};
+    if (getPeerInfo(index, info)) {
+        char ipText[16] = {};
+        microlink_ip_to_str(info.vpn_ip, ipText);
+        return String(ipText);
+    }
+#endif
+    return String();
+}
+
+String tailscale_net_peer_name(int index) {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    microlink_peer_info_t info = {};
+    if (getPeerInfo(index, info)) return String(info.hostname);
+#endif
+    return String();
+}
+
+bool tailscale_net_peer_online(int index) {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    microlink_peer_info_t info = {};
+    return getPeerInfo(index, info) && info.online;
+#else
+    return false;
+#endif
+}
+
+bool tailscale_net_peer_direct(int index) {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    microlink_peer_info_t info = {};
+    return getPeerInfo(index, info) && info.direct_path;
+#else
+    return false;
+#endif
 }
 
 void tailscale_net_factory_reset() {

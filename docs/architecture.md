@@ -39,14 +39,38 @@ not expose the required ChaChaPoly symbols.
 
 Tailscale configuration and its write-only auth key are stored in both
 `bridge_cfg` and `bridge_backup`. The Web API exposes only key presence. The
-runtime status is available at `/tailscale_status`. Joining a tailnet requires
-an auth key issued by that tailnet; the firmware cannot derive authorization
-from an account email address.
+runtime status is available at `/tailscale_status`. `connected` reports
+control-plane registration, while `derp_connected` proves that the DERP TLS and
+protocol handshakes completed and the relay data channel is usable. The same
+response lists the known peer VPN IPs and whether each peer uses a direct or
+relayed path. Joining a tailnet requires an auth key issued by that tailnet;
+the firmware cannot derive authorization from an account email address.
 
 The Nano's local variant disables Arduino's stock double-tap recovery path.
 That path expects a factory partition, while this project's 16 MB layout uses
 two 6.25 MiB OTA application slots and has no factory application. Leaving the
 stock recovery hook enabled caused a reboot loop after rapid resets.
+
+The precompiled Arduino ESP-IDF 5 mbedTLS library uses internal-memory
+allocation. A DERP TLS context therefore needs a sufficiently large contiguous
+internal block even when the Nano has 8 MiB PSRAM. The IDF-5 deployment creates
+the 14 KiB DERP and 12 KiB coordination task stacks in PSRAM so that
+`mbedtls_ssl_setup()` can allocate its internal buffers. The 8 KiB network-I/O
+and WireGuard-manager stacks must remain internal: those tasks can run while
+the flash cache is disabled, and putting them in PSRAM triggers
+`esp_task_stack_is_sane_cache_disabled()` or an IPC stack-canary panic.
+
+The Tailscale profile compiles the BLE/TCP queues as 4/4 packets, the MQTT
+downlink queue as 2 packets, and the MicroLink peer table for four peers. This
+leaves runtime headroom for DERP/WireGuard plus an active Meshtastic TCP client
+while retaining complete-packet buffering in both directions. The deployed
+Nano accepted three simultaneous port-4403 clients without queue drops. Legacy
+profiles keep their original queue and peer sizing.
+
+ESP-IDF 5 also enforces lwIP core locking. MicroLink's WireGuard manager
+registers its raw `netif` and UDP PCB while holding `LOCK_TCPIP_CORE`; direct
+`netif_set_up()` or raw-PCB registration from the manager task otherwise trips
+`LWIP_ASSERT_CORE_LOCKED` and causes a reboot loop immediately after startup.
 
 ### 2. Key Libraries
 *   **BLE:** `h2zero/NimBLE-Arduino`. NimBLE is a highly optimized, low-RAM Bluetooth stack. It is much more stable and resource-efficient than the standard Bluedroid stack, and it fully supports secure pairing and PIN codes.

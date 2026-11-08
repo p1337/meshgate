@@ -4,9 +4,10 @@
 > remains on Arduino Core 2.0.17 / ESP-IDF 4.4.7. The Nano deployment target
 > `arduino_nano_esp32_idf5` builds with Arduino Core 3.3.9 / ESP-IDF 5.5.4,
 > NimBLE-Arduino 2.5.2, and MicroLink/Tailscale. It has been verified on an
-> Arduino Nano ESP32 for WiFi, Web UI, TCP 4403, authenticated OTA, and stable
-> BLE scanning/reconnect operation. A real Tailscale join still requires a
-> user-issued auth key for the intended tailnet.
+> Arduino Nano ESP32 for WiFi, Web UI, TCP 4403, authenticated OTA, stable BLE
+> reconnect operation, a real Tailscale join, and an operational DERP relay
+> data channel. Joining another tailnet still requires a user-issued auth key
+> for that tailnet.
 
 A simple, lightweight ESP32 firmware that bridges a Meshtastic radio's Bluetooth connection to your local WiFi network. 
 
@@ -176,8 +177,11 @@ tailnet directly, without a Raspberry Pi, public IP address, port forwarding,
 or dynamic DNS. Enter a lowercase device name and a Tailscale auth key in the
 Web UI, enable Tailscale, save, and reboot. The status card and
 `GET /tailscale_status` report the state, assigned Tailscale IPv4 address, and
-known peer count. Once connected, use the assigned address with TCP port 4403
-or the HTTP diagnostics/OTA endpoints.
+known peers. The response distinguishes control-plane registration
+(`connected`) from the actual relay data channel (`derp_connected`) and lists
+each peer's VPN IP, name, online state, and direct/relayed path. Remote access
+is ready only when `derp_connected` is true. Once ready, use the assigned
+address with TCP port 4403 or the HTTP diagnostics/OTA endpoints.
 
 The auth key is write-only: `GET /config` reports only whether one is stored.
 It is saved in both configuration namespaces for recovery and is never printed

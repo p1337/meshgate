@@ -1,6 +1,7 @@
 .pio
 .vscode
 .devcontainer/*.log
+logs/
 *.o
 *.bin
 !data/cert/x509_crt_bundle.bin

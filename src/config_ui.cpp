@@ -1756,12 +1756,29 @@ void config_ui_start_server() {
         response->print(tailscale_net_is_enabled() ? "true" : "false");
         response->print(",\"connected\":");
         response->print(tailscale_net_is_connected() ? "true" : "false");
+        response->print(",\"derp_connected\":");
+        response->print(tailscale_net_is_derp_connected() ? "true" : "false");
         response->print(",\"state\":\"");
         utils_escape_json_print(*response, tailscale_net_state_name());
         response->print("\",\"vpn_ip\":\"");
         utils_escape_json_print(*response, tailscale_net_vpn_ip());
         response->print("\",\"peer_count\":");
-        response->print(tailscale_net_peer_count());
+        const int peerCount = tailscale_net_peer_count();
+        response->print(peerCount);
+        response->print(",\"peers\":[");
+        for (int i = 0; i < peerCount; ++i) {
+            if (i > 0) response->print(',');
+            response->print("{\"ip\":\"");
+            utils_escape_json_print(*response, tailscale_net_peer_ip(i));
+            response->print("\",\"name\":\"");
+            utils_escape_json_print(*response, tailscale_net_peer_name(i));
+            response->print("\",\"online\":");
+            response->print(tailscale_net_peer_online(i) ? "true" : "false");
+            response->print(",\"direct\":");
+            response->print(tailscale_net_peer_direct(i) ? "true" : "false");
+            response->print('}');
+        }
+        response->print(']');
         response->print("}");
         request->send(response);
     });

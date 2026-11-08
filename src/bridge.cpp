@@ -679,7 +679,7 @@ void bridge_init(const String& ble_name, const String& ble_mac, uint32_t ble_pin
     /**
      * Queues for passing packets between BLE <--> TCP.
      * Statically allocate FreeRTOS queues in .bss segment (zero heap fragmentation)
-     * Holds up to BRIDGE_QUEUE_SIZE (defaults 100) "packets" of data
+     * Holds up to BRIDGE_QUEUE_SIZE packets of data.
      */
     tcp_to_ble_queue = xQueueCreateStatic(
         BRIDGE_QUEUE_SIZE,

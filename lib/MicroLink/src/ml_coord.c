@@ -2150,7 +2150,11 @@ void ml_coord_task(void *arg) {
                              pdFALSE, pdFALSE, portMAX_DELAY);
         if (wb & ML_EVT_SHUTDOWN_REQUEST) {
             ESP_LOGI(TAG, "Shutdown requested before WiFi, exiting");
+#ifdef MICROLINK_COORD_STACK_PSRAM
+            vTaskDeleteWithCaps(NULL);
+#else
             vTaskDelete(NULL);
+#endif
             return;
         }
     }
@@ -2589,5 +2593,9 @@ void ml_coord_task(void *arg) {
     memset(&noise, 0, sizeof(noise));
 
     ESP_LOGI(TAG, "Coord task exiting");
+#ifdef MICROLINK_COORD_STACK_PSRAM
+    vTaskDeleteWithCaps(NULL);
+#else
     vTaskDelete(NULL);
+#endif
 }
