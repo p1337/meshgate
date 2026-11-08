@@ -3,6 +3,9 @@ name: Deploy Web Flasher to GitHub Pages
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: ["Release Firmware"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +19,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -28,8 +32,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Fetch the latest release tag
-          LATEST_TAG=$(gh release list --limit 1 | awk '{print $1}')
+          set -euo pipefail
+
+          LATEST_TAG=$(gh release view --json tagName --jq .tagName)
           if [ -z "$LATEST_TAG" ]; then
             echo "No releases found. Exiting."
             exit 1
@@ -43,20 +48,16 @@ jobs:
           # We use GITHUB_RUN_ID so even manual re-runs on the same tag bypass the cache
           sed -i "s/\.json/\.json?v=${GITHUB_RUN_ID}/g" web/index.html
           
-          # Download all zip assets from the latest release
-          gh release download "$LATEST_TAG" -D web/firmware --pattern "*.zip"
+          gh release download "$LATEST_TAG" -D web/firmware --pattern "firmware-*.zip"
           
           cd web/firmware
-          # Extract and generate manifest for each board
           for zip in *.zip; do
-            # Extract board name from filename (e.g. firmware-esp32dev-v1.0.0.zip -> esp32dev)
             board=$(echo "$zip" | sed -E 's/firmware-(.+)-v[0-9].+/\1/')
             
             mkdir -p "$board"
             unzip "$zip" -d "$board"
             rm "$zip"
             
-            # Determine bootloader offset and chip family based on architecture
             if [[ "$board" == *"s3"* || "$board" == arduino_nano_esp32* ]]; then
               bootloader_offset="0"
               chip_family="ESP32-S3"
@@ -65,21 +66,28 @@ jobs:
               chip_family="ESP32"
             fi
             
-            # Generate the manifest (with prompt erase enabled)
+            if [ -f "$board/firmware.factory.bin" ]; then
+              parts='[
+                  { "path": "firmware/'"$board"'/firmware.factory.bin", "offset": 0 }
+                ]'
+            else
+              parts='[
+                  { "path": "firmware/'"$board"'/bootloader.bin", "offset": '"$bootloader_offset"' },
+                  { "path": "firmware/'"$board"'/partitions.bin", "offset": 32768 },
+                  { "path": "firmware/'"$board"'/boot_app0.bin", "offset": 57344 },
+                  { "path": "firmware/'"$board"'/firmware.bin", "offset": 65536 }
+                ]'
+            fi
+
             cat <<EOF > "../manifest_${board}.json"
           {
-            "name": "Meshtastic Bridge ($board)",
+            "name": "MeshGate ($board)",
             "version": "$LATEST_TAG",
             "new_install_prompt_erase": true,
             "builds": [
               {
                 "chipFamily": "$chip_family",
-                "parts": [
-                  { "path": "firmware/$board/bootloader.bin", "offset": $bootloader_offset },
-                  { "path": "firmware/$board/partitions.bin", "offset": 32768 },
-                  { "path": "firmware/$board/boot_app0.bin", "offset": 57344 },
-                  { "path": "firmware/$board/firmware.bin", "offset": 65536 }
-                ]
+                "parts": $parts
               }
             ]
           }
@@ -87,8 +95,12 @@ jobs:
           done
           cd ../../
 
+          test -f "web/manifest_arduino_nano_esp32_idf5.json"
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

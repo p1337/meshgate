@@ -261,14 +261,10 @@ Follow these steps to trigger the CI/CD pipeline:
    git tag v1.2.0
    git push origin v1.2.0
    ```
-3. **Wait for the Release Pipeline**: 
+3. **Wait for the Release Pipeline**:
    * Navigate to the **Actions** tab on your GitHub repository.
-   * You will see the **Draft Release** workflow running. This workflow dynamically injects the `v1.2.0` string into the C++ code, compiles all hardware profiles (`esp32dev`, `esp32s3`, etc.), packages the `.bin` files, and drafts a GitHub Release for you.
-4. **Publish the Draft**:
-   * Navigate to the **Releases** tab on your GitHub repository.
-   * Click **Edit** on the newly generated Draft release.
-   * Add any specific release notes and click **Publish Release**.
-5. **Wait for the Web Flasher Pipeline**:
-   * As soon as you click Publish, the **Deploy Web Flasher to GitHub Pages** action will automatically trigger.
+   * The **Release Firmware** workflow injects the tag into the firmware, builds the Arduino Nano ESP32 IDF-5 production profile, publishes its ZIP, OTA/factory binaries and SHA-256 checksums, and creates a public GitHub Release.
+4. **Wait for the Web Flasher Pipeline**:
+   * Successful completion of the release workflow automatically triggers **Deploy Web Flasher to GitHub Pages**. A `workflow_run` trigger is used because releases created with `GITHUB_TOKEN` do not emit another ordinary workflow event.
    * It will securely download the release binaries, automatically generate the `manifest.json` configurations for ESP Web Tools, and deploy them to `https://p1337.github.io/meshgate/`.
    * The web flasher will instantly update to show "Firmware Version: v1.2.0".

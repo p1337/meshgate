@@ -1,4 +1,4 @@
-name: Draft Release
+name: Release Firmware
 
 on:
   push:
@@ -46,34 +46,53 @@ jobs:
           # Find and replace the FIRMWARE_VERSION string inside build_options.h
           sed -i "s/#define FIRMWARE_VERSION .*/#define FIRMWARE_VERSION \"$VERSION\"/g" include/build_options.h
 
-      - name: Build all firmware profiles
-        run: pio run
+      - name: Build production ESP32-S3 firmware
+        run: pio run -e arduino_nano_esp32_idf5
 
-      - name: Prepare Release Assets
+      - name: Prepare release assets
         run: |
-          mkdir release_assets
+          set -euo pipefail
+          mkdir -p release_assets
           BOOT_APP=~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin
-          
-          # Iterate over all compiled environments and package their binaries
-          for dir in .pio/build/*/; do
-            board=$(basename "$dir")
-            if [ -f "$dir/firmware.bin" ]; then
-              mkdir -p "temp_zip/${board}"
-              cp "$dir/firmware.bin" "temp_zip/${board}/"
-              cp "$dir/bootloader.bin" "temp_zip/${board}/"
-              cp "$dir/partitions.bin" "temp_zip/${board}/"
-              cp "$BOOT_APP" "temp_zip/${board}/boot_app0.bin"
-              
-              # Create a zip archive for the release
-              cd temp_zip/${board}
-              zip -r "../../release_assets/firmware-${board}-${GITHUB_REF_NAME}.zip" *
-              cd ../../
-            fi
-          done
+          board="arduino_nano_esp32_idf5"
+          dir=".pio/build/${board}"
 
-      - name: Draft GitHub Release
+          test -f "$BOOT_APP"
+          test -f "$dir/firmware.bin"
+          test -f "$dir/firmware.factory.bin"
+
+          package="temp_zip/${board}"
+          mkdir -p "$package"
+          cp "$dir/firmware.bin" "$package/firmware.bin"
+          cp "$dir/bootloader.bin" "$package/bootloader.bin"
+          cp "$dir/partitions.bin" "$package/partitions.bin"
+          cp "$BOOT_APP" "$package/boot_app0.bin"
+          cp "$dir/firmware.factory.bin" "$package/firmware.factory.bin"
+
+          cp "$dir/firmware.bin" "release_assets/meshgate-${board}-${GITHUB_REF_NAME}-ota.bin"
+          cp "$dir/firmware.factory.bin" "release_assets/meshgate-${board}-${GITHUB_REF_NAME}-factory.bin"
+
+          (
+            cd "$package"
+            zip -9 -r "../../release_assets/firmware-${board}-${GITHUB_REF_NAME}.zip" .
+          )
+
+          test "$(find release_assets -name 'firmware-*.zip' | wc -l)" -eq 1
+          (cd release_assets && sha256sum * > SHA256SUMS.txt)
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          name: MeshGate ${{ github.ref_name }}
+          body: |
+            MeshGate production firmware for Arduino Nano ESP32 (ESP32-S3).
+
+            - Use the Web Flasher for a first installation.
+            - Use the `*-ota.bin` file for an authenticated OTA update.
+            - This is the ESP-IDF 5 production build with native Tailscale.
+            - Verify downloads with `SHA256SUMS.txt`.
+          draft: false
+          prerelease: false
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: release_assets/*

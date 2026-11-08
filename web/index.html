@@ -25,7 +25,7 @@
     .notice { margin:22px 0; padding:14px 16px; border-left:3px solid var(--yellow); background:rgba(255,214,10,.05); color:var(--text); }
     .notice strong { color:var(--yellow); }
     h2 { margin:34px 0 14px; color:var(--text); font:700 17px var(--mono); letter-spacing:.08em; text-transform:uppercase; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+    .grid { display:grid; grid-template-columns:minmax(0,560px); gap:14px; }
     .card { display:flex; flex-direction:column; min-height:230px; padding:20px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(135deg,var(--panel),var(--panel2)); }
     .card.primary { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
     .badge { align-self:flex-start; margin-bottom:12px; padding:2px 7px; border:1px solid var(--accent); color:var(--accent); font:500 10px var(--mono); letter-spacing:.08em; text-transform:uppercase; }
@@ -49,46 +49,14 @@
 
     <div class="notice"><strong>Upgrade:</strong> leave <em>Erase device</em> unchecked to preserve Wi-Fi, BLE, VPN, MQTT and OTA configuration. Use erase only for a deliberate factory reset.</div>
 
-    <h2>Select hardware</h2>
+    <h2>Install MeshGate</h2>
     <section class="grid">
       <article class="card primary">
         <span class="badge">Production · IDF 5</span>
-        <h3>Arduino Nano ESP32</h3>
+        <h3>Arduino Nano ESP32 · ESP32-S3</h3>
         <p>ESP32-S3 production build with MicroLink/Tailscale, secure OTA, BLE-to-TCP and MQTT proxy support.</p>
         <div class="meta">Arduino Core 3.3.9 · ESP-IDF 5.5.4</div>
         <div class="install"><esp-web-install-button manifest="manifest_arduino_nano_esp32_idf5.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
-      </article>
-
-      <article class="card">
-        <span class="badge">Recommended</span>
-        <h3>Seeed XIAO ESP32-S3</h3>
-        <p>Compact ESP32-S3 board with native USB and a supported status LED configuration.</p>
-        <div class="meta">Local bridge · WireGuard · OTA</div>
-        <div class="install"><esp-web-install-button manifest="manifest_seeed_xiao_esp32s3.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
-      </article>
-
-      <article class="card">
-        <span class="badge">ESP32-S3</span>
-        <h3>Generic ESP32-S3 DevKitC</h3>
-        <p>Standard S3 development boards with native USB and the generic DevKitC pin map.</p>
-        <div class="meta">Local bridge · WireGuard · OTA</div>
-        <div class="install"><esp-web-install-button manifest="manifest_esp32-s3-devkitc-1.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
-      </article>
-
-      <article class="card">
-        <span class="badge">Recovery · IDF 4</span>
-        <h3>Arduino Nano ESP32</h3>
-        <p>Proven recovery image without native Tailscale. Keep this option available for USB recovery.</p>
-        <div class="meta">Arduino Core 2.0.17 · ESP-IDF 4.4.7</div>
-        <div class="install"><esp-web-install-button manifest="manifest_arduino_nano_esp32.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
-      </article>
-
-      <article class="card">
-        <span class="badge">Classic ESP32</span>
-        <h3>WROOM-32 / NodeMCU</h3>
-        <p>Classic ESP32 boards using a CP2102 or CH340 USB-to-serial interface.</p>
-        <div class="meta">Local bridge · WireGuard · OTA</div>
-        <div class="install"><esp-web-install-button manifest="manifest_esp32dev.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
       </article>
     </section>
 
