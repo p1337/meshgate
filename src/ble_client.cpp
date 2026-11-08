@@ -1,4 +1,5 @@
 #include "ble_client.h"
+#include "web_log.h"
 #include "utils.h"
 #include <NimBLEDevice.h>
 #include <vector>
@@ -25,6 +26,12 @@ static std::atomic<bool> isScanningFlag{false};
  * NOTE: As currently written, should be thread safe for reads/writes.
  */
 static String lastScanError = "";
+
+// Meshtastic's official BLE service UUID. The legacy UUID is retained for
+// radios running older firmware. Filtering advertisements by these UUIDs keeps
+// unrelated rings, watches, trackers, and anonymous BLE beacons out of the UI.
+static const NimBLEUUID MESHTASTIC_SERVICE_UUID("6ba1b218-15a8-461f-9fa8-5dcae273eafd");
+static const NimBLEUUID MESHTASTIC_LEGACY_SERVICE_UUID("cb0b9a0b-a8c2-49c0-bdd5-3fa12b04d84b");
 
 /**
  * Initialize bluetooth radio.
@@ -165,6 +172,21 @@ String ble_client_get_scan_results_json() {
         String mac = String(device.getAddress().toString().c_str());
         int rssi = device.getRSSI();
 
+        const bool isMeshtastic =
+            device.isAdvertisingService(MESHTASTIC_SERVICE_UUID) ||
+            device.isAdvertisingService(MESHTASTIC_LEGACY_SERVICE_UUID);
+
+        // Only offer radios that advertise a Meshtastic BLE service. A radio
+        // may legitimately omit its human-readable name, so the service UUID
+        // (not the name) is the authoritative discriminator.
+        if (!isMeshtastic) {
+            continue;
+        }
+
+        if (name.isEmpty()) {
+            name = "Meshtastic device";
+        }
+
         // Skip devices with empty MAC address.
         if (mac.isEmpty()) {
             continue;
@@ -247,13 +269,13 @@ public:
 
     uint32_t onPassKeyRequest() override {
         passkeyPrompted = true;
-        log_i("[BLE] Passkey requested by server, providing PIN: %06u", activePasskey);
+        log_i("[BLE] Passkey requested by server; configured PIN provided (hidden)");
         return activePasskey;
     }
 
     bool onConfirmPIN(uint32_t pin) override {
         passkeyPrompted = true;
-        log_i("[BLE] Confirming PIN: %06u", pin);
+        log_i("[BLE] Confirming pairing PIN (hidden)");
         return (pin == activePasskey);
     }
 
@@ -294,7 +316,7 @@ BleTestResult ble_client_test_connection(const String& macStr, const String& pin
     activePasskey = pinStr.toInt();
     bridgeCallbacks.reset();
 
-    log_i("[BLE Test] Attempting test connection to %s with PIN %06u...", macStr.c_str(), activePasskey);
+    log_i("[BLE Test] Attempting test connection to %s with configured PIN (hidden)...", macStr.c_str());
 
     // Determine the type of MAC address the BLE device is using.
     NimBLEAddress addr = utils_parse_ble_address(macStr);

@@ -1,4 +1,5 @@
 #include "mqtt_net.h"
+#include "web_log.h"
 #include "bridge.h"
 #include "build_options.h"
 #include <mqtt_client.h>

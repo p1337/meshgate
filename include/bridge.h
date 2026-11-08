@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 
-void bridge_init(const String& ble_mac, uint32_t ble_pin);
+void bridge_init(const String& ble_name, const String& ble_mac, uint32_t ble_pin);
 void bridge_start();
 bool bridge_is_ble_connected();
 bool bridge_enqueue_mqtt_to_ble(const uint8_t* data, size_t len);

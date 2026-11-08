@@ -25,6 +25,6 @@
 *   **Generic ESP32-S3 DevKit** (`esp32-s3-devkitc-1`): Standard S3 devkit. Native USB.
 
 ## Outstanding Features & Future Roadmap
-*   **Over-The-Air (OTA) Updates:** Integrate WebOTA or ArduinoOTA to allow firmware updates directly over WiFi without USB.
+*   **Completed — authenticated OTA updates:** The Arduino Nano ESP32 profile uses dual OTA slots and a protected raw HTTP upload API with MD5 verification and an automated PowerShell uploader.
 *   DRY out notifyFromRadio() and bridgeBleTask() in bridge.cpp?
 *   **MQTT Proxy Fallback Policy:** Decide whether `MqttClientProxyMessage` uplink packets should be dropped or allowed to fall through to TCP clients when the bridge's MQTT Gateway is enabled but the broker connection is temporarily offline.

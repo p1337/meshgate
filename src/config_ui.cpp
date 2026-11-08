@@ -9,12 +9,16 @@
 #include "build_options.h"
 #include "diag_telemetry.h"
 #include "utils.h"
+#include "wireguard_net.h"
+#include "web_log.h"
+#include "ota_update.h"
 #include "esp_log.h"
 
 /**
  * For retrieving configuration properties stored in NVS.
  */
 Preferences preferences;
+Preferences backupPreferences;
 
 /**
  * Webserver for Captive Portal/Setup UI.
@@ -25,6 +29,74 @@ AsyncWebServer server(80);
  * Defines the namespace which preferences are stored to NVS under.
  */
 const char* PREF_NAMESPACE = "bridge_cfg";
+const char* BACKUP_PREF_NAMESPACE = "bridge_backup";
+
+static void backupCurrentConfiguration();
+
+static bool isValidOtaToken(const String& token) {
+    if (token.length() != 64) {
+        return false;
+    }
+    for (size_t i = 0; i < token.length(); ++i) {
+        const char c = token[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void ensureOtaToken() {
+    String token = preferences.getString("ota_token", "");
+    if (!isValidOtaToken(token)) {
+        token = backupPreferences.getString("ota_token", "");
+    }
+
+#ifdef OTA_BOOTSTRAP_TOKEN
+    if (!isValidOtaToken(token)) {
+        token = OTA_BOOTSTRAP_TOKEN;
+        log_i("[Config] Installed OTA authentication token from protected build input");
+    }
+#endif
+
+    if (!isValidOtaToken(token)) {
+        log_w("[Config] OTA disabled because no valid authentication token is configured");
+        return;
+    }
+
+    preferences.putString("ota_token", token);
+    backupPreferences.putString("ota_token", token);
+}
+
+static void restartTask(void*) {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    ESP.restart();
+    vTaskDelete(nullptr);
+}
+
+static bool scheduleRestart() {
+    return xTaskCreate(restartTask, "api-restart", 2048, nullptr, 1, nullptr) == pdPASS;
+}
+
+static void writeStoredConfiguration(Preferences& target, const BridgeConfig& cfg) {
+    target.putString("wifi_ssid", cfg.wifi_ssid);
+    target.putString("wifi_pass", cfg.wifi_pass);
+    target.putString("ble_name", cfg.ble_name);
+    target.putString("ble_mac", cfg.ble_mac);
+    target.putString("ble_pin", cfg.ble_pin);
+    target.putBool("debug_logs", cfg.debug_logs);
+    target.putBool("wg_enabled", cfg.wireguard_enabled);
+    target.putString("wg_local_ip", cfg.wireguard_local_ip);
+    target.putString("wg_remote", cfg.wireguard_remote_cidr);
+    target.putString("wg_endpoint", cfg.wireguard_endpoint);
+    target.putUShort("wg_ep_port", cfg.wireguard_endpoint_port);
+    target.putString("wg_priv_key", cfg.wireguard_private_key);
+    target.putString("wg_pub_key", cfg.wireguard_public_key);
+    target.putString("wg_psk", cfg.wireguard_preshared_key);
+    target.putBool("mqtt_enabled", cfg.mqtt_enabled);
+    target.putBool("mqtt_tls_insec", cfg.mqtt_tls_insecure);
+    target.putString("mqtt_custom_ca", cfg.mqtt_custom_ca);
+}
 
 /**
  * The HTML for the modular captive portal
@@ -203,6 +275,63 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="btn-group">
         <button class="btn-success" id="btn-save-ble" onclick="saveBle()">Save Bluetooth</button>
         <button class="btn-secondary" onclick="toggleEditBle(false)">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- WireGuard VPN Card -->
+  <div class="card" id="card-wireguard">
+    <div class="card-header">
+      <div class="card-title">WireGuard VPN</div>
+      <button class="btn-edit" id="btn-edit-wireguard" onclick="toggleEditWireguard(true)">Edit</button>
+    </div>
+    <div id="wireguard-view">
+      <div class="info-row">
+        <span class="info-label">Tunnel:</span>
+        <span class="info-val"><span id="view-wireguard-status" class="status-pill disabled">Disabled</span></span>
+      </div>
+      <div class="info-row"><span class="info-label">Tunnel IP:</span><span class="info-val" id="view-wireguard-ip">(Not configured)</span></div>
+      <div class="info-row"><span class="info-label">German LAN:</span><span class="info-val" id="view-wireguard-remote">(Not configured)</span></div>
+      <div class="info-row"><span class="info-label">Endpoint:</span><span class="info-val" id="view-wireguard-endpoint">(Not configured)</span></div>
+      <div class="info-row"><span class="info-label">Private key:</span><span class="info-val" id="view-wireguard-private">(Not set)</span></div>
+      <div class="info-row"><span class="info-label">Preshared key:</span><span class="info-val" id="view-wireguard-psk">(Not set)</span></div>
+    </div>
+    <div id="wireguard-edit" style="display:none;">
+      <div class="alert alert-info" style="display:block; margin-bottom:12px;">
+        The ESP32 opens the VPN tunnel itself. TCP port 4403 and this setup page are then reachable at the tunnel IP. Secret keys are write-only and never returned by the web API.
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <label for="input-wireguard-enabled" style="margin:0;">Enable WireGuard</label>
+        <input type="checkbox" id="input-wireguard-enabled" style="width:20px; height:20px; margin:0;">
+      </div>
+      <label>Tunnel IP:</label>
+      <input type="text" id="input-wireguard-local-ip" placeholder="192.168.1.254">
+      <label>Remote LAN (CIDR):</label>
+      <input type="text" id="input-wireguard-remote-cidr" placeholder="192.168.1.0/24">
+      <label>FRITZ!Box endpoint (host or public IP):</label>
+      <input type="text" id="input-wireguard-endpoint" placeholder="example.myfritz.net">
+      <label>Endpoint UDP port:</label>
+      <input type="number" id="input-wireguard-endpoint-port" min="1" max="65535" value="51820">
+      <label>ESP32 private key:</label>
+      <div class="password-field">
+        <input type="password" id="input-wireguard-private-key" maxlength="44" placeholder="Leave empty to keep stored key">
+        <button type="button" class="btn-toggle-pass" onclick="togglePassVisibility('input-wireguard-private-key', this)">Show</button>
+      </div>
+      <label>FRITZ!Box public key:</label>
+      <input type="text" id="input-wireguard-public-key" maxlength="44" placeholder="Base64 public key">
+      <label>Preshared key (optional):</label>
+      <div class="password-field">
+        <input type="password" id="input-wireguard-preshared-key" maxlength="44" placeholder="Leave empty to keep stored key">
+        <button type="button" class="btn-toggle-pass" onclick="togglePassVisibility('input-wireguard-preshared-key', this)">Show</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; margin:8px 0 12px;">
+        <input type="checkbox" id="input-wireguard-clear-psk" style="width:18px; height:18px; margin:0;">
+        <label for="input-wireguard-clear-psk" style="margin:0;">Remove stored preshared key</label>
+      </div>
+      <div id="wireguard-alert" class="alert"></div>
+      <div class="btn-group">
+        <button class="btn-success" id="btn-save-wireguard" onclick="saveWireguard()">Save WireGuard</button>
+        <button class="btn-secondary" onclick="toggleEditWireguard(false)">Cancel</button>
       </div>
     </div>
   </div>
@@ -473,6 +602,23 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('input-ble-pin').value = cfg.ble_pin || '';
           document.getElementById('sys-debug-logs').checked = !!cfg.debug_logs;
 
+          // WireGuard fields. Secret inputs intentionally remain empty.
+          document.getElementById('view-wireguard-ip').innerText = cfg.wireguard_local_ip || '(Not configured)';
+          document.getElementById('view-wireguard-remote').innerText = cfg.wireguard_remote_cidr || '(Not configured)';
+          document.getElementById('view-wireguard-endpoint').innerText = cfg.wireguard_endpoint ? cfg.wireguard_endpoint + ':' + cfg.wireguard_endpoint_port : '(Not configured)';
+          document.getElementById('view-wireguard-private').innerText = cfg.wireguard_has_private_key ? '•••••••• (stored)' : '(Not set)';
+          document.getElementById('view-wireguard-psk').innerText = cfg.wireguard_has_preshared_key ? '•••••••• (stored)' : '(Not set)';
+          document.getElementById('input-wireguard-enabled').checked = !!cfg.wireguard_enabled;
+          document.getElementById('input-wireguard-local-ip').value = cfg.wireguard_local_ip || '';
+          document.getElementById('input-wireguard-remote-cidr').value = cfg.wireguard_remote_cidr || '';
+          document.getElementById('input-wireguard-endpoint').value = cfg.wireguard_endpoint || '';
+          document.getElementById('input-wireguard-endpoint-port').value = cfg.wireguard_endpoint_port || 51820;
+          document.getElementById('input-wireguard-public-key').value = cfg.wireguard_public_key || '';
+          document.getElementById('input-wireguard-private-key').value = '';
+          document.getElementById('input-wireguard-preshared-key').value = '';
+          document.getElementById('input-wireguard-clear-psk').checked = false;
+          updateWireguardStatus();
+
           // MQTT fields
           document.getElementById('input-mqtt-enabled').checked = !!cfg.mqtt_enabled;
           document.getElementById('input-mqtt-tls-insecure').checked = !!cfg.mqtt_tls_insecure;
@@ -483,6 +629,98 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('view-wifi-ssid').innerText = 'Error loading';
           document.getElementById('view-ble-device').innerText = 'Error loading';
         });
+    }
+
+    function updateWireguardStatus() {
+      const pill = document.getElementById('view-wireguard-status');
+      fetch('/wireguard_status')
+        .then(r => r.json())
+        .then(status => {
+          if (!status.enabled) {
+            pill.className = 'status-pill disabled';
+            pill.innerText = 'Disabled';
+          } else if (status.connected) {
+            pill.className = 'status-pill connected';
+            pill.innerText = 'Connected';
+          } else if (status.initialized) {
+            pill.className = 'status-pill connecting';
+            pill.innerText = 'Handshake pending';
+          } else {
+            pill.className = 'status-pill waiting';
+            pill.innerText = 'Waiting / restart required';
+          }
+        })
+        .catch(() => {
+          pill.className = 'status-pill error';
+          pill.innerText = 'Status unavailable';
+        });
+    }
+
+    function toggleEditWireguard(edit) {
+      if (edit && currentConfig) {
+        document.getElementById('input-wireguard-enabled').checked = !!currentConfig.wireguard_enabled;
+        document.getElementById('input-wireguard-local-ip').value = currentConfig.wireguard_local_ip || '';
+        document.getElementById('input-wireguard-remote-cidr').value = currentConfig.wireguard_remote_cidr || '';
+        document.getElementById('input-wireguard-endpoint').value = currentConfig.wireguard_endpoint || '';
+        document.getElementById('input-wireguard-endpoint-port').value = currentConfig.wireguard_endpoint_port || 51820;
+        document.getElementById('input-wireguard-public-key').value = currentConfig.wireguard_public_key || '';
+        document.getElementById('input-wireguard-private-key').value = '';
+        document.getElementById('input-wireguard-preshared-key').value = '';
+        document.getElementById('input-wireguard-clear-psk').checked = false;
+      }
+      document.getElementById('wireguard-view').style.display = edit ? 'none' : 'block';
+      document.getElementById('wireguard-edit').style.display = edit ? 'block' : 'none';
+      document.getElementById('btn-edit-wireguard').style.display = edit ? 'none' : 'block';
+      hideAlert('wireguard-alert');
+    }
+
+    function saveWireguard() {
+      const enabled = document.getElementById('input-wireguard-enabled').checked;
+      const localIp = document.getElementById('input-wireguard-local-ip').value.trim();
+      const remoteCidr = document.getElementById('input-wireguard-remote-cidr').value.trim();
+      const endpoint = document.getElementById('input-wireguard-endpoint').value.trim();
+      const endpointPort = document.getElementById('input-wireguard-endpoint-port').value;
+      const privateKey = document.getElementById('input-wireguard-private-key').value.trim();
+      const publicKey = document.getElementById('input-wireguard-public-key').value.trim();
+      const presharedKey = document.getElementById('input-wireguard-preshared-key').value.trim();
+      const clearPsk = document.getElementById('input-wireguard-clear-psk').checked;
+
+      if (enabled && (!localIp || !remoteCidr || !endpoint || !endpointPort || !publicKey || (!privateKey && !currentConfig.wireguard_has_private_key))) {
+        showAlert('wireguard-alert', 'error', 'Complete all required WireGuard fields.');
+        return;
+      }
+
+      const body = 'enabled=' + (enabled ? 'true' : 'false') +
+        '&local_ip=' + encodeURIComponent(localIp) +
+        '&remote_cidr=' + encodeURIComponent(remoteCidr) +
+        '&endpoint=' + encodeURIComponent(endpoint) +
+        '&endpoint_port=' + encodeURIComponent(endpointPort) +
+        '&private_key=' + encodeURIComponent(privateKey) +
+        '&public_key=' + encodeURIComponent(publicKey) +
+        '&preshared_key=' + encodeURIComponent(presharedKey) +
+        '&clear_psk=' + (clearPsk ? 'true' : 'false');
+
+      const button = document.getElementById('btn-save-wireguard');
+      button.disabled = true;
+      fetch('/save_wireguard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body
+      })
+      .then(async r => {
+        const result = await r.json();
+        if (!r.ok) throw new Error(result.error || 'Failed to save WireGuard');
+        return result;
+      })
+      .then(() => {
+        button.disabled = false;
+        showAlert('wireguard-alert', 'success', 'WireGuard saved redundantly. Reboot to apply.');
+        setTimeout(() => { toggleEditWireguard(false); loadConfig(); }, 900);
+      })
+      .catch(err => {
+        button.disabled = false;
+        showAlert('wireguard-alert', 'error', err.message || 'Network error saving WireGuard.');
+      });
     }
 
     function toggleEditMqtt(edit) {
@@ -702,6 +940,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         .catch(() => {})
         .finally(() => {
           statusFetchInFlight = false;
+          updateWireguardStatus();
           scheduleNextStatusPoll();
         });
     }
@@ -855,7 +1094,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       select.style.display = 'none';
 
       select.innerHTML = '<option value="">-- Scan in progress... --</option>';
-      status.innerText = 'Scanning for Bluetooth devices (4 seconds)...';
+      status.innerText = 'Scanning for Meshtastic radios (8 seconds)...';
       status.style.display = 'block';
       hideAlert('ble-scan-alert');
       hideAlert('ble-edit-alert');
@@ -881,9 +1120,9 @@ const char index_html[] PROGMEM = R"rawliteral(
                     showAlert('ble-scan-alert', 'error', data.error);
                   }
 
-                  select.innerHTML = '<option value="">-- Select Discovered Device --</option>';
+                  select.innerHTML = '<option value="">-- Select Meshtastic Radio --</option>';
                   if (!data.devices || data.devices.length === 0) {
-                    status.innerText = 'No devices found.';
+                    status.innerText = 'No Meshtastic radio found. Disconnect the radio from the phone, wait 10 seconds, then scan again.';
                     status.style.display = 'block';
                   } else {
                     data.devices.forEach(device => {
@@ -940,10 +1179,11 @@ const char index_html[] PROGMEM = R"rawliteral(
       .then(r => r.json())
       .then(res => {
         if (res.success) {
-          showAlert('wifi-alert', 'success', 'WiFi credentials saved!');
+          showAlert('wifi-alert', 'success', 'WiFi saved. Connecting now; the setup AP stays available.');
           setTimeout(() => {
             toggleEditWifi(false);
             loadConfig();
+            updateStatus();
           }, 800);
         } else {
           showAlert('wifi-alert', 'error', res.error || 'Failed to save WiFi.');
@@ -1185,6 +1425,17 @@ const char index_html[] PROGMEM = R"rawliteral(
  */
 void config_ui_init() {
     preferences.begin(PREF_NAMESPACE, false);
+    backupPreferences.begin(BACKUP_PREF_NAMESPACE, false);
+
+    ensureOtaToken();
+
+    if (!preferences.isKey("wifi_ssid") && backupPreferences.isKey("wifi_ssid")) {
+        BridgeConfig recovered = config_ui_load();
+        writeStoredConfiguration(preferences, recovered);
+        log_w("[Config] Primary NVS configuration restored from redundant backup");
+    } else if (preferences.isKey("wifi_ssid")) {
+        backupCurrentConfiguration();
+    }
 }
 
 /**
@@ -1193,29 +1444,78 @@ void config_ui_init() {
 BridgeConfig config_ui_load() {
     BridgeConfig cfg;
 
+    auto getString = [](const char* key, const char* fallback = "") -> String {
+        if (preferences.isKey(key)) return preferences.getString(key, fallback);
+        if (backupPreferences.isKey(key)) return backupPreferences.getString(key, fallback);
+        return String(fallback);
+    };
+    auto getBool = [](const char* key, bool fallback = false) -> bool {
+        if (preferences.isKey(key)) return preferences.getBool(key, fallback);
+        if (backupPreferences.isKey(key)) return backupPreferences.getBool(key, fallback);
+        return fallback;
+    };
+    auto getUShort = [](const char* key, uint16_t fallback) -> uint16_t {
+        if (preferences.isKey(key)) return preferences.getUShort(key, fallback);
+        if (backupPreferences.isKey(key)) return backupPreferences.getUShort(key, fallback);
+        return fallback;
+    };
+
     // Wifi settings
-    cfg.wifi_ssid = preferences.isKey("wifi_ssid") ? preferences.getString("wifi_ssid", "") : "";
-    cfg.wifi_pass = preferences.isKey("wifi_pass") ? preferences.getString("wifi_pass", "") : "";
+    cfg.wifi_ssid = getString("wifi_ssid");
+    cfg.wifi_pass = getString("wifi_pass");
 
     // Bluetooth settings
-    cfg.ble_name = preferences.isKey("ble_name") ? preferences.getString("ble_name", "") : "";
-    cfg.ble_mac = preferences.isKey("ble_mac") ? preferences.getString("ble_mac", "") : "";
-    cfg.ble_pin = preferences.isKey("ble_pin") ? preferences.getString("ble_pin", "") : "";
+    cfg.ble_name = getString("ble_name");
+    cfg.ble_mac = getString("ble_mac");
+    cfg.ble_pin = getString("ble_pin");
 
     // System settings
-    cfg.debug_logs = preferences.getBool("debug_logs", false);
+    cfg.debug_logs = getBool("debug_logs", false);
+
+    // WireGuard preferences
+    cfg.wireguard_enabled = getBool("wg_enabled", false);
+    cfg.wireguard_local_ip = getString("wg_local_ip");
+    cfg.wireguard_remote_cidr = getString("wg_remote");
+    cfg.wireguard_endpoint = getString("wg_endpoint");
+    cfg.wireguard_endpoint_port = getUShort("wg_ep_port", 51820);
+    cfg.wireguard_private_key = getString("wg_priv_key");
+    cfg.wireguard_public_key = getString("wg_pub_key");
+    cfg.wireguard_preshared_key = getString("wg_psk");
 
     // MQTT preferences
-    cfg.mqtt_enabled = preferences.getBool("mqtt_enabled", false);
-    cfg.mqtt_tls_insecure = preferences.getBool("mqtt_tls_insec", false);
-    cfg.mqtt_custom_ca = preferences.isKey("mqtt_custom_ca") ? preferences.getString("mqtt_custom_ca", "") : "";
+    cfg.mqtt_enabled = getBool("mqtt_enabled", false);
+    cfg.mqtt_tls_insecure = getBool("mqtt_tls_insec", false);
+    cfg.mqtt_custom_ca = getString("mqtt_custom_ca");
     return cfg;
+}
+
+String config_ui_get_ota_token() {
+    String token = preferences.getString("ota_token", "");
+    if (!isValidOtaToken(token)) {
+        token = backupPreferences.getString("ota_token", "");
+    }
+    return isValidOtaToken(token) ? token : String();
+}
+
+static void backupCurrentConfiguration() {
+    BridgeConfig cfg = config_ui_load();
+    writeStoredConfiguration(backupPreferences, cfg);
 }
 
 /**
  * Start the UI Captive Portal Server.
  */
 void config_ui_start_server() {
+    ota_update_register(server, config_ui_get_ota_token());
+
+    // Machine-readable diagnostics endpoint used for remote support. It mirrors
+    // the bounded serial log ring without exposing pairing PIN values.
+    server.on("/api/logs", HTTP_GET, [](AsyncWebServerRequest *request){
+        AsyncWebServerResponse* response = request->beginResponse(200, "text/plain; charset=utf-8", web_log_snapshot());
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+    });
+
     // Serve the main HTML page directly from PROGMEM flash avoiding heap copy.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         log_d("[WebUI] GET / requested (Client: %s)", request->client()->remoteIP().toString().c_str());
@@ -1246,7 +1546,23 @@ void config_ui_start_server() {
         response->print(cfg.mqtt_tls_insecure ? "true" : "false");
         response->print(",\"mqtt_custom_ca\":\"");
         utils_escape_json_print(*response, cfg.mqtt_custom_ca);
-        response->print("\"}");
+        response->print("\",\"wireguard_enabled\":");
+        response->print(cfg.wireguard_enabled ? "true" : "false");
+        response->print(",\"wireguard_local_ip\":\"");
+        utils_escape_json_print(*response, cfg.wireguard_local_ip);
+        response->print("\",\"wireguard_remote_cidr\":\"");
+        utils_escape_json_print(*response, cfg.wireguard_remote_cidr);
+        response->print("\",\"wireguard_endpoint\":\"");
+        utils_escape_json_print(*response, cfg.wireguard_endpoint);
+        response->print("\",\"wireguard_endpoint_port\":");
+        response->print(cfg.wireguard_endpoint_port);
+        response->print(",\"wireguard_public_key\":\"");
+        utils_escape_json_print(*response, cfg.wireguard_public_key);
+        response->print("\",\"wireguard_has_private_key\":");
+        response->print(cfg.wireguard_private_key.isEmpty() ? "false" : "true");
+        response->print(",\"wireguard_has_preshared_key\":");
+        response->print(cfg.wireguard_preshared_key.isEmpty() ? "false" : "true");
+        response->print("}");
 
         request->send(response);
     });
@@ -1271,6 +1587,13 @@ void config_ui_start_server() {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
         diag_telemetry_format_json(snapshot, *response);
         request->send(response);
+    });
+
+    server.on("/wireguard_status", HTTP_GET, [](AsyncWebServerRequest *request){
+        String json = "{\"enabled\":" + String(wireguard_net_is_enabled() ? "true" : "false") +
+                      ",\"initialized\":" + String(wireguard_net_is_initialized() ? "true" : "false") +
+                      ",\"connected\":" + String(wireguard_net_is_connected() ? "true" : "false") + "}";
+        request->send(200, "application/json", json);
     });
 
     /**
@@ -1300,6 +1623,7 @@ void config_ui_start_server() {
         preferences.putBool("mqtt_enabled", enabled);
         preferences.putBool("mqtt_tls_insec", tlsInsecureVal);
         preferences.putString("mqtt_custom_ca", customCaVal);
+        backupCurrentConfiguration();
 
         // Apply updated MQTT config immediately to the runtime subsystem
         BridgeConfig fullCfg = config_ui_load();
@@ -1315,6 +1639,44 @@ void config_ui_start_server() {
         }
 
         request->send(200, "application/json", "{\"success\":true}");
+    });
+
+    // Save WireGuard configuration. Secret fields are write-only: an empty
+    // value keeps the previously stored key, unless clear_psk is requested.
+    server.on("/save_wireguard", HTTP_POST, [](AsyncWebServerRequest *request){
+        bool enabled = request->hasParam("enabled", true) && request->getParam("enabled", true)->value() == "true";
+        String localIp = request->hasParam("local_ip", true) ? request->getParam("local_ip", true)->value() : "";
+        String remoteCidr = request->hasParam("remote_cidr", true) ? request->getParam("remote_cidr", true)->value() : "";
+        String endpoint = request->hasParam("endpoint", true) ? request->getParam("endpoint", true)->value() : "";
+        uint32_t portValue = request->hasParam("endpoint_port", true) ? request->getParam("endpoint_port", true)->value().toInt() : 0;
+        String publicKey = request->hasParam("public_key", true) ? request->getParam("public_key", true)->value() : "";
+        String privateKey = request->hasParam("private_key", true) ? request->getParam("private_key", true)->value() : "";
+        String presharedKey = request->hasParam("preshared_key", true) ? request->getParam("preshared_key", true)->value() : "";
+        bool clearPsk = request->hasParam("clear_psk", true) && request->getParam("clear_psk", true)->value() == "true";
+
+        BridgeConfig oldCfg = config_ui_load();
+        if (privateKey.isEmpty()) privateKey = oldCfg.wireguard_private_key;
+        if (presharedKey.isEmpty() && !clearPsk) presharedKey = oldCfg.wireguard_preshared_key;
+        if (clearPsk) presharedKey = "";
+
+        if (enabled && (localIp.isEmpty() || remoteCidr.isEmpty() || endpoint.isEmpty() ||
+                        portValue == 0 || portValue > 65535 || publicKey.length() != 44 ||
+                        privateKey.length() != 44 || (!presharedKey.isEmpty() && presharedKey.length() != 44))) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"WireGuard configuration is incomplete or contains an invalid key/port.\"}");
+            return;
+        }
+
+        preferences.putBool("wg_enabled", enabled);
+        preferences.putString("wg_local_ip", localIp);
+        preferences.putString("wg_remote", remoteCidr);
+        preferences.putString("wg_endpoint", endpoint);
+        preferences.putUShort("wg_ep_port", static_cast<uint16_t>(portValue == 0 ? 51820 : portValue));
+        preferences.putString("wg_priv_key", privateKey);
+        preferences.putString("wg_pub_key", publicKey);
+        preferences.putString("wg_psk", presharedKey);
+        backupCurrentConfiguration();
+
+        request->send(200, "application/json", "{\"success\":true,\"restart_required\":true}");
     });
 
     // Trigger the WiFi scan asynchronously
@@ -1399,7 +1761,10 @@ void config_ui_start_server() {
                     preferences.putString("wifi_pass", pass);
                 }
             }
+            backupCurrentConfiguration();
             request->send(200, "application/json", "{\"success\":true}");
+            BridgeConfig updated = config_ui_load();
+            wifi_net_connect_ap_sta_async(updated.wifi_ssid, updated.wifi_pass);
         } else {
             request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing ssid parameter.\"}");
         }
@@ -1415,6 +1780,7 @@ void config_ui_start_server() {
             preferences.putString("ble_name", name);
             preferences.putString("ble_mac", mac);
             preferences.putString("ble_pin", pin);
+            backupCurrentConfiguration();
             request->send(200, "application/json", "{\"success\":true}");
         } else {
             request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing ble_mac or ble_pin parameter.\"}");
@@ -1433,6 +1799,7 @@ void config_ui_start_server() {
 
             // Push into preferences.
             preferences.putBool("debug_logs", enableDebug);
+            backupCurrentConfiguration();
             request->send(200, "application/json", "{\"success\":true}");
         } else {
             request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing debug_logs parameter.\"}");
@@ -1442,18 +1809,32 @@ void config_ui_start_server() {
     // Reboot system
     server.on("/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
         log_d("[WebUI] POST /reboot requested (Client: %s)", request->client()->remoteIP().toString().c_str());
-        request->send(200, "application/json", "{\"success\":true,\"message\":\"Rebooting bridge...\"}");
-        delay(1000);
-        ESP.restart();
+        if (!scheduleRestart()) {
+            request->send(503, "application/json", "{\"success\":false,\"message\":\"Unable to schedule reboot\"}");
+            return;
+        }
+        request->send(202, "application/json", "{\"success\":true,\"message\":\"Reboot scheduled\"}");
+    });
+
+    server.on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
+        log_i("[API] Remote reboot requested from %s", request->client()->remoteIP().toString().c_str());
+        if (!scheduleRestart()) {
+            request->send(503, "application/json", "{\"success\":false,\"message\":\"Unable to schedule reboot\"}");
+            return;
+        }
+        request->send(202, "application/json", "{\"success\":true,\"message\":\"Reboot scheduled\"}");
     });
 
     // Reset all settings and reboot
     server.on("/reset", HTTP_POST, [](AsyncWebServerRequest *request){
         log_d("[WebUI] POST /reset requested (Client: %s)", request->client()->remoteIP().toString().c_str());
         preferences.clear();
-        request->send(200, "application/json", "{\"success\":true,\"message\":\"Settings erased. Rebooting...\"}");
-        delay(1000);
-        ESP.restart();
+        backupPreferences.clear();
+        if (!scheduleRestart()) {
+            request->send(503, "application/json", "{\"success\":false,\"message\":\"Settings erased but reboot scheduling failed\"}");
+            return;
+        }
+        request->send(202, "application/json", "{\"success\":true,\"message\":\"Settings erased. Reboot scheduled\"}");
     });
 
     // Fallback for captive portal redirection

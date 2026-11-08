@@ -6,6 +6,7 @@
 !data/cert/x509_crt_bundle.bin
 *.elf
 *.map
+.ota-token
 
 # JetBrains IDEs
 .idea/*

@@ -4,6 +4,9 @@
 #include "config_ui.h"
 
 bool wifi_net_connect_sta(const String& ssid, const String& pass);
+// Connect the station interface in the background while keeping the setup AP
+// and captive portal online.
+void wifi_net_connect_ap_sta_async(const String& ssid, const String& pass);
 void wifi_net_start_mdns(const BridgeConfig& cfg);
 
 /**

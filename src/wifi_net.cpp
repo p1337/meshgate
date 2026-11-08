@@ -1,4 +1,5 @@
 #include "wifi_net.h"
+#include "web_log.h"
 #include "config_ui.h"
 #include "bridge.h"
 #include "utils.h"
@@ -7,8 +8,10 @@
 #include <ESPmDNS.h>
 #include <vector>
 #include <algorithm>
+#include <atomic>
 #include "build_options.h"
 #include "status_led.h"
+#include "ip_led.h"
 
 /**
  * DNS server used during Captive Portal Mode to ensure redirects
@@ -30,6 +33,42 @@ static String cachedWifiResultsJson = "[]";
  * Holds the active advertised mDNS hostname.
  */
 static String s_mdns_host = "";
+
+static std::atomic<bool> s_ap_sta_connecting{false};
+
+struct WifiConnectRequest {
+    String ssid;
+    String pass;
+};
+
+static void wifiApStaConnectTask(void* parameter) {
+    WifiConnectRequest request = *static_cast<WifiConnectRequest*>(parameter);
+    delete static_cast<WifiConnectRequest*>(parameter);
+
+    log_i("[WIFI:AP_MODE] Connecting station interface to: %s", request.ssid.c_str());
+    WiFi.scanDelete();
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(request.ssid.c_str(), request.pass.c_str());
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        attempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        IPAddress stationIp = WiFi.localIP();
+        log_i("[WIFI:AP_MODE] Station connected. Local IP: %s", stationIp.toString().c_str());
+        log_i("[WIFI:AP_MODE] Web UI also available at: http://%s/", stationIp.toString().c_str());
+        ip_led_show_once(stationIp);
+    } else {
+        log_e("[WIFI:AP_MODE] Station connection failed; setup AP remains available");
+    }
+
+    s_ap_sta_connecting.store(false);
+    vTaskDelete(nullptr);
+}
 
 /**
  * Start a scan for available wifi networks.
@@ -188,12 +227,37 @@ bool wifi_net_connect_sta(const String& ssid, const String& pass) {
     }
 
     if (WiFi.status() == WL_CONNECTED) {
+        IPAddress stationIp = WiFi.localIP();
         log_i("[WIFI] WiFi Connected successfully!");
-        log_i("[WIFI] IP Address: %s", WiFi.localIP().toString().c_str());
-        log_i("[WIFI] Web UI available at: http://%s/", WiFi.localIP().toString().c_str());
+        log_i("[WIFI] IP Address: %s", stationIp.toString().c_str());
+        log_i("[WIFI] Web UI available at: http://%s/", stationIp.toString().c_str());
+        ip_led_show_once(stationIp);
         return true;
     }
     return false;
+}
+
+void wifi_net_connect_ap_sta_async(const String& ssid, const String& pass) {
+    if (ssid.isEmpty()) {
+        return;
+    }
+    if (s_ap_sta_connecting.exchange(true)) {
+        log_w("[WIFI:AP_MODE] Station connection is already in progress");
+        return;
+    }
+
+    auto* request = new WifiConnectRequest{ssid, pass};
+    if (request == nullptr) {
+        s_ap_sta_connecting.store(false);
+        log_e("[WIFI:AP_MODE] Could not allocate station connection request");
+        return;
+    }
+
+    if (xTaskCreatePinnedToCore(wifiApStaConnectTask, "wifi_ap_sta", 4096, request, 1, nullptr, 0) != pdPASS) {
+        delete request;
+        s_ap_sta_connecting.store(false);
+        log_e("[WIFI:AP_MODE] Could not start station connection task");
+    }
 }
 
 /**

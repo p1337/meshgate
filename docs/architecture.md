@@ -18,6 +18,23 @@ This project is an ESP32-based transparent bridge that connects to a Meshtastic 
 *   **Framework:** **Arduino Core for ESP32**. While ESP-IDF offers more control, the Arduino core provides mature, easy-to-use libraries for WiFi, BLE, and configuration portals, speeding up development while still being robust enough for a bridge.
 *   **Environment:** **Docker / DevContainers**. We will set up a `.devcontainer` and a `Dockerfile` that includes the PlatformIO Core CLI. This ensures that any AI agent or developer can spin up the exact same environment without polluting their host machine.
 
+#### ESP-IDF 5 and Tailscale migration
+
+The verified production profile is currently `arduino_nano_esp32` on Arduino
+Core 2.0.17 / ESP-IDF 4.4.7. The `arduino_nano_esp32_idf5` profile is an
+explicit migration environment targeting Arduino Core 3.3.9 / ESP-IDF 5.5.4.
+It exists so IDF-5 API changes and library compatibility can be resolved without
+destabilizing the deployable firmware.
+
+MicroLink is the selected native Tailscale implementation for the ESP32-S3.
+Its integration is not complete yet. MicroLink contains an enhanced lwIP
+WireGuard implementation with public symbols that overlap the currently used
+`WireGuard-ESP32` library. The migration must therefore use one shared
+WireGuard implementation for classic WireGuard and Tailscale; linking both
+libraries into the same firmware is not a valid architecture. Existing
+WireGuard configuration and behavior must remain available throughout that
+migration.
+
 ### 2. Key Libraries
 *   **BLE:** `h2zero/NimBLE-Arduino`. NimBLE is a highly optimized, low-RAM Bluetooth stack. It is much more stable and resource-efficient than the standard Bluedroid stack, and it fully supports secure pairing and PIN codes.
 *   **WiFi:** Standard `WiFi.h`.
@@ -74,6 +91,7 @@ meshtastic-esp32-bt-bridge/
 │   ├── config_ui.h
 │   ├── diag_telemetry.h   # Periodic health and queue diagnostics
 │   ├── mqtt_net.h         # MQTT subsystem interface & state types
+│   ├── ota_update.h       # Authenticated HTTP OTA endpoint
 │   ├── status_led.h
 │   ├── utils.h
 │   └── wifi_net.h
@@ -83,6 +101,7 @@ meshtastic-esp32-bt-bridge/
 │   ├── ble_client.cpp     # NimBLE client and security callbacks
 │   ├── diag_telemetry.cpp # Low-priority periodic telemetry logger
 │   ├── mqtt_net.cpp       # MQTT Gateway subsystem (Auto-Sync, 3-tier TLS)
+│   ├── ota_update.cpp     # Dual-slot OTA writer and image validation
 │   ├── wifi_net.cpp       # WiFi, AP Mode, and mDNS management
 │   ├── config_ui.cpp      # Captive portal / Preferences logic
 │   └── status_led.cpp     # Asynchronous LED visual indicators

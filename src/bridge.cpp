@@ -1,4 +1,5 @@
 #include "bridge.h"
+#include "web_log.h"
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <NimBLEDevice.h>
@@ -63,7 +64,9 @@ static std::vector<ClientContext*> tcpClients;
 static SemaphoreHandle_t tcpClientsMutex = NULL; // Mutex to protect tcpClients vector from concurrent modification
 static std::atomic<size_t> connectedClientsCount{0};
 static bool bridgeRunning = false;
+static String targetBleName = "";
 static String targetBleMac = "";
+static uint8_t targetBleAddressType = BLE_ADDR_PUBLIC;
 static uint32_t targetBlePin = 123456;
 
 static NimBLEClient* bleClient = NULL;
@@ -191,21 +194,32 @@ static void notifyFromNum(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, 
 // Custom BLE Client Callbacks to handle PIN authentication and disconnects
 class BridgeRuntimeClientCallbacks : public NimBLEClientCallbacks {
 public:
+    std::atomic<bool> authCompleted{false};
+    std::atomic<bool> authFailed{false};
+
+    void resetAuthentication() {
+        authCompleted.store(false, std::memory_order_relaxed);
+        authFailed.store(false, std::memory_order_relaxed);
+    }
+
     uint32_t onPassKeyRequest() override {
-        log_i("[Bridge-BLE] Passkey requested, providing PIN: %06u", targetBlePin);
+        log_i("[Bridge-BLE] Passkey requested; configured PIN provided (hidden)");
         return targetBlePin;
     }
 
     bool onConfirmPIN(uint32_t pin) override {
-        log_i("[Bridge-BLE] Confirming PIN: %06u", pin);
+        log_i("[Bridge-BLE] Confirming pairing PIN (hidden)");
         return (pin == targetBlePin);
     }
 
     void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
+        authFailed.store(!desc->sec_state.encrypted, std::memory_order_relaxed);
+        authCompleted.store(true, std::memory_order_release);
         log_i(
-            "[Bridge-BLE] Authentication complete. Encrypted: %d, Authenticated: %d",
+            "[Bridge-BLE] Authentication complete. Encrypted: %d, Authenticated: %d, Bonded: %d",
             desc->sec_state.encrypted,
-            desc->sec_state.authenticated
+            desc->sec_state.authenticated,
+            desc->sec_state.bonded
         );
     }
 
@@ -218,6 +232,88 @@ public:
 
 static BridgeRuntimeClientCallbacks bridgeCallbacks;
 
+static void clearBleClient() {
+    toRadioChar = nullptr;
+    fromRadioChar = nullptr;
+    fromNumChar = nullptr;
+
+    if (bleClient) {
+        if (bleClient->isConnected()) {
+            bleClient->disconnect();
+        }
+        NimBLEDevice::deleteClient(bleClient);
+        bleClient = nullptr;
+    }
+}
+
+/**
+ * Rediscover the configured Meshtastic radio by its advertised service UUID.
+ * Nordic radios can use a private BLE address that changes independently of
+ * the node ID, so a MAC captured during initial setup is not always permanent.
+ */
+static bool rediscoverMeshtasticRadio() {
+    clearBleClient();
+
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->stop();
+    scan->clearResults();
+    scan->setActiveScan(true);
+    scan->setInterval(100);
+    scan->setWindow(99);
+    scan->setDuplicateFilter(true);
+
+    log_i("[Bridge-BLE] Scanning for current Meshtastic radio address...");
+    NimBLEScanResults results = scan->start(BLUETOOTH_SCAN_TIME_SECONDS, false);
+
+    static const NimBLEUUID serviceUuid("6ba1b218-15a8-461f-9fa8-5dcae273eafd");
+    static const NimBLEUUID legacyServiceUuid("cb0b9a0b-a8c2-49c0-bdd5-3fa12b04d84b");
+
+    NimBLEAddress selectedAddress;
+    String selectedName;
+    size_t candidateCount = 0;
+    bool exactNameMatch = false;
+
+    for (int i = 0; i < results.getCount(); ++i) {
+        NimBLEAdvertisedDevice device = results.getDevice(i);
+        if (!device.isAdvertisingService(serviceUuid) &&
+            !device.isAdvertisingService(legacyServiceUuid)) {
+            continue;
+        }
+
+        ++candidateCount;
+        String advertisedName(device.getName().c_str());
+        if (candidateCount == 1) {
+            selectedAddress = device.getAddress();
+            selectedName = advertisedName;
+        }
+
+        if (!targetBleName.isEmpty() && advertisedName.equalsIgnoreCase(targetBleName)) {
+            selectedAddress = device.getAddress();
+            selectedName = advertisedName;
+            exactNameMatch = true;
+            break;
+        }
+    }
+
+    scan->clearResults();
+
+    if (candidateCount == 0) {
+        log_w("[Bridge-BLE] No Meshtastic advertisement found during recovery scan");
+        return false;
+    }
+    if (!exactNameMatch && candidateCount > 1) {
+        log_w("[Bridge-BLE] Found %u Meshtastic radios but none matched configured name '%s'",
+              static_cast<unsigned>(candidateCount), targetBleName.c_str());
+        return false;
+    }
+
+    targetBleMac = String(selectedAddress.toString().c_str());
+    targetBleAddressType = selectedAddress.getType();
+    log_i("[Bridge-BLE] Rediscovered radio '%s' at %s (address type %u)",
+          selectedName.c_str(), targetBleMac.c_str(), targetBleAddressType);
+    return true;
+}
+
 /**
  * BLE Task (running on Core 1)
  * This is the task the manages:
@@ -226,6 +322,7 @@ static BridgeRuntimeClientCallbacks bridgeCallbacks;
  */
 static void bridgeBleTask(void* parameter) {
     log_i("[Bridge-BLE] BLE Task started on Core 1");
+    uint32_t failedConnectAttempts = 0;
 
     while (bridgeRunning) {
         /**
@@ -237,32 +334,63 @@ static void bridgeBleTask(void* parameter) {
             status_led_set(LED_MED_BLINK);
             log_i("[Bridge-BLE] Attempting to connect to Meshtastic BLE device...");
 
-            NimBLEAddress addr = utils_parse_ble_address(targetBleMac);
+            NimBLEAddress addr(targetBleMac.c_str(), targetBleAddressType);
 
             if (!bleClient) {
                 NimBLEDevice::init("Meshtastic-Bridge");
                 NimBLEDevice::setSecurityAuth(true, true, true);
                 NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_ONLY);
+                NimBLEDevice::setMTU(512);
 
                 bleClient = NimBLEDevice::createClient();
                 bleClient->setClientCallbacks(&bridgeCallbacks, false);
             }
 
             bleClient->setConnectTimeout(BLUETOOTH_TIMEOUT_SECONDS);
+            bridgeCallbacks.resetAuthentication();
             if (bleClient->connect(addr, false)) {
+                failedConnectAttempts = 0;
                 log_i("[Bridge-BLE] Connected! Securing connection...");
                 bleClient->secureConnection();
 
-                delay(2000);
+                // Pairing on nRF52 radios can take longer than a fixed delay.
+                // Do not start encrypted GATT discovery until authentication
+                // has actually completed or the connection timeout expires.
+                unsigned long authStart = millis();
+                while (bleClient->isConnected() &&
+                       !bridgeCallbacks.authCompleted.load(std::memory_order_acquire) &&
+                       millis() - authStart < (BLUETOOTH_TIMEOUT_SECONDS * 1000UL)) {
+                    delay(100);
+                }
 
-                // Request larger MTU for large protobuf packets
-                NimBLEDevice::setMTU(512);
+                bool secured = false;
+                if (bleClient->isConnected()) {
+                    NimBLEConnInfo connInfo = bleClient->getConnInfo();
+                    secured = (connInfo.isEncrypted() || connInfo.isAuthenticated()) &&
+                              !bridgeCallbacks.authFailed.load(std::memory_order_relaxed);
+                }
+
+                if (!secured) {
+                    log_w("[Bridge-BLE] Authentication did not complete securely; reconnecting");
+                    s_ble_connected.store(false, std::memory_order_relaxed);
+                    clearBleClient();
+                    delay(BLUETOOTH_RECONNECT_DELAY_MS);
+                    continue;
+                }
 
                 NimBLERemoteService* pSvc = bleClient->getService("6ba1b218-15a8-461f-9fa8-5dcae273eafd");
                 if (pSvc) {
                     toRadioChar = pSvc->getCharacteristic("f75c76d2-129e-4dad-a1dd-7866124401e7");
                     fromRadioChar = pSvc->getCharacteristic("2c55e69e-4993-11ed-b878-0242ac120002");
                     fromNumChar = pSvc->getCharacteristic("ed9da18c-a800-4f66-a670-aa7547e34453");
+
+                    if (!bleClient->isConnected() || !toRadioChar || !fromRadioChar || !fromNumChar) {
+                        log_w("[Bridge-BLE] Required Meshtastic characteristics unavailable; reconnecting");
+                        s_ble_connected.store(false, std::memory_order_relaxed);
+                        clearBleClient();
+                        delay(BLUETOOTH_RECONNECT_DELAY_MS);
+                        continue;
+                    }
 
                     if (fromNumChar && fromNumChar->canNotify()) {
                         bool sub = fromNumChar->subscribe(true, notifyFromNum);
@@ -279,7 +407,21 @@ static void bridgeBleTask(void* parameter) {
                 }
             } else {
                 s_ble_connected.store(false, std::memory_order_relaxed);
-                log_w("[Bridge-BLE] Connection failed, retrying in %d ms...", BLUETOOTH_RECONNECT_DELAY_MS);
+                ++failedConnectAttempts;
+                log_w("[Bridge-BLE] Connection failed (attempt %u)",
+                      static_cast<unsigned>(failedConnectAttempts));
+
+                // Recreate the client after a timeout. On the first failure and
+                // every third failure, rediscover private/rotating addresses.
+                clearBleClient();
+                if (failedConnectAttempts == 1 || (failedConnectAttempts % 3) == 0) {
+                    if (rediscoverMeshtasticRadio()) {
+                        delay(250);
+                        continue;
+                    }
+                }
+
+                log_w("[Bridge-BLE] Retrying in %d ms...", BLUETOOTH_RECONNECT_DELAY_MS);
                 delay(BLUETOOTH_RECONNECT_DELAY_MS);
             }
         } else {
@@ -479,11 +621,14 @@ void bridge_clear_mqtt_to_ble_queue() {
 
 /**
  * Initialize Bridge.
- * @param ble_mac MAC address of BLE device to connect to.
+ * @param ble_name Advertised BLE name used to disambiguate recovery scans.
+ * @param ble_mac Last known MAC address of BLE device to connect to.
  * @param ble_pin PIN for BLE device.
  */
-void bridge_init(const String& ble_mac, uint32_t ble_pin) {
+void bridge_init(const String& ble_name, const String& ble_mac, uint32_t ble_pin) {
+    targetBleName = ble_name;
     targetBleMac = ble_mac;
+    targetBleAddressType = utils_parse_ble_address(ble_mac).getType();
     targetBlePin = ble_pin;
 
     /**

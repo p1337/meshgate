@@ -16,7 +16,9 @@ SystemTelemetrySnapshot diag_telemetry_get_snapshot() {
 
     s.wifi_connected = (WiFi.status() == WL_CONNECTED);
     s.wifi_is_ap = wifi_net_is_ap_mode();
-    s.wifi_ip = s.wifi_is_ap ? WiFi.softAPIP() : (s.wifi_connected ? WiFi.localIP() : IPAddress(0, 0, 0, 0));
+    // In AP+STA setup mode, report the newly assigned station IP once
+    // connected; otherwise report the captive portal AP address.
+    s.wifi_ip = s.wifi_connected ? WiFi.localIP() : (s.wifi_is_ap ? WiFi.softAPIP() : IPAddress(0, 0, 0, 0));
     s.wifi_rssi = s.wifi_connected ? WiFi.RSSI() : 0;
     s.mdns_host = wifi_net_get_mdns_host();
 

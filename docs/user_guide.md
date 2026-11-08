@@ -19,6 +19,75 @@ If you need to change your WiFi credentials or the target Bluetooth device:
 4. The LED will change to the **Setup Pattern** (short-short-long-long), indicating it is now in Setup Mode.
 5. Connect your phone or computer to the `Meshtastic-Bridge-Setup` WiFi network to access the Captive Portal.
 
+## Remote access and OTA updates
+
+### Target deployment: standalone Raspberry Pi gateway
+
+The production gateway in Poland is a Raspberry Pi with WiFi and Bluetooth.
+It runs the Linux BLE-to-TCP bridge, exposes the Meshtastic PhoneAPI on TCP
+port 4403, and joins the private Tailscale network for remote access from
+Germany. The Raspberry Pi connects directly to the RAK node over BLE; the
+ESP32-S3 is not part of this production data path.
+
+Keep the ESP32-S3 connected to the Raspberry Pi over USB only as an isolated
+development and recovery target. Experimental OTA firmware may add future
+fallback paths, but failure or reboot of the ESP32-S3 must not interrupt the
+Raspberry Pi-to-RAK bridge. The Raspberry Pi should retain the ESP32 firmware
+image, USB flashing tool, and serial logs so the fallback device can be
+recovered remotely after its initial USB/OTA provisioning.
+
+Use Tailscale or another authenticated VPN for TCP 4403. Meshtastic PhoneAPI
+over TCP is plaintext and must never be exposed directly to the public
+internet.
+
+VPN discovery is not automatic because mDNS does not cross a routed WireGuard
+tunnel. In the Meshtastic app, configure the bridge manually as a TCP device at
+`192.168.1.202:4403`. Local Polish access remains `192.168.0.217:4403`.
+
+The WireGuard status `connected` means that the ESP32 has negotiated a valid
+WireGuard session key with the configured FRITZ!Box peer. It does not prove
+that the FRITZ!Box forwards traffic from a second VPN client to that peer. To
+separate bridge faults from VPN routing faults, first open
+`http://192.168.1.202/status` from the remote VPN client. If this fails while
+`http://192.168.0.217/status` and TCP port 4403 work in the Polish LAN, the
+Meshtastic bridge is healthy and the missing route is upstream of it.
+
+Never activate one exported WireGuard profile on multiple devices. The
+temporary `192.168.1.202` deployment reuses the profile also used by the
+Schwaebisch Gmuend FRITZ!Box client. That client and the ESP32 must not be
+active simultaneously. Their handshakes and 25-second keepalives move the one
+peer identity between two public endpoints, so whichever endpoint spoke most
+recently becomes reachable and the other one stops receiving traffic. The
+ESP32 needs its own Waiblingen FRITZ!Box peer, with a different private key and
+tunnel address. Reusing the same profile on any second device creates the same
+failure.
+
+In the current deployment the iPhone instead uses an IPsec tunnel. Therefore
+it cannot collide with the ESP32's WireGuard identity. If the iPhone reaches
+the German home network over IPsec but cannot open
+`http://192.168.1.202/status`, and the ESP32 simultaneously reports a valid
+WireGuard session, the failed hop is forwarding from the FRITZ!Box IPsec VPN
+participant to its WireGuard VPN participant. Use a separate WireGuard profile
+for the iPhone or place a TCP relay on an always-on device in the German LAN;
+changing Meshtastic or MQTT settings cannot repair this routing boundary.
+
+Creating a dedicated FRITZ!Box WireGuard peer is a security-sensitive action
+that requires an additional confirmation. A physical button is not required
+when TOTP confirmation was already configured for the logged-in FRITZ!Box
+user: the six-digit code from that user's authenticator app can be entered
+remotely. MyFRITZ! account two-factor authentication is separate and does not
+replace the FRITZ!Box user's confirmation. If no authenticator was configured,
+enabling it normally requires one local confirmation first. A locally attached
+analog or DECT telephone can also enter the displayed confirmation code, while
+IP telephones such as FRITZ!App Fon cannot.
+
+The Arduino Nano ESP32 build has two firmware partitions. After the one-time
+USB partition migration, future firmware binaries can be installed locally or
+through WireGuard with `tools/upload_ota.ps1`. The uploader reads the private,
+git-ignored `.ota-token`, verifies device capacity, supplies an MD5 checksum,
+and confirms the partition switch after reboot. WiFi, BLE, and WireGuard
+settings are held in NVS and are not erased by OTA.
+
 ---
 
 ## Configuring the MQTT Gateway & Proxy (Optional)

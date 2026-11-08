@@ -62,7 +62,7 @@
 
 // Bluetooth Scan Timeout in seconds
 #ifndef BLUETOOTH_SCAN_TIME_SECONDS
-#define BLUETOOTH_SCAN_TIME_SECONDS 4
+#define BLUETOOTH_SCAN_TIME_SECONDS 8
 #endif
 
 // Bluetooth Max devices to return from discovery scan.

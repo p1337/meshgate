@@ -13,6 +13,7 @@
 static volatile LedState currentState = LED_OFF;
 
 static void ledTask(void* param) {
+#if STATUS_LED_PIN >= 0
     pinMode(STATUS_LED_PIN, OUTPUT);
     digitalWrite(STATUS_LED_PIN, LED_OFF_STATE);
     
@@ -58,11 +59,16 @@ static void ledTask(void* param) {
             vTaskDelay(pdMS_TO_TICKS(delayMs));
         }
     }
+#else
+    vTaskDelete(NULL);
+#endif
 }
 
 void status_led_init() {
+#if STATUS_LED_PIN >= 0
     // Run on Core 1 at low priority (1) so it doesn't interrupt anything important
     xTaskCreatePinnedToCore(ledTask, "led_task", 2048, NULL, 1, NULL, 1);
+#endif
 }
 
 void status_led_set(LedState state) {

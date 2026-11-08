@@ -77,6 +77,8 @@ The UI is built with a clean, modular card-based interface that allows inspectin
    * **`POST /reboot`**: Restarts the ESP32 into normal bridge mode.
    * **`POST /reset`**: Erases all stored NVS configurations and reboots the ESP32 into Setup Mode.
    * **`POST /save`**: Full-form save endpoint for backward compatibility.
+   * **`GET /api/ota`**: Reports OTA readiness, firmware/board identity, active and next application partitions, and maximum image size. It never returns the OTA token.
+   * **`POST /api/ota`**: Accepts a raw firmware binary authenticated by `X-OTA-Key`; the deployment uploader also supplies `X-Firmware-MD5`. A validated image is activated and the bridge reboots.
 
 ## Memory & Non-Volatile Storage (NVS)
 The following keys are stored in the `Preferences` namespace (`bridge_cfg`):
@@ -89,6 +91,7 @@ The following keys are stored in the `Preferences` namespace (`bridge_cfg`):
 * `mqtt_enabled` (Bool)
 * `mqtt_tls_insec` (Bool)
 * `mqtt_custom_ca` (String)
+* `ota_token` (64-character hexadecimal String, write-only and duplicated in `bridge_backup`)
 
 ## Technical Decisions & Considerations
 * **Captive Portal / WebView Compatibility Constraints (macOS / iOS CNA & Windows):**
