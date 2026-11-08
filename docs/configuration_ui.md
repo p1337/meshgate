@@ -46,6 +46,13 @@ rebooting into normal bridge mode.
   * Contains a toggle for **Enable Serial Debug Logs**.
   * Contains a **Reboot & Start Bridge** action that restarts the ESP32 into normal runtime mode.
   * Contains a **Reset All Settings** action (with confirmation dialog) that clears all stored NVS credentials and restarts into Setup Mode.
+* **Firmware OTA Update Card:**
+  * Shows the running firmware version and active/next application slots.
+  * Accepts only the OTA application image, a write-only 64-hex-character key,
+    and performs an authenticated raw-binary upload with visible progress.
+  * Rejects factory-image filenames and images larger than the inactive slot.
+  * Can generate and provision a new key only from a client directly connected
+    to the local setup AP; ordinary LAN and VPN clients cannot replace it.
 * **Footer:**
   * Dynamically embeds the compiled Firmware Version and links to the project's GitHub repository.
 
@@ -92,6 +99,9 @@ rebooting into normal bridge mode.
    * **`POST /save`**: Full-form save endpoint for backward compatibility.
    * **`GET /api/ota`**: Reports OTA readiness, firmware/board identity, active and next application partitions, and maximum image size. It never returns the OTA token.
    * **`POST /api/ota`**: Accepts a raw firmware binary authenticated by `X-OTA-Key`; the deployment uploader also supplies `X-Firmware-MD5`. A validated image is activated and the bridge reboots.
+   * **`POST /api/ota/token`**: Stores a new write-only OTA key in both NVS
+     namespaces and applies it immediately. It is accepted only in setup mode
+     from the setup AP's own subnet, never from LAN or VPN clients.
 
 ## Memory & Non-Volatile Storage (NVS)
 The following keys are stored in the `Preferences` namespace (`bridge_cfg`):

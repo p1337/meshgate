@@ -487,6 +487,37 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
   </div>
 
+  <!-- Authenticated browser OTA Card -->
+  <div class="card" id="card-ota">
+    <div class="card-header">
+      <div class="card-title">Firmware OTA Update</div>
+      <span id="view-ota-status" class="status-pill waiting">Loading</span>
+    </div>
+    <div class="info-row"><span class="info-label">Firmware:</span><span class="info-val" id="view-ota-version">Loading...</span></div>
+    <div class="info-row"><span class="info-label">Running slot:</span><span class="info-val" id="view-ota-running">Loading...</span></div>
+    <div class="info-row"><span class="info-label">Update slot:</span><span class="info-val" id="view-ota-next">Loading...</span></div>
+    <div class="alert alert-info" style="display:block; margin-bottom:12px;">
+      Select the <strong>*-ota.bin</strong> release file, never the factory image. An OTA update preserves WiFi, BLE, VPN and MQTT settings. Keep this page open until the bridge accepts the image and reboots.
+    </div>
+
+    <label>OTA key (64 hexadecimal characters):</label>
+    <div class="password-field">
+      <input type="password" id="input-ota-token" maxlength="64" autocomplete="off" placeholder="Paste your private OTA key">
+      <button type="button" class="btn-toggle-pass" onclick="togglePassVisibility('input-ota-token', this)">Show</button>
+    </div>
+    <div class="btn-group">
+      <button type="button" class="btn-secondary" onclick="generateOtaToken()">Generate Key</button>
+      <button type="button" class="btn-secondary" id="btn-save-ota-token" onclick="saveOtaToken()">Set Key in Setup AP</button>
+    </div>
+    <small>A new key can only be provisioned while this page is opened through the local <strong>Meshtastic-Bridge-Setup</strong> access point. Existing keys remain write-only.</small>
+
+    <label>OTA firmware file:</label>
+    <input type="file" id="input-ota-file" accept=".bin,application/octet-stream">
+    <div class="progress-track" style="height:8px; margin:8px 0 12px;"><div id="ota-progress-bar" class="progress-fill progress-green" style="width:0%;"></div></div>
+    <div id="ota-alert" class="alert"></div>
+    <button class="btn-primary" id="btn-ota-upload" onclick="startOtaUpload()">Upload &amp; Install OTA</button>
+  </div>
+
   <!-- System Actions Card -->
   <div class="card">
     <div class="card-header">
@@ -1479,6 +1510,128 @@ const char index_html[] PROGMEM = R"rawliteral(
       });
     }
 
+    function refreshOtaStatus() {
+      return fetch('/api/ota', { cache: 'no-store' })
+        .then(r => r.json())
+        .then(status => {
+          document.getElementById('view-ota-version').innerText = status.firmware_version || '(Unknown)';
+          document.getElementById('view-ota-running').innerText = status.running_partition || '(Unknown)';
+          document.getElementById('view-ota-next').innerText = status.next_partition || '(Unavailable)';
+          const pill = document.getElementById('view-ota-status');
+          pill.className = 'status-pill ' + (status.enabled ? 'connected' : 'disabled');
+          pill.innerText = status.enabled ? 'Ready' : 'Key required';
+          return status;
+        })
+        .catch(() => {
+          const pill = document.getElementById('view-ota-status');
+          pill.className = 'status-pill error';
+          pill.innerText = 'Unavailable';
+          throw new Error('Could not read OTA status from the bridge.');
+        });
+    }
+
+    function generateOtaToken() {
+      if (!window.crypto || !window.crypto.getRandomValues) {
+        showAlert('ota-alert', 'error', 'This browser cannot generate a cryptographically secure OTA key.');
+        return;
+      }
+      const bytes = new Uint8Array(32);
+      window.crypto.getRandomValues(bytes);
+      let token = '';
+      for (let i = 0; i < bytes.length; i++) token += bytes[i].toString(16).padStart(2, '0');
+      document.getElementById('input-ota-token').value = token;
+      showAlert('ota-alert', 'warning', 'New key generated. Save it securely, then click Set Key while connected directly to the setup AP. It cannot be read back later.');
+    }
+
+    function saveOtaToken() {
+      const token = document.getElementById('input-ota-token').value.trim();
+      if (!/^[0-9a-fA-F]{64}$/.test(token)) {
+        showAlert('ota-alert', 'error', 'The OTA key must contain exactly 64 hexadecimal characters.');
+        return;
+      }
+      const btn = document.getElementById('btn-save-ota-token');
+      btn.disabled = true;
+      fetch('/api/ota/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'token=' + encodeURIComponent(token)
+      }).then(r => r.json().then(body => ({ ok: r.ok, body: body })))
+        .then(result => {
+          if (!result.ok || !result.body.success) throw new Error(result.body.error || 'The bridge rejected the OTA key.');
+          showAlert('ota-alert', 'success', 'OTA key stored redundantly. Keep your private copy; the bridge will not reveal it again.');
+          return refreshOtaStatus();
+        })
+        .catch(err => showAlert('ota-alert', 'error', err.message || 'Could not save the OTA key.'))
+        .finally(() => { btn.disabled = false; });
+    }
+
+    function startOtaUpload() {
+      const fileInput = document.getElementById('input-ota-file');
+      const file = fileInput.files && fileInput.files[0];
+      const token = document.getElementById('input-ota-token').value.trim();
+      if (!file) {
+        showAlert('ota-alert', 'error', 'Select the *-ota.bin firmware file first.');
+        return;
+      }
+      if (/factory/i.test(file.name)) {
+        showAlert('ota-alert', 'error', 'Factory images are for USB flashing only. Select the *-ota.bin file.');
+        return;
+      }
+      if (!/^[0-9a-fA-F]{64}$/.test(token)) {
+        showAlert('ota-alert', 'error', 'Enter the private 64-character OTA key.');
+        return;
+      }
+      refreshOtaStatus().then(status => {
+        if (!status.enabled) throw new Error('OTA is disabled until a key is provisioned in the local setup AP.');
+        if (file.size <= 0 || file.size > status.max_image_bytes) {
+          throw new Error('Firmware size is invalid for the update slot (' + file.size + ' / ' + status.max_image_bytes + ' bytes).');
+        }
+        showModal(
+          'Install OTA Firmware',
+          'Install ' + file.name + ' (' + Math.round(file.size / 1024) + ' KiB) and reboot MeshGate? Stored configuration will be preserved.',
+          'Upload & Install',
+          'btn-primary',
+          function() { performOtaUpload(file, token); }
+        );
+      }).catch(err => showAlert('ota-alert', 'error', err.message || 'OTA preflight failed.'));
+    }
+
+    function performOtaUpload(file, token) {
+      const btn = document.getElementById('btn-ota-upload');
+      const bar = document.getElementById('ota-progress-bar');
+      btn.disabled = true;
+      bar.style.width = '0%';
+      bar.className = 'progress-fill progress-green';
+      showAlert('ota-alert', 'info', 'Uploading firmware. Do not disconnect power or close this page...');
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/ota', true);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.setRequestHeader('X-OTA-Key', token);
+      xhr.upload.onprogress = function(event) {
+        if (event.lengthComputable) bar.style.width = Math.round((event.loaded / event.total) * 100) + '%';
+      };
+      xhr.onload = function() {
+        let response = {};
+        try { response = JSON.parse(xhr.responseText || '{}'); } catch (_) {}
+        if (xhr.status === 202 && response.success) {
+          bar.style.width = '100%';
+          showAlert('ota-alert', 'success', 'Firmware accepted and validated. MeshGate is rebooting into the new slot; reconnect after about 15 seconds.');
+          setTimeout(function() { btn.disabled = false; }, 15000);
+        } else {
+          bar.className = 'progress-fill progress-red';
+          showAlert('ota-alert', 'error', response.error || ('OTA upload failed with HTTP ' + xhr.status + '.'));
+          btn.disabled = false;
+        }
+      };
+      xhr.onerror = function() {
+        bar.className = 'progress-fill progress-red';
+        showAlert('ota-alert', 'error', 'The connection closed before the bridge confirmed the update. Check its status after reboot.');
+        btn.disabled = false;
+      };
+      xhr.send(file);
+    }
+
     let modalConfirmCallback = null;
 
     function showModal(title, msg, btnText, btnClass, onConfirm) {
@@ -1577,6 +1730,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       document.getElementById('modal-btn-confirm').onclick = confirmModalAction;
       loadConfig();
       updateStatus();
+      refreshOtaStatus().catch(() => {});
     };
   </script>
 </body>
@@ -1675,6 +1829,44 @@ static void backupCurrentConfiguration() {
  */
 void config_ui_start_server() {
     ota_update_register(server, config_ui_get_ota_token());
+
+    // A fresh public image cannot contain a shared OTA secret. Permit one-time
+    // or replacement key provisioning only from a client connected directly
+    // to the local setup AP. The secret is write-only and mirrored in NVS.
+    server.on("/api/ota/token", HTTP_POST, [](AsyncWebServerRequest* request) {
+        const IPAddress clientIp = request->client()->remoteIP();
+        const IPAddress apIp = WiFi.softAPIP();
+        const bool directSetupClient = wifi_net_is_ap_mode() &&
+            clientIp[0] == apIp[0] && clientIp[1] == apIp[1] && clientIp[2] == apIp[2];
+        if (!directSetupClient) {
+            request->send(403, "application/json", "{\"success\":false,\"error\":\"OTA keys can only be provisioned through the local setup access point\"}");
+            return;
+        }
+        if (!request->hasParam("token", true)) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing OTA key\"}");
+            return;
+        }
+
+        String token = request->getParam("token", true)->value();
+        token.trim();
+        token.toLowerCase();
+        if (!isValidOtaToken(token)) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"OTA key must contain exactly 64 hexadecimal characters\"}");
+            return;
+        }
+
+        const size_t primaryWritten = preferences.putString("ota_token", token);
+        const size_t backupWritten = backupPreferences.putString("ota_token", token);
+        if (primaryWritten != token.length() || backupWritten != token.length()) {
+            request->send(500, "application/json", "{\"success\":false,\"error\":\"Could not persist the OTA key redundantly\"}");
+            return;
+        }
+        ota_update_set_token(token);
+        log_i("[OTA] Authentication key provisioned from local setup AP");
+        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", "{\"success\":true}");
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+    });
 
     // Machine-readable diagnostics endpoint used for remote support. It mirrors
     // the bounded serial log ring without exposing pairing PIN values.

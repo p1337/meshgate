@@ -71,6 +71,23 @@ git-ignored `.ota-token`, verifies image capacity, supplies an MD5 checksum and
 confirms the partition switch after reboot. Wi-Fi, BLE, VPN and MQTT settings
 are stored in NVS and are not erased by an ordinary OTA update.
 
+The same authenticated update is available directly in a browser:
+
+1. Download the release asset ending in `-ota.bin`. Do not use the much larger
+   `-factory.bin` image.
+2. Open the MeshGate control page through its LAN or Tailscale IP.
+3. In **Firmware OTA Update**, select the file and enter the private
+   64-character OTA key.
+4. Select **Upload & Install OTA**, confirm, and keep power connected until the
+   bridge reboots into the other application slot.
+
+After a public USB installation, create and provision the private key once
+while connected directly to `Meshtastic-Bridge-Setup`. The key-setting endpoint
+rejects LAN and VPN clients and never returns the stored key. Save the generated
+key in a password manager; losing it requires local setup-AP access to replace
+it. Browser OTA and `tools/upload_ota.ps1` use the same endpoint, token and
+dual-slot validation path.
+
 ---
 
 ## Configuring the MQTT Gateway & Proxy (Optional)

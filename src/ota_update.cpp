@@ -70,8 +70,12 @@ String partitionLabel(const esp_partition_t* partition) {
 }
 } // namespace
 
-void ota_update_register(AsyncWebServer& server, const String& token) {
+void ota_update_set_token(const String& token) {
     s_token = token;
+}
+
+void ota_update_register(AsyncWebServer& server, const String& token) {
+    ota_update_set_token(token);
 
     server.on("/api/ota", HTTP_GET, [](AsyncWebServerRequest* request) {
         const esp_partition_t* running = esp_ota_get_running_partition();

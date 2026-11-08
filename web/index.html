@@ -47,7 +47,7 @@
       <p class="version" id="version-display">Zero-install WebSerial flasher</p>
     </header>
 
-    <div class="notice"><strong>Upgrade:</strong> leave <em>Erase device</em> unchecked to preserve Wi-Fi, BLE, VPN, MQTT and OTA configuration. Use erase only for a deliberate factory reset.</div>
+    <div class="notice"><strong>USB upgrade:</strong> this button uses WebSerial. Leave <em>Erase device</em> unchecked to preserve Wi-Fi, BLE, VPN, MQTT and OTA configuration. Use erase only for a deliberate factory reset.</div>
 
     <h2>Install MeshGate</h2>
     <section class="grid">
@@ -57,6 +57,16 @@
         <p>ESP32-S3 production build with MicroLink/Tailscale, secure OTA, BLE-to-TCP and MQTT proxy support.</p>
         <div class="meta">Arduino Core 3.3.9 · ESP-IDF 5.5.4</div>
         <div class="install"><esp-web-install-button manifest="manifest_arduino_nano_esp32_idf5.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
+      </article>
+    </section>
+
+    <h2>Wireless browser OTA</h2>
+    <section class="grid">
+      <article class="card">
+        <span class="badge">LAN · Tailscale</span>
+        <h3>Update without USB</h3>
+        <p>Download the latest <strong>*-ota.bin</strong>, open the MeshGate control page at its LAN or Tailscale IP, and use the <strong>Firmware OTA Update</strong> card. The private per-device OTA key is required; factory images are rejected.</p>
+        <div class="meta">Configuration survives · authenticated dual-slot update · automatic reboot</div>
       </article>
     </section>
 

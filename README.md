@@ -82,6 +82,11 @@ Edge or Opera on a desktop computer, or download a binary from
 For a first installation, erase the board. For an update, leave **Erase
 device** unchecked so NVS settings survive.
 
+The public Web Flasher uses USB/WebSerial. For a true wireless update, open
+the MeshGate control page at its LAN or Tailscale IP and use the **Firmware OTA
+Update** card. Upload the release's `*-ota.bin` file and authenticate with the
+device's private OTA key. Never upload the `*-factory.bin` image through OTA.
+
 To build locally:
 
 ```powershell
@@ -176,6 +181,11 @@ pwsh tools/upload_ota.ps1 -Address <bridge-ip> -Firmware .pio/build/arduino_nano
 ```
 
 The local `.ota-token` file is intentionally ignored by Git. Never commit it.
+The same update can be performed without PowerShell from the **Firmware OTA
+Update** card in the device Web UI. A new public installation provisions its
+private 64-hex-character key once through the local
+`Meshtastic-Bridge-Setup` access point; the key is then write-only and is
+required for every browser or CLI upload.
 
 ## Documentation
 
