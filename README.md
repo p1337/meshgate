@@ -95,14 +95,23 @@ Edge or Opera on a desktop computer, or download a binary from
 
 **[Buy the tested board on Amazon](https://link.amazon/B0bHRPLPo)** · **[Install MeshGate in the Web Flasher](https://p1337.github.io/meshgate/)**
 
-For a first installation, erase the board. For an update, leave **Erase
-device** unchecked so NVS settings survive.
+The USB Web Flasher is the factory-installation and recovery path. For a first
+installation, erase the board. On an already configured device, leave **Erase
+device** unchecked: enabling it permanently deletes every saved Wi-Fi
+password, BLE pairing, VPN key and MQTT setting.
 
-The public Web Flasher uses USB/WebSerial. For a wireless update, open the
+Do not disconnect the board until the Web Flasher reports **Installation
+complete**. Select **Next** to release the serial connection and start
+MeshGate, then allow 30 seconds for startup. The Nano RGB LED turns off when
+the application starts. If it remains purple, press **RST once**. Do not hold
+B1.
+
+For every normal update, open the
 MeshGate control page at its LAN or Tailscale IP and select **Check & Install
 Latest Release**. The device downloads the newest official GitHub release,
 validates its TLS origin, board, size and SHA-256 digest, writes the inactive
-application slot and reboots. No firmware file or OTA key is required.
+application slot and reboots. It never erases NVS, so all configuration and
+secrets survive. No firmware file or OTA key is required.
 
 To build locally:
 

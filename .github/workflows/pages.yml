@@ -81,9 +81,10 @@ jobs:
 
             cat <<EOF > "../manifest_${board}.json"
           {
-            "name": "MeshGate ($board)",
+            "name": "MeshGate factory install / recovery ($board)",
             "version": "$LATEST_TAG",
             "new_install_prompt_erase": true,
+            "new_install_improv_wait_time": 30,
             "builds": [
               {
                 "chipFamily": "$chip_family",

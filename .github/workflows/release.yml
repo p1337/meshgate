@@ -102,7 +102,15 @@ jobs:
             **Full installation and OTA instructions:**
             https://github.com/p1337/meshgate#install
 
-            - Use the Web Flasher for a first installation.
+            Do not disconnect the board until the Web Flasher reports
+            **Installation complete**. Select **Next** to release the serial
+            connection and start MeshGate, then allow 30 seconds for startup.
+            The Nano RGB LED turns off when the application starts. If it
+            remains purple, press **RST once**. Do not hold B1.
+
+            - Use the Web Flasher only for a first installation or USB
+              recovery. Selecting **Erase device** permanently removes all
+              saved configuration and secrets.
             - Existing MeshGate v0.6.4 or later updates itself from its Web UI.
             - The `*-ota.bin` file is retained for developer/recovery uploads.
             - This is the ESP-IDF 5 production build with native Tailscale.

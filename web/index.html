@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet">
-  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
   <style>
     :root { --bg:#0a0c10; --panel:#0f1318; --panel2:#111a24; --border:#1e2a38; --accent:#5eed97; --accent2:#ff6b35; --yellow:#ffd60a; --muted:#7d8daa; --text:#c8d6e5; --dim:#8ea2bb; --mono:'JetBrains Mono',monospace; --sans:'Exo 2',sans-serif; }
     * { box-sizing:border-box; }
@@ -34,6 +34,8 @@
     .meta { margin-top:auto; color:var(--muted); font:11px var(--mono); }
     .product-image { width:100%; max-height:330px; margin:0 0 18px; border-radius:3px; background:#fff; object-fit:contain; }
     .product-link { display:block; margin-top:14px; padding:10px 14px; border:1px solid var(--accent); border-radius:3px; color:#07110b; background:var(--accent); text-align:center; text-decoration:none; font:700 12px var(--mono); letter-spacing:.05em; text-transform:uppercase; }
+    .counter { align-items:center; min-height:0; text-align:center; }
+    .counter-image { display:block; max-width:100%; height:auto; margin:4px auto 14px; border:0; }
     .install { margin-top:14px; }
     .install button { width:100%; padding:10px 14px; border:1px solid var(--accent); border-radius:3px; background:var(--accent); color:#07110b; cursor:pointer; font:700 12px var(--mono); letter-spacing:.05em; text-transform:uppercase; }
     .links { display:flex; flex-wrap:wrap; gap:10px 18px; margin-top:24px; font:500 12px var(--mono); }
@@ -49,16 +51,19 @@
       <p class="version" id="version-display">Zero-install WebSerial flasher</p>
     </header>
 
-    <div class="notice"><strong>USB upgrade:</strong> this button uses WebSerial. Leave <em>Erase device</em> unchecked to preserve Wi-Fi, BLE, VPN, MQTT and OTA configuration. Use erase only for a deliberate factory reset.</div>
+    <div class="notice"><strong>Existing MeshGate?</strong> Use <strong>Check &amp; Install Latest Release</strong> on the device control page for normal updates. It preserves Wi-Fi, BLE, VPN, MQTT and OTA configuration.</div>
+    <div class="notice"><strong>USB is for factory installation or recovery:</strong> leave <em>Erase device</em> unchecked when preserving an existing configuration. Enabling erase permanently deletes every saved Wi-Fi password, BLE pairing, VPN key and MQTT setting.</div>
+    <div class="notice"><strong>Do not disconnect early:</strong> wait for <strong>Installation complete</strong>, then select <strong>Next</strong> to release the serial connection and start MeshGate. The installer waits another 30 seconds for startup. The Nano RGB LED must then turn off; if it remains purple, press <strong>RST once</strong>. Do not hold B1.</div>
 
-    <h2>Install MeshGate</h2>
+    <h2>Factory install / USB recovery</h2>
     <section class="grid">
       <article class="card primary">
         <span class="badge">Production · IDF 5</span>
         <h3>Arduino Nano ESP32 · ESP32-S3</h3>
         <p>ESP32-S3 production build with MicroLink/Tailscale, secure OTA, BLE-to-TCP and MQTT proxy support.</p>
         <div class="meta">Arduino Core 3.3.9 · ESP-IDF 5.5.4</div>
-        <div class="install"><esp-web-install-button manifest="manifest_arduino_nano_esp32_idf5.json"><button slot="activate">Connect &amp; install</button></esp-web-install-button></div>
+        <div class="install"><esp-web-install-button manifest="manifest_arduino_nano_esp32_idf5.json"><button slot="activate">Connect &amp; install / recover</button></esp-web-install-button></div>
+        <p style="margin-top:14px;"><strong>Finished?</strong> Wait for <strong>Installation complete</strong>, select <strong>Next</strong>, and allow 30 seconds for startup. Do not unplug the board while the installer is open.</p>
       </article>
     </section>
 
@@ -81,6 +86,18 @@
         <h3>Update without USB</h3>
         <p>Open the MeshGate control page at its LAN or Tailscale IP and press <strong>Check &amp; Install Latest Release</strong>. MeshGate downloads the official GitHub release, verifies SHA-256, installs it and reboots automatically.</p>
         <div class="meta">No file or key required · configuration survives · verified dual-slot update</div>
+      </article>
+    </section>
+
+    <h2>Visitors by country</h2>
+    <section class="grid">
+      <article class="card counter">
+        <span class="badge">Live · country flags</span>
+        <a href="https://flagcounter.me/details/kOa" rel="noopener noreferrer">
+          <img class="counter-image" src="https://flagcounter.me/kOa" alt="MeshGate visitors by country" referrerpolicy="no-referrer">
+        </a>
+        <p>See how many visits MeshGate receives from each country. Select the counter for the public statistics.</p>
+        <div class="meta">Privacy note: loading this image sends the visitor IP address to flagcounter.me for country-level geolocation and counting.</div>
       </article>
     </section>
 

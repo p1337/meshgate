@@ -2,6 +2,13 @@
 
 ## Status LED Indicators
 
+On Arduino Nano ESP32, a red-and-blue (purple) RGB light immediately after a
+USB installation is inherited from the ROM/WebSerial download mode; it is not
+an application error code. Current MeshGate releases clear that color as soon
+as the application starts. In the Web Flasher, wait for **Installation
+complete** and select **Next** so the browser releases the serial connection;
+do not unplug the board while the installation dialog is open.
+
 The bridge uses the ESP32's built-in LED to visually communicate its current state:
 
 *   **Fast Blink** (100ms on / 100ms off): **Booting up.** The device is starting. This lasts for 5 seconds. Press and hold the BOOT button now to enter Setup Mode.
@@ -83,6 +90,12 @@ The normal update is entirely automatic:
 No local file or key is requested. The authenticated raw endpoint used by
 `tools/upload_ota.ps1` remains available for developers and recovery, but is
 not shown in the normal Web UI.
+
+The one-click OTA path writes only the inactive application partition and does
+not erase NVS. Wi-Fi credentials, BLE pairing data, Tailscale/WireGuard keys,
+MQTT configuration and the OTA token therefore survive. The public USB Web
+Flasher is a factory-installation/recovery tool instead: selecting **Erase
+device** there deliberately removes all NVS data and cannot preserve secrets.
 
 ---
 

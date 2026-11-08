@@ -8,6 +8,7 @@ logs/
 *.elf
 *.map
 .ota-token
+.flagcounter-password
 # Generated temporarily by pioarduino's ESP-IDF component manager.
 src/idf_component.yml
 

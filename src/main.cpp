@@ -11,6 +11,7 @@
 #include "tailscale_net.h"
 #include "reliability_manager.h"
 #include "web_log.h"
+#include "ip_led.h"
 
 /**
  * Main Entry point.
@@ -27,6 +28,11 @@ void setup() {
 #endif
     Serial.setDebugOutput(true);
     web_log_init();
+
+    // WebSerial/ROM download mode can leave the Nano RGB LED purple. Clear it
+    // before any startup delay so a successful boot never resembles a stuck
+    // bootloader or failed installation.
+    ip_led_init();
 
     // Initialize Status LED,
     status_led_init();

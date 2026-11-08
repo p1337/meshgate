@@ -199,7 +199,14 @@ void wifi_net_start_ap() {
     status_led_set(LED_SETUP_PATTERN);
     log_i("[WIFI:AP_MODE] Starting AP Mode: Meshtastic-Bridge-Setup");
     WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP("Meshtastic-Bridge-Setup");
+    const bool apStarted = WiFi.softAP("Meshtastic-Bridge-Setup");
+    if (!apStarted) {
+        log_e("[WIFI:AP_MODE] Failed to start setup access point");
+        return;
+    }
+
+    log_i("[WIFI:AP_MODE] Setup AP ready. IP: %s, MAC: %s",
+          WiFi.softAPIP().toString().c_str(), WiFi.softAPmacAddress().c_str());
 
     // Setup Captive Portal DNS - Route all DNS requests to the ESP32's IP
     dnsServer.start(53, "*", WiFi.softAPIP());

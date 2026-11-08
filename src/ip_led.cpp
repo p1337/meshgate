@@ -55,6 +55,17 @@ void ipBlinkTask(void* parameter) {
 
 #endif
 
+void ip_led_init() {
+#if defined(ARDUINO_NANO_ESP32)
+    pinMode(LED_RED, OUTPUT);
+    pinMode(LED_GREEN, OUTPUT);
+    pinMode(LED_BLUE, OUTPUT);
+    allOff();
+    log_i("[IP LED] RGB cleared after boot (R=%d G=%d B=%d)",
+          digitalRead(LED_RED), digitalRead(LED_GREEN), digitalRead(LED_BLUE));
+#endif
+}
+
 void ip_led_show_once(const IPAddress& address) {
 #if defined(ARDUINO_NANO_ESP32)
     uint8_t finalOctet = address[3];

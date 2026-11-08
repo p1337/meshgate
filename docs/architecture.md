@@ -51,6 +51,19 @@ That path expects a factory partition, while this project's 16 MB layout uses
 two 6.25 MiB OTA application slots and has no factory application. Leaving the
 stock recovery hook enabled caused a reboot loop after rapid resets.
 
+The ESP32-S3 ROM/WebSerial download path may leave the Nano's active-low red
+and blue RGB channels enabled after a successful installation. Production
+startup explicitly configures all three RGB pins and drives them high before
+the initial delay. Without this initialization the board can appear to remain
+purple in bootloader mode even while MeshGate is already running its setup
+access point.
+
+Setup-mode diagnostics must distinguish an attempted access-point start from
+a working radio. `wifi_net_start_ap()` checks the `WiFi.softAP()` result and
+logs the assigned `192.168.4.1` address and AP MAC only after the driver has
+confirmed success. A lone `Starting AP Mode` line is not proof that clients can
+join the setup network.
+
 The precompiled Arduino ESP-IDF 5 mbedTLS library normally allocates its TLS
 record buffers from internal RAM. Running both Tailscale DERP and MQTTS then
 fails with `mbedtls_ssl_setup() == -0x7F00`, even though the Nano has 8 MiB
