@@ -354,6 +354,34 @@ To support verified TLS connections to public MQTT brokers (such as `mqtt.meshta
    * **Standard TLS (`tls_insecure = false`):** `mqtt_cfg.crt_bundle_attach = arduino_esp_crt_bundle_attach;` attaches the bundle for binary-search verification during the TLS handshake.
    * **Insecure / Self-Signed TLS (`tls_insecure = true`):** Attaches a custom callback executing `mbedtls_ssl_conf_authmode(ssl_conf, MBEDTLS_SSL_VERIFY_NONE)` and sets `skip_cert_common_name_check = true` to bypass verification for local/private brokers with self-signed certificates.
 
+### 7.6 Radio-Side Publishing Diagnostics
+
+A connected broker and an increasing MeshGate `published` counter only prove
+that proxy envelopes reached MQTT. They do not prove that a public map is
+allowed to decode or display their contents. Check these radio-side controls
+when packets arrive but map content is missing:
+
+* `lora.config_ok_to_mqtt` must be `true`; otherwise map services can receive
+  the envelope while intentionally hiding its position, NodeInfo, telemetry,
+  or text payload.
+* The reported channel needs `uplink_enabled = true`. MeshRadar additionally
+  requires the public default PSK (`AQ==`) and MQTT encryption enabled so it
+  can decode the normal channel packets.
+* `channel.settings.module_settings.position_precision = 0` disables position
+  publication on that channel. Public/default-key channels are firmware-limited
+  to 15 bits (roughly 729 m), even when a client requests greater precision.
+* Device metrics can still appear once per minute in a directly connected app
+  while never being broadcast to the mesh. A value such as
+  `telemetry.device_update_interval = 2147483647` effectively suppresses the
+  periodic radio telemetry; set an intentional interval (normally 1800 s) for
+  battery, voltage, channel-utilization, and airtime history.
+* Environment, air-quality, and power telemetry require supported physical
+  sensors. Enabling their modules cannot synthesize readings from absent
+  hardware.
+* Neighbor Info is independent of ordinary packet reception. Its minimum
+  update interval is 14400 s, and on the public default channel it may be sent
+  to MQTT/app clients but not as a dedicated LoRa neighbor broadcast.
+
 ---
 
 ## 8. Implementation Roadmap & Task Tracker
