@@ -487,35 +487,22 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
   </div>
 
-  <!-- Authenticated browser OTA Card -->
+  <!-- Official one-click OTA Card -->
   <div class="card" id="card-ota">
     <div class="card-header">
       <div class="card-title">Firmware OTA Update</div>
       <span id="view-ota-status" class="status-pill waiting">Loading</span>
     </div>
     <div class="info-row"><span class="info-label">Firmware:</span><span class="info-val" id="view-ota-version">Loading...</span></div>
+    <div class="info-row"><span class="info-label">Latest release:</span><span class="info-val" id="view-ota-latest">Not checked</span></div>
     <div class="info-row"><span class="info-label">Running slot:</span><span class="info-val" id="view-ota-running">Loading...</span></div>
     <div class="info-row"><span class="info-label">Update slot:</span><span class="info-val" id="view-ota-next">Loading...</span></div>
     <div class="alert alert-info" style="display:block; margin-bottom:12px;">
-      Select the <strong>*-ota.bin</strong> release file, never the factory image. An OTA update preserves WiFi, BLE, VPN and MQTT settings. Keep this page open until the bridge accepts the image and reboots.
+      MeshGate downloads only the latest official release from GitHub, verifies its board, size and SHA-256 checksum, installs it into the inactive slot and reboots. WiFi, BLE, VPN and MQTT settings are preserved.
     </div>
-
-    <label>OTA key (64 hexadecimal characters):</label>
-    <div class="password-field">
-      <input type="password" id="input-ota-token" maxlength="64" autocomplete="off" placeholder="Paste your private OTA key">
-      <button type="button" class="btn-toggle-pass" onclick="togglePassVisibility('input-ota-token', this)">Show</button>
-    </div>
-    <div class="btn-group">
-      <button type="button" class="btn-secondary" onclick="generateOtaToken()">Generate Key</button>
-      <button type="button" class="btn-secondary" id="btn-save-ota-token" onclick="saveOtaToken()">Set Key in Setup AP</button>
-    </div>
-    <small>A new key can only be provisioned while this page is opened through the local <strong>Meshtastic-Bridge-Setup</strong> access point. Existing keys remain write-only.</small>
-
-    <label>OTA firmware file:</label>
-    <input type="file" id="input-ota-file" accept=".bin,application/octet-stream">
     <div class="progress-track" style="height:8px; margin:8px 0 12px;"><div id="ota-progress-bar" class="progress-fill progress-green" style="width:0%;"></div></div>
     <div id="ota-alert" class="alert"></div>
-    <button class="btn-primary" id="btn-ota-upload" onclick="startOtaUpload()">Upload &amp; Install OTA</button>
+    <button class="btn-primary" id="btn-ota-update" onclick="startOfficialOta()">Check &amp; Install Latest Release</button>
   </div>
 
   <!-- System Actions Card -->
@@ -1511,125 +1498,74 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     function refreshOtaStatus() {
-      return fetch('/api/ota', { cache: 'no-store' })
-        .then(r => r.json())
-        .then(status => {
-          document.getElementById('view-ota-version').innerText = status.firmware_version || '(Unknown)';
-          document.getElementById('view-ota-running').innerText = status.running_partition || '(Unknown)';
-          document.getElementById('view-ota-next').innerText = status.next_partition || '(Unavailable)';
-          const pill = document.getElementById('view-ota-status');
-          pill.className = 'status-pill ' + (status.enabled ? 'connected' : 'disabled');
-          pill.innerText = status.enabled ? 'Ready' : 'Key required';
-          return status;
-        })
-        .catch(() => {
-          const pill = document.getElementById('view-ota-status');
-          pill.className = 'status-pill error';
-          pill.innerText = 'Unavailable';
-          throw new Error('Could not read OTA status from the bridge.');
-        });
+      return Promise.all([
+        fetch('/api/ota', { cache: 'no-store' }).then(r => r.json()),
+        fetch('/api/ota/official', { cache: 'no-store' }).then(r => r.json())
+      ]).then(results => {
+        const slots = results[0];
+        const status = results[1];
+        document.getElementById('view-ota-version').innerText = status.current_version || slots.firmware_version || '(Unknown)';
+        document.getElementById('view-ota-latest').innerText = status.latest_version || 'Not checked';
+        document.getElementById('view-ota-running').innerText = slots.running_partition || '(Unknown)';
+        document.getElementById('view-ota-next').innerText = slots.next_partition || '(Unavailable)';
+        updateOfficialOtaDisplay(status);
+        return status;
+      }).catch(() => {
+        const pill = document.getElementById('view-ota-status');
+        pill.className = 'status-pill error';
+        pill.innerText = 'Unavailable';
+        throw new Error('Could not read OTA status from the bridge.');
+      });
     }
 
-    function generateOtaToken() {
-      if (!window.crypto || !window.crypto.getRandomValues) {
-        showAlert('ota-alert', 'error', 'This browser cannot generate a cryptographically secure OTA key.');
-        return;
-      }
-      const bytes = new Uint8Array(32);
-      window.crypto.getRandomValues(bytes);
-      let token = '';
-      for (let i = 0; i < bytes.length; i++) token += bytes[i].toString(16).padStart(2, '0');
-      document.getElementById('input-ota-token').value = token;
-      showAlert('ota-alert', 'warning', 'New key generated. Save it securely, then click Set Key while connected directly to the setup AP. It cannot be read back later.');
-    }
-
-    function saveOtaToken() {
-      const token = document.getElementById('input-ota-token').value.trim();
-      if (!/^[0-9a-fA-F]{64}$/.test(token)) {
-        showAlert('ota-alert', 'error', 'The OTA key must contain exactly 64 hexadecimal characters.');
-        return;
-      }
-      const btn = document.getElementById('btn-save-ota-token');
-      btn.disabled = true;
-      fetch('/api/ota/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'token=' + encodeURIComponent(token)
-      }).then(r => r.json().then(body => ({ ok: r.ok, body: body })))
-        .then(result => {
-          if (!result.ok || !result.body.success) throw new Error(result.body.error || 'The bridge rejected the OTA key.');
-          showAlert('ota-alert', 'success', 'OTA key stored redundantly. Keep your private copy; the bridge will not reveal it again.');
-          return refreshOtaStatus();
-        })
-        .catch(err => showAlert('ota-alert', 'error', err.message || 'Could not save the OTA key.'))
-        .finally(() => { btn.disabled = false; });
-    }
-
-    function startOtaUpload() {
-      const fileInput = document.getElementById('input-ota-file');
-      const file = fileInput.files && fileInput.files[0];
-      const token = document.getElementById('input-ota-token').value.trim();
-      if (!file) {
-        showAlert('ota-alert', 'error', 'Select the *-ota.bin firmware file first.');
-        return;
-      }
-      if (/factory/i.test(file.name)) {
-        showAlert('ota-alert', 'error', 'Factory images are for USB flashing only. Select the *-ota.bin file.');
-        return;
-      }
-      if (!/^[0-9a-fA-F]{64}$/.test(token)) {
-        showAlert('ota-alert', 'error', 'Enter the private 64-character OTA key.');
-        return;
-      }
-      refreshOtaStatus().then(status => {
-        if (!status.enabled) throw new Error('OTA is disabled until a key is provisioned in the local setup AP.');
-        if (file.size <= 0 || file.size > status.max_image_bytes) {
-          throw new Error('Firmware size is invalid for the update slot (' + file.size + ' / ' + status.max_image_bytes + ' bytes).');
-        }
-        showModal(
-          'Install OTA Firmware',
-          'Install ' + file.name + ' (' + Math.round(file.size / 1024) + ' KiB) and reboot MeshGate? Stored configuration will be preserved.',
-          'Upload & Install',
-          'btn-primary',
-          function() { performOtaUpload(file, token); }
-        );
-      }).catch(err => showAlert('ota-alert', 'error', err.message || 'OTA preflight failed.'));
-    }
-
-    function performOtaUpload(file, token) {
-      const btn = document.getElementById('btn-ota-upload');
+    function updateOfficialOtaDisplay(status) {
+      const pill = document.getElementById('view-ota-status');
+      const btn = document.getElementById('btn-ota-update');
       const bar = document.getElementById('ota-progress-bar');
-      btn.disabled = true;
-      bar.style.width = '0%';
-      bar.className = 'progress-fill progress-green';
-      showAlert('ota-alert', 'info', 'Uploading firmware. Do not disconnect power or close this page...');
+      const labels = {
+        idle: 'Ready', checking: 'Checking GitHub', current: 'Up to date',
+        downloading: 'Downloading', verifying: 'Verifying', installing: 'Installing',
+        rebooting: 'Rebooting', failed: 'Failed', unsupported: 'Unsupported'
+      };
+      pill.innerText = labels[status.state] || status.state || 'Unknown';
+      pill.className = 'status-pill ' + (status.state === 'failed' ? 'error' :
+        (status.state === 'current' ? 'connected' : (status.busy ? 'waiting' : 'connected')));
+      btn.disabled = !!status.busy || !status.supported;
+      if (status.latest_version) document.getElementById('view-ota-latest').innerText = status.latest_version;
+      const total = Number(status.total_bytes || 0);
+      const downloaded = Number(status.downloaded_bytes || 0);
+      const percent = total > 0 ? Math.min(100, Math.round(downloaded * 100 / total)) : 0;
+      bar.style.width = (status.state === 'verifying' || status.state === 'installing' || status.state === 'rebooting' ? 100 : percent) + '%';
+      bar.className = 'progress-fill ' + (status.state === 'failed' ? 'progress-red' : 'progress-green');
+      if (status.state === 'failed') showAlert('ota-alert', 'error', status.error || 'Official update failed.');
+      if (status.state === 'current') showAlert('ota-alert', 'success', 'MeshGate is already running the latest official release.');
+      if (status.state === 'rebooting') showAlert('ota-alert', 'success', 'Official release verified and installed. MeshGate is rebooting now.');
+    }
 
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/ota', true);
-      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-      xhr.setRequestHeader('X-OTA-Key', token);
-      xhr.upload.onprogress = function(event) {
-        if (event.lengthComputable) bar.style.width = Math.round((event.loaded / event.total) * 100) + '%';
-      };
-      xhr.onload = function() {
-        let response = {};
-        try { response = JSON.parse(xhr.responseText || '{}'); } catch (_) {}
-        if (xhr.status === 202 && response.success) {
-          bar.style.width = '100%';
-          showAlert('ota-alert', 'success', 'Firmware accepted and validated. MeshGate is rebooting into the new slot; reconnect after about 15 seconds.');
-          setTimeout(function() { btn.disabled = false; }, 15000);
-        } else {
-          bar.className = 'progress-fill progress-red';
-          showAlert('ota-alert', 'error', response.error || ('OTA upload failed with HTTP ' + xhr.status + '.'));
+    function pollOfficialOta() {
+      fetch('/api/ota/official', { cache: 'no-store' }).then(r => r.json()).then(status => {
+        updateOfficialOtaDisplay(status);
+        if (status.busy) setTimeout(pollOfficialOta, 1000);
+      }).catch(() => {
+        showAlert('ota-alert', 'info', 'MeshGate may be rebooting. Reopen this page in about 15 seconds.');
+      });
+    }
+
+    function startOfficialOta() {
+      const btn = document.getElementById('btn-ota-update');
+      btn.disabled = true;
+      document.getElementById('ota-progress-bar').style.width = '0%';
+      showAlert('ota-alert', 'info', 'Checking the official GitHub release...');
+      fetch('/api/ota/official', { method: 'POST' })
+        .then(r => r.json().then(body => ({ ok: r.ok, body: body })))
+        .then(result => {
+          if (!result.ok || !result.body.success) throw new Error(result.body.error || 'The update could not be started.');
+          pollOfficialOta();
+        })
+        .catch(err => {
           btn.disabled = false;
-        }
-      };
-      xhr.onerror = function() {
-        bar.className = 'progress-fill progress-red';
-        showAlert('ota-alert', 'error', 'The connection closed before the bridge confirmed the update. Check its status after reboot.');
-        btn.disabled = false;
-      };
-      xhr.send(file);
+          showAlert('ota-alert', 'error', err.message || 'The update could not be started.');
+        });
     }
 
     let modalConfirmCallback = null;

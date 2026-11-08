@@ -92,10 +92,27 @@ jobs:
             ]
           }
           EOF
+
+            if [ "$board" = "arduino_nano_esp32_idf5" ]; then
+              test -f "$board/firmware.bin"
+              ota_size=$(stat -c %s "$board/firmware.bin")
+              ota_sha256=$(sha256sum "$board/firmware.bin" | awk '{print $1}')
+              cat <<EOF > "../latest_ota.json"
+          {
+            "version": "$LATEST_TAG",
+            "board": "arduino_nano_esp32_idf5",
+            "url": "https://p1337.github.io/meshgate/firmware/arduino_nano_esp32_idf5/firmware.bin",
+            "size": $ota_size,
+            "sha256": "$ota_sha256"
+          }
+          EOF
+            fi
           done
           cd ../../
 
           test -f "web/manifest_arduino_nano_esp32_idf5.json"
+          test -f "web/latest_ota.json"
+          python -m json.tool web/latest_ota.json >/dev/null
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

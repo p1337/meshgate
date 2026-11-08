@@ -48,11 +48,10 @@ rebooting into normal bridge mode.
   * Contains a **Reset All Settings** action (with confirmation dialog) that clears all stored NVS credentials and restarts into Setup Mode.
 * **Firmware OTA Update Card:**
   * Shows the running firmware version and active/next application slots.
-  * Accepts only the OTA application image, a write-only 64-hex-character key,
-    and performs an authenticated raw-binary upload with visible progress.
-  * Rejects factory-image filenames and images larger than the inactive slot.
-  * Can generate and provision a new key only from a client directly connected
-    to the local setup AP; ordinary LAN and VPN clients cannot replace it.
+  * Provides one **Check & Install Latest Release** action with visible state
+    and download progress; no file chooser or user key is shown.
+  * Downloads only the production ESP32-S3 image named by the official release
+    metadata and verifies TLS, board identity, size and SHA-256 before activation.
 * **Footer:**
   * Dynamically embeds the compiled Firmware Version and links to the project's GitHub repository.
 
@@ -102,8 +101,13 @@ rebooting into normal bridge mode.
    * **`POST /api/ota/token`**: Stores a new write-only OTA key in both NVS
      namespaces and applies it immediately. It is accepted only in setup mode
      from the setup AP's own subnet, never from LAN or VPN clients.
+   * **`GET /api/ota/official`**: Reports official update support, current and
+     latest version, lifecycle state, byte progress and a bounded error string.
+   * **`POST /api/ota/official`**: Starts the background official-release
+     download and install task. It accepts no URL, file or credential from the
+     browser, so it cannot be used to install arbitrary firmware.
 
-The `/api/ota/token` handler must be registered before `/api/ota`.
+The `/api/ota/token` and `/api/ota/official` handlers must be registered before `/api/ota`.
 ESPAsyncWebServer considers a route to match slash-delimited child paths, so
 registering the parent first would shadow the provisioning endpoint with the
 raw firmware-body handler.

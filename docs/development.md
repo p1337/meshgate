@@ -273,4 +273,7 @@ Follow these steps to trigger the CI/CD pipeline:
 4. **Wait for the Web Flasher Pipeline**:
    * Successful completion of the release workflow automatically triggers **Deploy Web Flasher to GitHub Pages**. A `workflow_run` trigger is used because releases created with `GITHUB_TOKEN` do not emit another ordinary workflow event.
    * It will securely download the release binaries, automatically generate the `manifest.json` configurations for ESP Web Tools, and deploy them to `https://p1337.github.io/meshgate/`.
+   * It also creates `latest_ota.json` with the production OTA image URL, exact
+     byte length and SHA-256 digest. The on-device one-click updater consumes
+     only this fixed official channel; publish Pages before testing an OTA.
    * The web flasher will instantly update to show "Firmware Version: v1.2.0".

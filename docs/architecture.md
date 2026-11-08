@@ -102,6 +102,18 @@ DERP-initiated mobile peer behind carrier NAT receives the handshake response
 through DERP but subsequent IP replies are incorrectly sent to an unreachable
 UDP candidate, producing a repeated handshake loop and no TCP connectivity.
 
+#### Official release OTA channel
+
+The normal Web UI never accepts a firmware file, URL or key. Its update action
+starts an internal task which fetches `latest_ota.json` from the project's
+GitHub Pages release channel over the embedded Mozilla CA bundle. The Pages
+workflow creates that metadata from the latest GitHub Release and includes the
+fixed production board, fixed firmware URL, byte length and SHA-256 digest.
+Firmware is streamed into the inactive OTA slot and hashed simultaneously;
+the slot is activated only after all metadata, size and digest checks succeed.
+The older authenticated raw endpoint is retained solely for development and
+recovery and shares a process-wide lock with the official updater.
+
 ### 2. Key Libraries
 *   **BLE:** `h2zero/NimBLE-Arduino`. NimBLE is a highly optimized, low-RAM Bluetooth stack. It is much more stable and resource-efficient than the standard Bluedroid stack, and it fully supports secure pairing and PIN codes.
 *   **WiFi:** Standard `WiFi.h`.

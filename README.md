@@ -82,10 +82,11 @@ Edge or Opera on a desktop computer, or download a binary from
 For a first installation, erase the board. For an update, leave **Erase
 device** unchecked so NVS settings survive.
 
-The public Web Flasher uses USB/WebSerial. For a true wireless update, open
-the MeshGate control page at its LAN or Tailscale IP and use the **Firmware OTA
-Update** card. Upload the release's `*-ota.bin` file and authenticate with the
-device's private OTA key. Never upload the `*-factory.bin` image through OTA.
+The public Web Flasher uses USB/WebSerial. For a wireless update, open the
+MeshGate control page at its LAN or Tailscale IP and select **Check & Install
+Latest Release**. The device downloads the newest official GitHub release,
+validates its TLS origin, board, size and SHA-256 digest, writes the inactive
+application slot and reboots. No firmware file or OTA key is required.
 
 To build locally:
 
@@ -167,8 +168,9 @@ the current broker instructions published by [MeshRadar](https://meshradar.pl/).
 - `GET /api/logs` — bounded in-memory runtime log
 - `GET /metrics` — Prometheus/OpenMetrics endpoint
 - `POST /api/reboot` — controlled restart
-- `GET /api/ota` — OTA capability and partition status
-- `POST /api/ota` — authenticated raw firmware upload
+- `GET /api/ota/official` — official release update state and progress
+- `POST /api/ota/official` — download, verify and install the latest release
+- `GET /api/ota` / `POST /api/ota` — developer/emergency authenticated raw OTA
 
 Configuration is mirrored between `bridge_cfg` and `bridge_backup` NVS
 namespaces. Ordinary reboots, watchdog recovery and OTA never erase it. Only
@@ -181,11 +183,10 @@ pwsh tools/upload_ota.ps1 -Address <bridge-ip> -Firmware .pio/build/arduino_nano
 ```
 
 The local `.ota-token` file is intentionally ignored by Git. Never commit it.
-The same update can be performed without PowerShell from the **Firmware OTA
-Update** card in the device Web UI. A new public installation provisions its
-private 64-hex-character key once through the local
-`Meshtastic-Bridge-Setup` access point; the key is then write-only and is
-required for every browser or CLI upload.
+The raw upload endpoint and private token remain an emergency/developer path.
+Normal users never need that token: the **Firmware OTA Update** card accepts no
+local file and installs only the release described by the repository's signed-
+transport update metadata and SHA-256 digest.
 
 ## Documentation
 

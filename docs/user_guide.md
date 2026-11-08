@@ -62,7 +62,7 @@ Meshtastic protocol.
 
 Tailscale and classic WireGuard are mutually exclusive in the IDF 5 image.
 
-### OTA
+### One-click OTA
 
 The Arduino Nano ESP32 profile uses two application partitions. After the
 one-time USB partition-table migration, later firmware can be installed over
@@ -71,22 +71,18 @@ git-ignored `.ota-token`, verifies image capacity, supplies an MD5 checksum and
 confirms the partition switch after reboot. Wi-Fi, BLE, VPN and MQTT settings
 are stored in NVS and are not erased by an ordinary OTA update.
 
-The same authenticated update is available directly in a browser:
+The normal update is entirely automatic:
 
-1. Download the release asset ending in `-ota.bin`. Do not use the much larger
-   `-factory.bin` image.
-2. Open the MeshGate control page through its LAN or Tailscale IP.
-3. In **Firmware OTA Update**, select the file and enter the private
-   64-character OTA key.
-4. Select **Upload & Install OTA**, confirm, and keep power connected until the
-   bridge reboots into the other application slot.
+1. Open the MeshGate control page through its LAN or Tailscale IP.
+2. In **Firmware OTA Update**, select **Check & Install Latest Release** and
+   confirm.
+3. MeshGate fetches the official release metadata and firmware from the
+   project's GitHub Pages release channel, validates TLS, board identity, image
+   size and SHA-256, writes the inactive slot and reboots.
 
-After a public USB installation, create and provision the private key once
-while connected directly to `Meshtastic-Bridge-Setup`. The key-setting endpoint
-rejects LAN and VPN clients and never returns the stored key. Save the generated
-key in a password manager; losing it requires local setup-AP access to replace
-it. Browser OTA and `tools/upload_ota.ps1` use the same endpoint, token and
-dual-slot validation path.
+No local file or key is requested. The authenticated raw endpoint used by
+`tools/upload_ota.ps1` remains available for developers and recovery, but is
+not shown in the normal Web UI.
 
 ---
 
