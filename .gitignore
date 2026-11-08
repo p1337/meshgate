@@ -7,6 +7,8 @@
 *.elf
 *.map
 .ota-token
+# Generated temporarily by pioarduino's ESP-IDF component manager.
+src/idf_component.yml
 
 # JetBrains IDEs
 .idea/*

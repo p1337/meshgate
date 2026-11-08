@@ -1,0 +1,19 @@
+{
+  "name": "MicroLink",
+  "version": "2.0.0+216da330",
+  "description": "Native Tailscale client for ESP32-S3, vendored from CamM2325/microlink",
+  "license": "MIT",
+  "build": {
+    "flags": [
+      "-I include",
+      "-I src",
+      "-I src/wireguard_lwip",
+      "-I src/wireguard_lwip/crypto/refc"
+    ],
+    "srcFilter": [
+      "+<*>",
+      "-<wireguard_lwip/crypto/cortex/>",
+      "-<wireguard_lwip/crypto/refc/x25519.c>"
+    ]
+  }
+}

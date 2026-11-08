@@ -26,6 +26,10 @@ The UI is built with a clean, modular card-based interface that allows inspectin
     * **Skip Certificate Validation** toggle (for self-signed / local LAN brokers).
     * **Custom CA Root Certificate** textarea for uploading private PEM certificates.
   * Independent **Save MQTT Settings** button persists settings to NVS and applies them immediately.
+* **Tailscale Card (IDF-5 Nano build):**
+  * Displays enablement, live connection state, device name, assigned VPN IPv4 address, known peer count, and whether an auth key is stored.
+  * Accepts a lowercase device name and write-only `tskey-auth-...` enrollment key. Saving an empty key preserves the stored value; an explicit checkbox removes it.
+  * Tailscale and classic WireGuard are mutually exclusive because both share the same embedded WireGuard engine.
 * **System Actions Card:**
   * Displays formatted **System Uptime** (e.g. `1h 24m 12s`).
   * Displays **Memory (Heap)** stats: Free Heap, Minimum Recorded Free Heap, and Maximum Allocatable Block in KB.
@@ -61,7 +65,7 @@ The UI is built with a clean, modular card-based interface that allows inspectin
 
 2. **Web Server Endpoints (`config_ui.cpp`)**:
    * **`GET /`**: Serves the single-page HTML/CSS/JS application directly from flash (`PROGMEM`) via `AsyncProgmemResponse` with zero heap allocation.
-   * **`GET /config`**: Returns current settings as JSON: `{"wifi_ssid":"...","wifi_has_pass":true,"ble_name":"...","ble_mac":"...","ble_pin":"...","debug_logs":false,"mqtt_enabled":false,"mqtt_tls_insecure":false,"mqtt_custom_ca":"..."}`.
+   * **`GET /config`**: Returns current settings as JSON, including WiFi/BLE/MQTT/WireGuard values plus `tailscale_enabled`, `tailscale_supported`, `tailscale_device_name`, and `tailscale_has_auth_key`. Secret WiFi, WireGuard, OTA, and Tailscale values are never returned.
    * **`GET /status`**: Returns unified live diagnostic and telemetry JSON polled every 7 seconds by the client: contains `uptime_seconds`, `heap` (free, min_free, max_alloc), `wifi` (connected, is_ap_mode, ip, rssi, mdns_host), `ble` (connected, rx_count, tx_count, invalid_count), `tcp` (connected_clients, max_clients, rx_count, tx_count, invalid_count), `traffic` (ble, tcp, mqtt rx/tx/invalid), `queues` (waiting, capacity, dropped for `tcp_to_ble`, `ble_to_tcp`, `mqtt_to_ble`), `stacks` (ble_task, net_task free bytes), and `mqtt` (gateway_enabled, state, radio_proxy_enabled, broker, root, published, received, dropped, invalid).
    * **`GET /metrics`**: Standards-compliant Prometheus / OpenMetrics scraping endpoint (`text/plain; version=0.0.4; charset=utf-8`). Streams line-by-line metrics (`meshbridge_*`) directly into lwIP network output buffers via `AsyncResponseStream` with zero large heap allocations. Suitable for scraping by Prometheus, VictoriaMetrics, Grafana Agent, and Home Assistant.
    * **`GET /start_scan_wifi`**: Initiates an asynchronous WiFi network scan.
@@ -73,6 +77,8 @@ The UI is built with a clean, modular card-based interface that allows inspectin
    * **`POST /save_wifi`**: Saves `wifi_ssid` and `wifi_pass` to NVS.
    * **`POST /save_ble`**: Saves `ble_name`, `ble_mac`, and `ble_pin` to NVS.
    * **`POST /save_mqtt`**: Saves `mqtt_enabled`, `mqtt_tls_insec`, and `mqtt_custom_ca` to NVS and applies changes live if in Normal mode.
+   * **`POST /save_tailscale`**: Saves `enabled`, `device_name`, `auth_key`, and `clear_auth_key` redundantly. A reboot starts the selected tunnel.
+   * **`GET /tailscale_status`**: Reports `enabled`, `connected`, state name, assigned VPN IP, and peer count without returning credentials.
    * **`POST /save_system`**: Saves `debug_logs` boolean flag to NVS.
    * **`POST /reboot`**: Restarts the ESP32 into normal bridge mode.
    * **`POST /reset`**: Erases all stored NVS configurations and reboots the ESP32 into Setup Mode.
@@ -92,6 +98,9 @@ The following keys are stored in the `Preferences` namespace (`bridge_cfg`):
 * `mqtt_tls_insec` (Bool)
 * `mqtt_custom_ca` (String)
 * `ota_token` (64-character hexadecimal String, write-only and duplicated in `bridge_backup`)
+* `ts_enabled` (Bool, duplicated in `bridge_backup`)
+* `ts_name` (String, duplicated in `bridge_backup`)
+* `ts_auth` (String, write-only Tailscale auth key, duplicated in `bridge_backup`)
 
 ## Technical Decisions & Considerations
 * **Captive Portal / WebView Compatibility Constraints (macOS / iOS CNA & Windows):**

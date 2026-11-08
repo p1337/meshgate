@@ -1,11 +1,12 @@
 # Meshtastic ESP32 BLE-to-TCP Bridge
 
-> **Development status:** The production `arduino_nano_esp32` target currently
-> builds with Arduino Core 2.0.17 / ESP-IDF 4.4.7. The separate
-> `arduino_nano_esp32_idf5` environment is the active migration target for
-> Arduino Core 3.3.9 / ESP-IDF 5.5.4 and future MicroLink/Tailscale support. Do
-> not treat that migration target as production-ready until its build and
-> on-device tests are documented as complete.
+> **Development status:** The established `arduino_nano_esp32` recovery target
+> remains on Arduino Core 2.0.17 / ESP-IDF 4.4.7. The Nano deployment target
+> `arduino_nano_esp32_idf5` builds with Arduino Core 3.3.9 / ESP-IDF 5.5.4,
+> NimBLE-Arduino 2.5.2, and MicroLink/Tailscale. It has been verified on an
+> Arduino Nano ESP32 for WiFi, Web UI, TCP 4403, authenticated OTA, and stable
+> BLE scanning/reconnect operation. A real Tailscale join still requires a
+> user-issued auth key for the intended tailnet.
 
 A simple, lightweight ESP32 firmware that bridges a Meshtastic radio's Bluetooth connection to your local WiFi network. 
 
@@ -167,6 +168,23 @@ unattended network startup; serial output is best-effort in that state. Pairing
 PIN values are deliberately redacted from both serial and API logs. Reboot
 requests return HTTP 202 immediately, then restart one second later so remote
 automation receives a reliable acknowledgement.
+
+### Tailscale remote access (Arduino Nano ESP32, IDF 5 build)
+
+The `arduino_nano_esp32_idf5` profile embeds MicroLink and can join a Tailscale
+tailnet directly, without a Raspberry Pi, public IP address, port forwarding,
+or dynamic DNS. Enter a lowercase device name and a Tailscale auth key in the
+Web UI, enable Tailscale, save, and reboot. The status card and
+`GET /tailscale_status` report the state, assigned Tailscale IPv4 address, and
+known peer count. Once connected, use the assigned address with TCP port 4403
+or the HTTP diagnostics/OTA endpoints.
+
+The auth key is write-only: `GET /config` reports only whether one is stored.
+It is saved in both configuration namespaces for recovery and is never printed
+to serial, HTTP logs, or JSON responses. Tailscale and the classic WireGuard
+client are mutually exclusive because both use the same enhanced lwIP
+WireGuard engine in the IDF 5 firmware. Tailscale enrollment is an external
+tailnet action; an email address alone cannot authorize the device.
 
 ### Authenticated OTA updates (Arduino Nano ESP32)
 

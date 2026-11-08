@@ -202,6 +202,28 @@ public:
         authFailed.store(false, std::memory_order_relaxed);
     }
 
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    void onPassKeyEntry(NimBLEConnInfo& connInfo) override {
+        log_i("[Bridge-BLE] Passkey requested; configured PIN provided (hidden)");
+        NimBLEDevice::injectPassKey(connInfo, targetBlePin);
+    }
+
+    void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) override {
+        log_i("[Bridge-BLE] Confirming pairing PIN (hidden)");
+        NimBLEDevice::injectConfirmPasskey(connInfo, pin == targetBlePin);
+    }
+
+    void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
+        authFailed.store(!connInfo.isEncrypted(), std::memory_order_relaxed);
+        authCompleted.store(true, std::memory_order_release);
+        log_i(
+            "[Bridge-BLE] Authentication complete. Encrypted: %d, Authenticated: %d, Bonded: %d",
+            connInfo.isEncrypted(),
+            connInfo.isAuthenticated(),
+            connInfo.isBonded()
+        );
+    }
+#else
     uint32_t onPassKeyRequest() override {
         log_i("[Bridge-BLE] Passkey requested; configured PIN provided (hidden)");
         return targetBlePin;
@@ -222,9 +244,15 @@ public:
             desc->sec_state.bonded
         );
     }
+#endif
 
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    void onDisconnect(NimBLEClient* pClient, int reason) override {
+        log_w("[Bridge-BLE] BLE client disconnected (reason %d).", reason);
+#else
     void onDisconnect(NimBLEClient* pClient) override {
         log_w("[Bridge-BLE] BLE client disconnected.");
+#endif
         s_ble_connected.store(false, std::memory_order_relaxed);
         mqtt_net_on_ble_disconnected();
     }
@@ -263,7 +291,12 @@ static bool rediscoverMeshtasticRadio() {
     scan->setDuplicateFilter(true);
 
     log_i("[Bridge-BLE] Scanning for current Meshtastic radio address...");
-    NimBLEScanResults results = scan->start(BLUETOOTH_SCAN_TIME_SECONDS, false);
+    NimBLEScanResults results =
+#ifdef ESP_IDF5_MIGRATION_BUILD
+        scan->getResults(BLUETOOTH_SCAN_TIME_SECONDS * 1000UL, false);
+#else
+        scan->start(BLUETOOTH_SCAN_TIME_SECONDS, false);
+#endif
 
     static const NimBLEUUID serviceUuid("6ba1b218-15a8-461f-9fa8-5dcae273eafd");
     static const NimBLEUUID legacyServiceUuid("cb0b9a0b-a8c2-49c0-bdd5-3fa12b04d84b");
@@ -274,7 +307,15 @@ static bool rediscoverMeshtasticRadio() {
     bool exactNameMatch = false;
 
     for (int i = 0; i < results.getCount(); ++i) {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+        const NimBLEAdvertisedDevice* devicePtr = results.getDevice(i);
+        if (!devicePtr) {
+            continue;
+        }
+        const NimBLEAdvertisedDevice& device = *devicePtr;
+#else
         NimBLEAdvertisedDevice device = results.getDevice(i);
+#endif
         if (!device.isAdvertisingService(serviceUuid) &&
             !device.isAdvertisingService(legacyServiceUuid)) {
             continue;
@@ -346,7 +387,11 @@ static void bridgeBleTask(void* parameter) {
                 bleClient->setClientCallbacks(&bridgeCallbacks, false);
             }
 
+#ifdef ESP_IDF5_MIGRATION_BUILD
+            bleClient->setConnectTimeout(BLUETOOTH_TIMEOUT_SECONDS * 1000UL);
+#else
             bleClient->setConnectTimeout(BLUETOOTH_TIMEOUT_SECONDS);
+#endif
             bridgeCallbacks.resetAuthentication();
             if (bleClient->connect(addr, false)) {
                 failedConnectAttempts = 0;

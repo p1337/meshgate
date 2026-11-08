@@ -191,7 +191,9 @@ bool initializeTunnel() {
     peer.endport_port = s_config.wireguard_endpoint_port;
     peer.keep_alive = WIREGUARD_KEEPALIVE_SECONDS;
 
+#ifndef ESP_IDF5_MIGRATION_BUILD
     wireguard_platform_init();
+#endif
     err_t addResult = wireguardif_add_peer(s_wg_netif, &peer, &s_peer_index);
     if (addResult != ERR_OK || s_peer_index == WIREGUARDIF_INVALID_INDEX) {
         log_e("[WireGuard] Could not add peer (error %d)", addResult);

@@ -27,6 +27,23 @@ static std::atomic<bool> isScanningFlag{false};
  */
 static String lastScanError = "";
 
+#ifdef ESP_IDF5_MIGRATION_BUILD
+class BridgeScanCallbacks : public NimBLEScanCallbacks {
+public:
+    void onScanEnd(const NimBLEScanResults& results, int reason) override {
+        isScanningFlag = false;
+        if (reason != 0) {
+            lastScanError = "BLE scan ended with error " + String(reason) + ".";
+            log_w("[BLE] Scan ended with reason %d after finding %d device(s).", reason, results.getCount());
+            return;
+        }
+        log_i("[BLE] Scan finished. Found %d device(s).", results.getCount());
+    }
+};
+
+static BridgeScanCallbacks bridgeScanCallbacks;
+#endif
+
 // Meshtastic's official BLE service UUID. The legacy UUID is retained for
 // radios running older firmware. Filtering advertisements by these UUIDs keeps
 // unrelated rings, watches, trackers, and anonymous BLE beacons out of the UI.
@@ -48,6 +65,9 @@ void ble_client_init() {
     pScan->setInterval(100);          // 100ms scan interval
     pScan->setWindow(99);             // 99ms scan window
     pScan->setDuplicateFilter(true);  // Filter duplicate advertisements during a single scan
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    pScan->setScanCallbacks(&bridgeScanCallbacks, false);
+#endif
 
     isInitialized = true;
     log_i("[BLE] Client initialized.");
@@ -80,10 +100,15 @@ void ble_client_start_scan() {
 
     // Start asynchronous scan for BLUETOOTH_SCAN_TIME_SECONDS
     log_i("[BLE] Starting scan (%d seconds)...", BLUETOOTH_SCAN_TIME_SECONDS);
-    bool started = pScan->start(BLUETOOTH_SCAN_TIME_SECONDS, [](NimBLEScanResults results) {
+    bool started =
+#ifdef ESP_IDF5_MIGRATION_BUILD
+        pScan->start(BLUETOOTH_SCAN_TIME_SECONDS * 1000UL, false, true);
+#else
+        pScan->start(BLUETOOTH_SCAN_TIME_SECONDS, [](NimBLEScanResults results) {
         isScanningFlag = false;
         log_i("[BLE] Scan finished. Found %d device(s).", results.getCount());
     }, false);
+#endif
 
     if (!started) {
         isScanningFlag = false;
@@ -167,7 +192,15 @@ String ble_client_get_scan_results_json() {
     devices.reserve(count);
 
     for (int i = 0; i < count; i++) {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+        const NimBLEAdvertisedDevice* devicePtr = results.getDevice(i);
+        if (!devicePtr) {
+            continue;
+        }
+        const NimBLEAdvertisedDevice& device = *devicePtr;
+#else
         NimBLEAdvertisedDevice device = results.getDevice(i);
+#endif
         String name = String(device.getName().c_str());
         String mac = String(device.getAddress().toString().c_str());
         int rssi = device.getRSSI();
@@ -267,6 +300,30 @@ public:
         authFailed = false;
     }
 
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    void onPassKeyEntry(NimBLEConnInfo& connInfo) override {
+        passkeyPrompted = true;
+        log_i("[BLE] Passkey requested by server; configured PIN provided (hidden)");
+        NimBLEDevice::injectPassKey(connInfo, activePasskey);
+    }
+
+    void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) override {
+        passkeyPrompted = true;
+        log_i("[BLE] Confirming pairing PIN (hidden)");
+        NimBLEDevice::injectConfirmPasskey(connInfo, pin == activePasskey);
+    }
+
+    void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
+        authCompleted = true;
+        authFailed = !connInfo.isEncrypted();
+        log_i(
+            "[BLE] Authentication complete. Encrypted: %d, Authenticated: %d, Bonded: %d\n",
+            connInfo.isEncrypted(),
+            connInfo.isAuthenticated(),
+            connInfo.isBonded()
+        );
+    }
+#else
     uint32_t onPassKeyRequest() override {
         passkeyPrompted = true;
         log_i("[BLE] Passkey requested by server; configured PIN provided (hidden)");
@@ -289,6 +346,7 @@ public:
             desc->sec_state.bonded
         );
     }
+#endif
 };
 
 static BridgeClientCallbacks bridgeCallbacks;
@@ -337,7 +395,11 @@ BleTestResult ble_client_test_connection(const String& macStr, const String& pin
     pClient->setClientCallbacks(&bridgeCallbacks, false);
 
     // Set how long to wait for successful connection.
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    pClient->setConnectTimeout(BLUETOOTH_TIMEOUT_SECONDS * 1000UL);
+#else
     pClient->setConnectTimeout(BLUETOOTH_TIMEOUT_SECONDS);
+#endif
 
     log_i("[BLE Test] Connecting to peripheral...");
 

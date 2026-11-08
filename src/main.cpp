@@ -8,6 +8,7 @@
 #include "utils.h"
 #include "diag_telemetry.h"
 #include "wireguard_net.h"
+#include "tailscale_net.h"
 #include "reliability_manager.h"
 #include "web_log.h"
 
@@ -136,7 +137,11 @@ void setup() {
 
             // Establish the outbound VPN tunnel without blocking local bridge
             // operation, then supervise all critical links and scheduled reboots.
-            wireguard_net_start(cfg);
+            if (cfg.tailscale_enabled) {
+                tailscale_net_start(cfg);
+            } else {
+                wireguard_net_start(cfg);
+            }
             reliability_manager_start(cfg);
         } else {
             log_i("[BOOT] WiFi Connection Failed! Falling back to Setup Mode.");

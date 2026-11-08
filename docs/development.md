@@ -42,6 +42,25 @@ pio run
 ```
 PlatformIO will automatically download the required toolchains for the ESP32-S3 and the libraries defined in `platformio.ini` (like `NimBLE-Arduino` and `ESPAsyncWebServer`).
 
+For the Arduino Nano ESP32 IDF-5/MicroLink deployment build, use the explicit
+environment so PlatformIO selects Arduino Core 3.3.9, ESP-IDF 5.5.4,
+NimBLE-Arduino 2.5.2, and the vendored MicroLink component:
+
+```powershell
+pio run -e arduino_nano_esp32_idf5
+```
+
+On Windows with the repository's PlatformIO virtual environment:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e arduino_nano_esp32_idf5
+```
+
+The resulting OTA image is
+`.pio/build/arduino_nano_esp32_idf5/firmware.bin`. Do not substitute
+NimBLE-Arduino 1.x in this environment; it is retained only for the IDF-4
+recovery profiles.
+
 ## 4. Flashing the ESP32
 1. Plug your ESP32-S3 into your Mac via USB.
 2. In the IntelliJ terminal, run:
@@ -50,6 +69,12 @@ pio run -target upload
 ```
 *(Shortcut: `pio run -t upload`)*
 PlatformIO will automatically find the correct USB/serial port on your Mac, compile the code, and upload the firmware.
+
+The Nano uses the local `variants/arduino_nano_nora` definition and the
+project's dual-slot 16 MB partition table. A first-time partition migration
+must be flashed over USB. Later application updates should use the authenticated
+OTA endpoint and `tools/upload_ota.ps1`, which verifies the image MD5 and the
+active-partition change after reboot.
 
 ## 5. Serial Monitor
 To view the `Serial.println()` output for debugging, you can use the built-in serial monitor:

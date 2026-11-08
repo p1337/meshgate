@@ -7,6 +7,8 @@
 
 #include "bridge.h"
 #include "wireguard_net.h"
+#include "tailscale_net.h"
+#include "esp_idf_version.h"
 #include "esp_task_wdt.h"
 
 namespace {
@@ -20,6 +22,7 @@ constexpr uint32_t CLOCK_VALID_AFTER = 1700000000UL;
 constexpr uint32_t FALLBACK_REBOOT_SECONDS = 6 * 60 * 60;
 
 bool s_wireguardExpected = false;
+bool s_tailscaleExpected = false;
 
 void controlledRestart(const char* reason) {
     log_e("[Reliability] Restarting: %s", reason);
@@ -32,7 +35,25 @@ void reliabilityTask(void*) {
     tzset();
     configTime(0, 0, "pool.ntp.org", "time.cloudflare.com", "time.google.com");
 
+#if ESP_IDF_VERSION_MAJOR >= 5
+    const esp_task_wdt_config_t watchdogConfig = {
+        .timeout_ms = 30000,
+        .idle_core_mask = 0,
+        .trigger_panic = true,
+    };
+    // Arduino Core 3.x normally initializes TWDT before setup(). Reconfigure
+    // first to avoid the IDF error log emitted by a redundant init call; fall
+    // back to init only when the framework has not created it.
+    esp_err_t watchdogResult = esp_task_wdt_reconfigure(&watchdogConfig);
+    if (watchdogResult == ESP_ERR_INVALID_STATE) {
+        watchdogResult = esp_task_wdt_init(&watchdogConfig);
+    }
+    if (watchdogResult != ESP_OK) {
+        log_w("[Reliability] Task watchdog configuration failed: %s", esp_err_to_name(watchdogResult));
+    }
+#else
     esp_task_wdt_init(30, true);
+#endif
     esp_task_wdt_add(nullptr);
 
     uint32_t wifiDownSince = 0;
@@ -47,6 +68,7 @@ void reliabilityTask(void*) {
         bool wifiOk = WiFi.status() == WL_CONNECTED;
         bool bleOk = bridge_is_ble_connected();
         bool wireguardOk = !s_wireguardExpected || wireguard_net_is_connected();
+        bool tailscaleOk = !s_tailscaleExpected || tailscale_net_is_connected();
 
         if (wifiOk) wifiDownSince = 0;
         else if (wifiDownSince == 0) wifiDownSince = uptimeSeconds;
@@ -54,7 +76,7 @@ void reliabilityTask(void*) {
         if (bleOk) bleDownSince = 0;
         else if (bleDownSince == 0) bleDownSince = uptimeSeconds;
 
-        if (wireguardOk) wireguardDownSince = 0;
+        if (wireguardOk && tailscaleOk) wireguardDownSince = 0;
         else if (wireguardDownSince == 0) wireguardDownSince = uptimeSeconds;
 
         if (wifiDownSince != 0 && uptimeSeconds - wifiDownSince >= WIFI_FAILURE_RESTART_SECONDS) {
@@ -64,7 +86,7 @@ void reliabilityTask(void*) {
             controlledRestart("Meshtastic BLE link unavailable for 15 minutes");
         }
         if (wireguardDownSince != 0 && uptimeSeconds - wireguardDownSince >= WIREGUARD_FAILURE_RESTART_SECONDS) {
-            controlledRestart("WireGuard tunnel unavailable for 15 minutes");
+            controlledRestart(s_tailscaleExpected ? "Tailscale unavailable for 15 minutes" : "WireGuard tunnel unavailable for 15 minutes");
         }
 
         time_t now = time(nullptr);
@@ -90,7 +112,8 @@ void reliabilityTask(void*) {
 } // namespace
 
 void reliability_manager_start(const BridgeConfig& cfg) {
-    s_wireguardExpected = cfg.wireguard_enabled;
+    s_tailscaleExpected = cfg.tailscale_enabled;
+    s_wireguardExpected = cfg.wireguard_enabled && !cfg.tailscale_enabled;
     xTaskCreatePinnedToCore(reliabilityTask, "reliability_task", 4096, nullptr, 1, nullptr, 0);
 }
 

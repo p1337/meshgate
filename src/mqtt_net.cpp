@@ -4,6 +4,7 @@
 #include "build_options.h"
 #include <mqtt_client.h>
 #include <esp_crt_bundle.h>
+#include <esp_idf_version.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
 #include "meshtastic/mesh.pb.h"
@@ -16,6 +17,7 @@
  * Generated during build process.
  */
 extern const uint8_t rootca_crt_bundle_start[] asm("_binary_data_cert_x509_crt_bundle_bin_start");
+extern const uint8_t rootca_crt_bundle_end[] asm("_binary_data_cert_x509_crt_bundle_bin_end");
 
 /**
  * Atomic flag for wait-free status queries in fast loops.
@@ -316,6 +318,12 @@ static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event) {
     return ESP_OK;
 }
 
+#if ESP_IDF_VERSION_MAJOR >= 5
+static void mqtt_event_handler_idf5(void*, esp_event_base_t, int32_t, void* event_data) {
+    mqtt_event_handler(static_cast<esp_mqtt_event_handle_t>(event_data));
+}
+#endif
+
 /**
  * Safely stops and destroys the active ESP-IDF MQTT client handle.
  */
@@ -380,6 +388,17 @@ static void mqtt_net_start_client(const String& server, uint16_t port, const Str
         mqtt_net_set_state(MQTT_STATE_CONNECTING);
 
         // Build out the underlying mqtt client
+#if ESP_IDF_VERSION_MAJOR >= 5
+        mqtt_cfg.broker.address.hostname = server.c_str();
+        mqtt_cfg.broker.address.port = port;
+        if (!user.isEmpty()) {
+            mqtt_cfg.credentials.username = user.c_str();
+        }
+        if (!pass.isEmpty()) {
+            mqtt_cfg.credentials.authentication.password = pass.c_str();
+        }
+        mqtt_cfg.broker.address.transport = tls ? MQTT_TRANSPORT_OVER_SSL : MQTT_TRANSPORT_OVER_TCP;
+#else
         mqtt_cfg.host = server.c_str();
         mqtt_cfg.port = port;
         if (!user.isEmpty()) {
@@ -389,23 +408,46 @@ static void mqtt_net_start_client(const String& server, uint16_t port, const Str
             mqtt_cfg.password = pass.c_str();
         }
         mqtt_cfg.transport = tls ? MQTT_TRANSPORT_OVER_SSL : MQTT_TRANSPORT_OVER_TCP;
+#endif
 
         // 3-Tier TLS Security Configuration
         if (tls) {
             if (tls_insecure) {
                 // Tier 3: Insecure bypass (self-signed, local IP, or CN mismatch)
+#if ESP_IDF_VERSION_MAJOR >= 5
+                mqtt_cfg.broker.verification.crt_bundle_attach = mqtt_tls_insecure_attach;
+                mqtt_cfg.broker.verification.skip_cert_common_name_check = true;
+#else
                 mqtt_cfg.crt_bundle_attach = mqtt_tls_insecure_attach;
                 mqtt_cfg.skip_cert_common_name_check = true;
+#endif
             } else if (!custom_ca.isEmpty()) {
                 // Tier 2: Custom / Private Root CA or Server Certificate PEM
+#if ESP_IDF_VERSION_MAJOR >= 5
+                mqtt_cfg.broker.verification.certificate = custom_ca.c_str();
+                mqtt_cfg.broker.verification.crt_bundle_attach = NULL;
+#else
                 mqtt_cfg.cert_pem = custom_ca.c_str();
                 mqtt_cfg.crt_bundle_attach = NULL;
+#endif
             } else {
                 // Tier 1: Embedded Mozilla Root CA Bundle (Let's Encrypt, DigiCert, etc.)
+#if ESP_IDF_VERSION_MAJOR >= 5
+                mqtt_cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+#else
                 mqtt_cfg.crt_bundle_attach = arduino_esp_crt_bundle_attach;
+#endif
             }
         }
 
+#if ESP_IDF_VERSION_MAJOR >= 5
+        mqtt_cfg.buffer.size = MQTT_CLIENT_BUFFER_SIZE;
+        mqtt_cfg.buffer.out_size = MQTT_CLIENT_BUFFER_SIZE;
+        mqtt_cfg.session.keepalive = MQTT_CLIENT_KEEPALIVE_SECONDS;
+        mqtt_cfg.network.reconnect_timeout_ms = MQTT_RECONNECT_TIME_MS;
+        mqtt_cfg.task.priority = 2; // Keep below AsyncTCP (3) and LwIP (18) so WebUI and network sockets are never starved
+        mqtt_cfg.task.stack_size = 8192; // 8KB stack for Nanopb encode/decode and TLS handshake safety
+#else
         mqtt_cfg.buffer_size = MQTT_CLIENT_BUFFER_SIZE;
         mqtt_cfg.out_buffer_size = MQTT_CLIENT_BUFFER_SIZE;
         mqtt_cfg.keepalive = MQTT_CLIENT_KEEPALIVE_SECONDS;
@@ -413,6 +455,7 @@ static void mqtt_net_start_client(const String& server, uint16_t port, const Str
         mqtt_cfg.task_prio = 2; // Keep below AsyncTCP (3) and LwIP (18) so WebUI and network sockets are never starved
         mqtt_cfg.task_stack = 8192; // 8KB stack for Nanopb encode/decode and TLS handshake safety
         mqtt_cfg.event_handle = mqtt_event_handler;
+#endif
 
         log_i(
             "[MQTT] Starting client -> %s:%u (TLS: %s, Insecure: %s, Custom CA: %s)",
@@ -424,6 +467,11 @@ static void mqtt_net_start_client(const String& server, uint16_t port, const Str
         );
 
         newClient = esp_mqtt_client_init(&mqtt_cfg);
+#if ESP_IDF_VERSION_MAJOR >= 5
+        if (newClient) {
+            esp_mqtt_client_register_event(newClient, MQTT_EVENT_ANY, mqtt_event_handler_idf5, nullptr);
+        }
+#endif
         mqttClient = newClient;
     } // Lock is safely released HERE before esp_mqtt_client_start!
 
@@ -488,7 +536,11 @@ void mqtt_net_init() {
     if (!mqttMutex) {
         mqttMutex = xSemaphoreCreateRecursiveMutex();
     }
+#if ESP_IDF_VERSION_MAJOR >= 5
+    esp_crt_bundle_set(rootca_crt_bundle_start, rootca_crt_bundle_end - rootca_crt_bundle_start);
+#else
     arduino_esp_crt_bundle_set(rootca_crt_bundle_start);
+#endif
 }
 
 void mqtt_net_loop() {

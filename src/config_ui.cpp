@@ -10,6 +10,7 @@
 #include "diag_telemetry.h"
 #include "utils.h"
 #include "wireguard_net.h"
+#include "tailscale_net.h"
 #include "web_log.h"
 #include "ota_update.h"
 #include "esp_log.h"
@@ -93,6 +94,9 @@ static void writeStoredConfiguration(Preferences& target, const BridgeConfig& cf
     target.putString("wg_priv_key", cfg.wireguard_private_key);
     target.putString("wg_pub_key", cfg.wireguard_public_key);
     target.putString("wg_psk", cfg.wireguard_preshared_key);
+    target.putBool("ts_enabled", cfg.tailscale_enabled);
+    target.putString("ts_name", cfg.tailscale_device_name);
+    target.putString("ts_auth", cfg.tailscale_auth_key);
     target.putBool("mqtt_enabled", cfg.mqtt_enabled);
     target.putBool("mqtt_tls_insec", cfg.mqtt_tls_insecure);
     target.putString("mqtt_custom_ca", cfg.mqtt_custom_ca);
@@ -275,6 +279,49 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="btn-group">
         <button class="btn-success" id="btn-save-ble" onclick="saveBle()">Save Bluetooth</button>
         <button class="btn-secondary" onclick="toggleEditBle(false)">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Native Tailscale VPN Card -->
+  <div class="card" id="card-tailscale">
+    <div class="card-header">
+      <div class="card-title">Tailscale Remote Access</div>
+      <button class="btn-edit" id="btn-edit-tailscale" onclick="toggleEditTailscale(true)">Edit</button>
+    </div>
+    <div id="tailscale-view">
+      <div class="info-row">
+        <span class="info-label">Tailnet:</span>
+        <span class="info-val"><span id="view-tailscale-status" class="status-pill disabled">Disabled</span></span>
+      </div>
+      <div class="info-row"><span class="info-label">Device name:</span><span class="info-val" id="view-tailscale-name">meshgate-torun</span></div>
+      <div class="info-row"><span class="info-label">Tailscale IP:</span><span class="info-val" id="view-tailscale-ip">(Not connected)</span></div>
+      <div class="info-row"><span class="info-label">Known peers:</span><span class="info-val" id="view-tailscale-peers">0</span></div>
+      <div class="info-row"><span class="info-label">Auth key:</span><span class="info-val" id="view-tailscale-auth">(Not set)</span></div>
+    </div>
+    <div id="tailscale-edit" style="display:none;">
+      <div class="alert alert-info" style="display:block; margin-bottom:12px;">
+        Native Tailscale creates an outbound connection, so no dynamic DNS or router port forwarding is required. Once connected, this page and Meshtastic TCP port 4403 are reachable through the displayed 100.x address. Tailscale and classic WireGuard are mutually exclusive.
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <label for="input-tailscale-enabled" style="margin:0;">Enable Tailscale</label>
+        <input type="checkbox" id="input-tailscale-enabled" style="width:20px; height:20px; margin:0;">
+      </div>
+      <label>Tailnet device name:</label>
+      <input type="text" id="input-tailscale-name" maxlength="63" placeholder="meshgate-torun">
+      <label>Tailscale auth key:</label>
+      <div class="password-field">
+        <input type="password" id="input-tailscale-auth" maxlength="128" placeholder="Leave empty to keep stored key">
+        <button type="button" class="btn-toggle-pass" onclick="togglePassVisibility('input-tailscale-auth', this)">Show</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; margin:8px 0 12px;">
+        <input type="checkbox" id="input-tailscale-clear-auth" style="width:18px; height:18px; margin:0;">
+        <label for="input-tailscale-clear-auth" style="margin:0;">Remove stored auth key</label>
+      </div>
+      <div id="tailscale-alert" class="alert"></div>
+      <div class="btn-group">
+        <button class="btn-success" id="btn-save-tailscale" onclick="saveTailscale()">Save Tailscale</button>
+        <button class="btn-secondary" onclick="toggleEditTailscale(false)">Cancel</button>
       </div>
     </div>
   </div>
@@ -602,6 +649,16 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('input-ble-pin').value = cfg.ble_pin || '';
           document.getElementById('sys-debug-logs').checked = !!cfg.debug_logs;
 
+          // Tailscale fields. The auth key is write-only.
+          document.getElementById('view-tailscale-name').innerText = cfg.tailscale_device_name || 'meshgate-torun';
+          document.getElementById('view-tailscale-auth').innerText = cfg.tailscale_has_auth_key ? '•••••••• (stored)' : '(Not set)';
+          document.getElementById('input-tailscale-enabled').checked = !!cfg.tailscale_enabled;
+          document.getElementById('input-tailscale-name').value = cfg.tailscale_device_name || 'meshgate-torun';
+          document.getElementById('input-tailscale-auth').value = '';
+          document.getElementById('input-tailscale-clear-auth').checked = false;
+          document.getElementById('btn-edit-tailscale').disabled = !cfg.tailscale_supported;
+          updateTailscaleStatus();
+
           // WireGuard fields. Secret inputs intentionally remain empty.
           document.getElementById('view-wireguard-ip').innerText = cfg.wireguard_local_ip || '(Not configured)';
           document.getElementById('view-wireguard-remote').innerText = cfg.wireguard_remote_cidr || '(Not configured)';
@@ -629,6 +686,86 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('view-wifi-ssid').innerText = 'Error loading';
           document.getElementById('view-ble-device').innerText = 'Error loading';
         });
+    }
+
+    function updateTailscaleStatus() {
+      const pill = document.getElementById('view-tailscale-status');
+      fetch('/tailscale_status')
+        .then(r => r.json())
+        .then(status => {
+          document.getElementById('view-tailscale-ip').innerText = status.vpn_ip || '(Not connected)';
+          document.getElementById('view-tailscale-peers').innerText = status.peer_count || 0;
+          if (!currentConfig || !currentConfig.tailscale_supported) {
+            pill.className = 'status-pill disabled';
+            pill.innerText = 'Requires IDF 5 firmware';
+          } else if (!status.enabled) {
+            pill.className = 'status-pill disabled';
+            pill.innerText = 'Disabled';
+          } else if (status.connected) {
+            pill.className = 'status-pill connected';
+            pill.innerText = 'Connected';
+          } else {
+            pill.className = 'status-pill connecting';
+            pill.innerText = status.state || 'Connecting';
+          }
+        })
+        .catch(() => {
+          pill.className = 'status-pill error';
+          pill.innerText = 'Status unavailable';
+        });
+    }
+
+    function toggleEditTailscale(edit) {
+      if (edit && currentConfig && !currentConfig.tailscale_supported) {
+        return;
+      }
+      if (edit && currentConfig) {
+        document.getElementById('input-tailscale-enabled').checked = !!currentConfig.tailscale_enabled;
+        document.getElementById('input-tailscale-name').value = currentConfig.tailscale_device_name || 'meshgate-torun';
+        document.getElementById('input-tailscale-auth').value = '';
+        document.getElementById('input-tailscale-clear-auth').checked = false;
+      }
+      document.getElementById('tailscale-view').style.display = edit ? 'none' : 'block';
+      document.getElementById('tailscale-edit').style.display = edit ? 'block' : 'none';
+      document.getElementById('btn-edit-tailscale').style.display = edit ? 'none' : 'block';
+      hideAlert('tailscale-alert');
+    }
+
+    function saveTailscale() {
+      const enabled = document.getElementById('input-tailscale-enabled').checked;
+      const deviceName = document.getElementById('input-tailscale-name').value.trim().toLowerCase();
+      const authKey = document.getElementById('input-tailscale-auth').value.trim();
+      const clearAuthKey = document.getElementById('input-tailscale-clear-auth').checked;
+
+      if (enabled && (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(deviceName) || (!authKey && !currentConfig.tailscale_has_auth_key))) {
+        showAlert('tailscale-alert', 'error', 'Enter a lowercase device name and a Tailscale auth key.');
+        return;
+      }
+
+      const button = document.getElementById('btn-save-tailscale');
+      button.disabled = true;
+      fetch('/save_tailscale', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'enabled=' + (enabled ? 'true' : 'false') +
+              '&device_name=' + encodeURIComponent(deviceName) +
+              '&auth_key=' + encodeURIComponent(authKey) +
+              '&clear_auth_key=' + (clearAuthKey ? 'true' : 'false')
+      })
+      .then(async r => {
+        const result = await r.json();
+        if (!r.ok) throw new Error(result.error || 'Failed to save Tailscale');
+        return result;
+      })
+      .then(() => {
+        button.disabled = false;
+        showAlert('tailscale-alert', 'success', 'Tailscale saved redundantly. Reboot to connect.');
+        setTimeout(() => { toggleEditTailscale(false); loadConfig(); }, 900);
+      })
+      .catch(err => {
+        button.disabled = false;
+        showAlert('tailscale-alert', 'error', err.message || 'Network error saving Tailscale.');
+      });
     }
 
     function updateWireguardStatus() {
@@ -1482,6 +1619,11 @@ BridgeConfig config_ui_load() {
     cfg.wireguard_public_key = getString("wg_pub_key");
     cfg.wireguard_preshared_key = getString("wg_psk");
 
+    // Tailscale preferences
+    cfg.tailscale_enabled = getBool("ts_enabled", false);
+    cfg.tailscale_device_name = getString("ts_name", "meshgate-torun");
+    cfg.tailscale_auth_key = getString("ts_auth");
+
     // MQTT preferences
     cfg.mqtt_enabled = getBool("mqtt_enabled", false);
     cfg.mqtt_tls_insecure = getBool("mqtt_tls_insec", false);
@@ -1562,6 +1704,18 @@ void config_ui_start_server() {
         response->print(cfg.wireguard_private_key.isEmpty() ? "false" : "true");
         response->print(",\"wireguard_has_preshared_key\":");
         response->print(cfg.wireguard_preshared_key.isEmpty() ? "false" : "true");
+        response->print(",\"tailscale_enabled\":");
+        response->print(cfg.tailscale_enabled ? "true" : "false");
+        response->print(",\"tailscale_supported\":");
+#ifdef ESP_IDF5_MIGRATION_BUILD
+        response->print("true");
+#else
+        response->print("false");
+#endif
+        response->print(",\"tailscale_device_name\":\"");
+        utils_escape_json_print(*response, cfg.tailscale_device_name);
+        response->print("\",\"tailscale_has_auth_key\":");
+        response->print(cfg.tailscale_auth_key.isEmpty() ? "false" : "true");
         response->print("}");
 
         request->send(response);
@@ -1594,6 +1748,22 @@ void config_ui_start_server() {
                       ",\"initialized\":" + String(wireguard_net_is_initialized() ? "true" : "false") +
                       ",\"connected\":" + String(wireguard_net_is_connected() ? "true" : "false") + "}";
         request->send(200, "application/json", json);
+    });
+
+    server.on("/tailscale_status", HTTP_GET, [](AsyncWebServerRequest *request){
+        AsyncResponseStream* response = request->beginResponseStream("application/json");
+        response->print("{\"enabled\":");
+        response->print(tailscale_net_is_enabled() ? "true" : "false");
+        response->print(",\"connected\":");
+        response->print(tailscale_net_is_connected() ? "true" : "false");
+        response->print(",\"state\":\"");
+        utils_escape_json_print(*response, tailscale_net_state_name());
+        response->print("\",\"vpn_ip\":\"");
+        utils_escape_json_print(*response, tailscale_net_vpn_ip());
+        response->print("\",\"peer_count\":");
+        response->print(tailscale_net_peer_count());
+        response->print("}");
+        request->send(response);
     });
 
     /**
@@ -1667,6 +1837,7 @@ void config_ui_start_server() {
         }
 
         preferences.putBool("wg_enabled", enabled);
+        if (enabled) preferences.putBool("ts_enabled", false);
         preferences.putString("wg_local_ip", localIp);
         preferences.putString("wg_remote", remoteCidr);
         preferences.putString("wg_endpoint", endpoint);
@@ -1676,6 +1847,42 @@ void config_ui_start_server() {
         preferences.putString("wg_psk", presharedKey);
         backupCurrentConfiguration();
 
+        request->send(200, "application/json", "{\"success\":true,\"restart_required\":true}");
+    });
+
+    // Save native Tailscale configuration. The auth key is write-only; an
+    // empty value keeps the existing key unless clear_auth_key is requested.
+    server.on("/save_tailscale", HTTP_POST, [](AsyncWebServerRequest *request){
+        const bool enabled = request->hasParam("enabled", true) && request->getParam("enabled", true)->value() == "true";
+        String deviceName = request->hasParam("device_name", true) ? request->getParam("device_name", true)->value() : "";
+        String authKey = request->hasParam("auth_key", true) ? request->getParam("auth_key", true)->value() : "";
+        const bool clearAuthKey = request->hasParam("clear_auth_key", true) && request->getParam("clear_auth_key", true)->value() == "true";
+        deviceName.trim();
+        authKey.trim();
+
+        BridgeConfig oldCfg = config_ui_load();
+        if (authKey.isEmpty() && !clearAuthKey) authKey = oldCfg.tailscale_auth_key;
+        if (clearAuthKey) authKey = "";
+
+        bool validName = !deviceName.isEmpty() && deviceName.length() <= 63;
+        for (size_t i = 0; validName && i < deviceName.length(); ++i) {
+            const char c = deviceName[i];
+            validName = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+        }
+        if (validName) {
+            validName = deviceName[0] != '-' && deviceName[deviceName.length() - 1] != '-';
+        }
+        const bool validAuthKey = !authKey.isEmpty() && authKey.length() <= 128 && authKey.startsWith("tskey-auth-");
+        if (enabled && (!validName || !validAuthKey)) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"Tailscale requires a lowercase hostname and a valid tskey-auth key.\"}");
+            return;
+        }
+
+        preferences.putBool("ts_enabled", enabled);
+        preferences.putString("ts_name", deviceName);
+        preferences.putString("ts_auth", authKey);
+        if (enabled) preferences.putBool("wg_enabled", false);
+        backupCurrentConfiguration();
         request->send(200, "application/json", "{\"success\":true,\"restart_required\":true}");
     });
 
@@ -1828,6 +2035,7 @@ void config_ui_start_server() {
     // Reset all settings and reboot
     server.on("/reset", HTTP_POST, [](AsyncWebServerRequest *request){
         log_d("[WebUI] POST /reset requested (Client: %s)", request->client()->remoteIP().toString().c_str());
+        tailscale_net_factory_reset();
         preferences.clear();
         backupPreferences.clear();
         if (!scheduleRestart()) {

@@ -20,20 +20,33 @@ This project is an ESP32-based transparent bridge that connects to a Meshtastic 
 
 #### ESP-IDF 5 and Tailscale migration
 
-The verified production profile is currently `arduino_nano_esp32` on Arduino
-Core 2.0.17 / ESP-IDF 4.4.7. The `arduino_nano_esp32_idf5` profile is an
-explicit migration environment targeting Arduino Core 3.3.9 / ESP-IDF 5.5.4.
-It exists so IDF-5 API changes and library compatibility can be resolved without
-destabilizing the deployable firmware.
+The `arduino_nano_esp32` profile remains the Arduino Core 2.0.17 / ESP-IDF
+4.4.7 recovery build. The deployed `arduino_nano_esp32_idf5` profile targets
+Arduino Core 3.3.9 / ESP-IDF 5.5.4 and uses NimBLE-Arduino 2.5.2. NimBLE 1.x
+must not be used in that profile: it duplicates or incompatibly configures the
+IDF-5 BLE stack and caused instruction/cache faults as soon as BLE started.
+The 2.x callback, millisecond timeout, scan-result, and passkey APIs are selected
+at compile time while the recovery profile retains its 1.x API.
 
-MicroLink is the selected native Tailscale implementation for the ESP32-S3.
-Its integration is not complete yet. MicroLink contains an enhanced lwIP
-WireGuard implementation with public symbols that overlap the currently used
-`WireGuard-ESP32` library. The migration must therefore use one shared
-WireGuard implementation for classic WireGuard and Tailscale; linking both
-libraries into the same firmware is not a valid architecture. Existing
-WireGuard configuration and behavior must remain available throughout that
-migration.
+MicroLink 2.0.0 at upstream commit
+`216da3300f0493b0860247d43f7af5ce29df63a5` supplies native Tailscale support
+and an enhanced lwIP WireGuard implementation. The IDF-5 profile deliberately
+excludes `WireGuard-ESP32`; both classic WireGuard and Tailscale use MicroLink's
+single WireGuard implementation. The two tunnel modes are mutually exclusive
+at configuration time. MicroLink's Noise handshake uses the bundled reference
+ChaCha20-Poly1305 adapter because the precompiled Arduino mbedTLS package does
+not expose the required ChaChaPoly symbols.
+
+Tailscale configuration and its write-only auth key are stored in both
+`bridge_cfg` and `bridge_backup`. The Web API exposes only key presence. The
+runtime status is available at `/tailscale_status`. Joining a tailnet requires
+an auth key issued by that tailnet; the firmware cannot derive authorization
+from an account email address.
+
+The Nano's local variant disables Arduino's stock double-tap recovery path.
+That path expects a factory partition, while this project's 16 MB layout uses
+two 6.25 MiB OTA application slots and has no factory application. Leaving the
+stock recovery hook enabled caused a reboot loop after rapid resets.
 
 ### 2. Key Libraries
 *   **BLE:** `h2zero/NimBLE-Arduino`. NimBLE is a highly optimized, low-RAM Bluetooth stack. It is much more stable and resource-efficient than the standard Bluedroid stack, and it fully supports secure pairing and PIN codes.
