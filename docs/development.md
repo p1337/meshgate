@@ -160,6 +160,17 @@ TCPIP-core lock around raw lwIP `netif`/PCB registration. On ESP-IDF 5, removing
 that lock produces `netif_set_up ... Required to lock TCPIP core functionality!`
 on serial and an automatic reboot loop before Tailscale can register.
 
+Inbound decrypted WireGuard packets from the MicroLink manager task must enter
+lwIP through `netif->input` (`tcpip_input` in magicsock mode), never through a
+direct `ip_input()` call. The direct call violates IDF-5 core locking and
+reboots on the first Tailscale transport packet. WireGuard peers also start
+without a direct endpoint: MapResponse addresses remain probe candidates until
+a direct DISCO PONG validates one. This keeps both handshake and data replies
+on DERP for mobile/carrier-NAT clients instead of leaking replies to a stale
+UDP endpoint. Verify both rules with an external peer: the serial log must show
+an inbound DATA packet without an assertion, a DERP-routed DATA reply, and a
+stable session rather than repeated new handshakes.
+
 ### Task Prioritization & Multithreading Architecture
 To prevent high-bandwidth network traffic from starving BLE operations or locking up the WebUI:
 

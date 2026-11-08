@@ -71,6 +71,17 @@ ESP-IDF 5 also enforces lwIP core locking. MicroLink's WireGuard manager
 registers its raw `netif` and UDP PCB while holding `LOCK_TCPIP_CORE`; direct
 `netif_set_up()` or raw-PCB registration from the manager task otherwise trips
 `LWIP_ASSERT_CORE_LOCKED` and causes a reboot loop immediately after startup.
+Decrypted WireGuard payloads are likewise never passed directly to `ip_input()`
+from the manager task. They go through the netif's `tcpip_input` callback, which
+transfers ownership to lwIP's TCPIP thread. Bypassing that callback crashes on
+the first inbound Tailscale data packet with the same core-lock assertion.
+
+MapResponse UDP endpoints are path candidates, not proof of reachability. A
+new WireGuard peer therefore starts with an empty endpoint and uses DERP. Only
+an authenticated direct DISCO PONG installs a direct endpoint. Otherwise a
+DERP-initiated mobile peer behind carrier NAT receives the handshake response
+through DERP but subsequent IP replies are incorrectly sent to an unreachable
+UDP candidate, producing a repeated handshake loop and no TCP connectivity.
 
 ### 2. Key Libraries
 *   **BLE:** `h2zero/NimBLE-Arduino`. NimBLE is a highly optimized, low-RAM Bluetooth stack. It is much more stable and resource-efficient than the standard Bluedroid stack, and it fully supports secure pairing and PIN codes.

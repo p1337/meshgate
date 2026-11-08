@@ -183,6 +183,13 @@ each peer's VPN IP, name, online state, and direct/relayed path. Remote access
 is ready only when `derp_connected` is true. Once ready, use the assigned
 address with TCP port 4403 or the HTTP diagnostics/OTA endpoints.
 
+The deployed Nano path has been verified end to end through an iPhone on mobile
+data: DERP-delivered WireGuard traffic is decrypted in the manager task, queued
+onto lwIP's TCPIP thread, and its reply is returned through DERP unless DISCO
+has first proved a working direct UDP path. A peer endpoint advertised by the
+control plane is only a candidate and must never replace the DERP fallback
+before that validation. This distinction is required for carrier-NAT clients.
+
 The auth key is write-only: `GET /config` reports only whether one is stored.
 It is saved in both configuration namespaces for recovery and is never printed
 to serial, HTTP logs, or JSON responses. Tailscale and the classic WireGuard
