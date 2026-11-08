@@ -114,6 +114,15 @@ the slot is activated only after all metadata, size and digest checks succeed.
 The older authenticated raw endpoint is retained solely for development and
 recovery and shares a process-wide lock with the official updater.
 
+The production updater pauses and destroys the active MQTT client before
+opening its own TLS stream. This is required on the Nano ESP32 because a live
+DERP session, MQTTS and OTA TLS otherwise exhausted internal heap during a
+real 1.8 MB download (observed minimum: 300 bytes) and repeatedly closed the
+stream near 400 KiB. Stored MQTT configuration is never changed and is restored
+if the OTA attempt fails. The downloader also resumes an interrupted HTTPS
+transfer with validated byte ranges, while one SHA-256 context spans every
+connection; only the complete verified image can be activated.
+
 ### 2. Key Libraries
 *   **BLE:** `h2zero/NimBLE-Arduino`. NimBLE is a highly optimized, low-RAM Bluetooth stack. It is much more stable and resource-efficient than the standard Bluedroid stack, and it fully supports secure pairing and PIN codes.
 *   **WiFi:** Standard `WiFi.h`.

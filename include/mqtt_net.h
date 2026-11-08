@@ -121,3 +121,14 @@ bool mqtt_net_publish(const char* topic, const uint8_t* payload, size_t len, boo
  * Get current MQTT status and telemetry
  */
 MqttStatus mqtt_net_get_status();
+
+/**
+ * Temporarily releases the MQTT client, TLS session and task resources for a
+ * firmware update. The persisted/user configuration is not changed.
+ */
+void mqtt_net_pause_for_ota();
+
+/**
+ * Restores the MQTT configuration after an OTA attempt that did not reboot.
+ */
+void mqtt_net_resume_after_ota();

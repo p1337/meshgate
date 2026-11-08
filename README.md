@@ -14,6 +14,14 @@ redundant configuration storage, remote logs, watchdog recovery, scheduled
 maintenance restarts, MQTT proxying, classic WireGuard, Prometheus metrics and
 an RGB IP-address indicator.
 
+### Recommended and tested hardware
+
+[![Arduino Nano ESP32 tested with MeshGate](web/assets/arduino-nano-esp32.png)](https://link.amazon/B0bHRPLPo)
+
+**Arduino Nano ESP32 (ESP32-S3, without headers)** is the recommended board and the production firmware, native Tailscale and one-click OTA path are tested on it.
+
+**[Buy the tested board on Amazon](https://link.amazon/B0bHRPLPo)** · **[Install MeshGate in the Web Flasher](https://p1337.github.io/meshgate/)**
+
 > [!IMPORTANT]
 > MeshGate is a source fork of
 > [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
@@ -73,21 +81,19 @@ is currently scoped to the `arduino_nano_esp32_idf5` production environment;
 the remaining platforms still provide local TCP, MQTT proxying, OTA and
 classic WireGuard.
 
-## Recommended and tested hardware
-
-MeshGate's production firmware is developed and tested on the **Arduino Nano
-ESP32 (ESP32-S3, without headers)** shown below. This is the recommended board
-for native Tailscale, BLE-to-TCP bridging, MQTT and one-click OTA updates.
-
-[![Arduino Nano ESP32 tested with MeshGate](web/assets/arduino-nano-esp32.png)](https://link.amazon/B0bHRPLPo)
-
-**[Buy the tested Arduino Nano ESP32 on Amazon](https://link.amazon/B0bHRPLPo)**
-
 ## Install
 
 Use the [MeshGate Web Flasher](https://p1337.github.io/meshgate/) in Chrome,
 Edge or Opera on a desktop computer, or download a binary from
 [GitHub Releases](https://github.com/p1337/meshgate/releases).
+
+### Recommended and tested hardware
+
+[![Arduino Nano ESP32 tested with MeshGate](web/assets/arduino-nano-esp32.png)](https://link.amazon/B0bHRPLPo)
+
+**Arduino Nano ESP32 (ESP32-S3, without headers)** is the recommended board and the production firmware, native Tailscale and one-click OTA path are tested on it.
+
+**[Buy the tested board on Amazon](https://link.amazon/B0bHRPLPo)** · **[Install MeshGate in the Web Flasher](https://p1337.github.io/meshgate/)**
 
 For a first installation, erase the board. For an update, leave **Erase
 device** unchecked so NVS settings survive.
@@ -230,3 +236,11 @@ The native Tailscale work uses
 [MicroLink](https://github.com/kaieda/microlink). The design theme is inspired
 by [MeshRadar](https://meshradar.pl/) without copying its logo or proprietary
 assets. Meshtastic is a trademark of its respective owner.
+
+### Recommended and tested hardware
+
+[![Arduino Nano ESP32 tested with MeshGate](web/assets/arduino-nano-esp32.png)](https://link.amazon/B0bHRPLPo)
+
+**Arduino Nano ESP32 (ESP32-S3, without headers)** is the recommended board and the production firmware, native Tailscale and one-click OTA path are tested on it.
+
+**[Buy the tested board on Amazon](https://link.amazon/B0bHRPLPo)** · **[Install MeshGate in the Web Flasher](https://p1337.github.io/meshgate/)**

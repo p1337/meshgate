@@ -11,6 +11,7 @@
 #endif
 
 #include "build_options.h"
+#include "mqtt_net.h"
 #include "utils.h"
 #include "web_log.h"
 
@@ -98,6 +99,7 @@ void failOfficial(const String& reason) {
     setOfficialText(s_officialError, sizeof(s_officialError), reason);
     s_officialState.store(OfficialState::Failed, std::memory_order_release);
     s_updateClaimed.store(false, std::memory_order_release);
+    mqtt_net_resume_after_ota();
 }
 
 void failUpload(AsyncWebServerRequest* request, const char* reason) {
@@ -265,31 +267,16 @@ void officialUpdateTask(void*) {
         return;
     }
 
-    NetworkClientSecure client;
-    client.setCACertBundle(rootca_crt_bundle_start,
-                           static_cast<size_t>(rootca_crt_bundle_end - rootca_crt_bundle_start));
-    HTTPClient http;
-    http.setConnectTimeout(12000);
-    http.setTimeout(20000);
-    if (!http.begin(client, firmwareUrl)) {
-        failOfficial("Could not open the official firmware URL");
-        vTaskDelete(nullptr);
-        return;
-    }
-    const int status = http.GET();
-    const int responseSize = http.getSize();
-    if (status != HTTP_CODE_OK || responseSize <= 0 || static_cast<size_t>(responseSize) != expectedSize) {
-        http.end();
-        failOfficial("Official firmware download returned an invalid size or status");
-        vTaskDelete(nullptr);
-        return;
-    }
-
+    // MQTT and the OTA downloader both require a TLS session and an internal
+    // task stack. Releasing MQTT for the short update window prevents heap
+    // starvation while preserving the stored broker configuration.
+    mqtt_net_pause_for_ota();
+    vTaskDelay(pdMS_TO_TICKS(250));
     s_totalBytes.store(static_cast<uint32_t>(expectedSize), std::memory_order_relaxed);
     s_officialState.store(OfficialState::Downloading, std::memory_order_release);
-    log_i("[OTA] Downloading official MeshGate %s (%u bytes)", version.c_str(), static_cast<unsigned>(expectedSize));
+    log_i("[OTA] Downloading official MeshGate %s (%u bytes, free heap %u)",
+          version.c_str(), static_cast<unsigned>(expectedSize), static_cast<unsigned>(ESP.getFreeHeap()));
     if (!Update.begin(expectedSize, U_FLASH)) {
-        http.end();
         failOfficial(Update.errorString());
         vTaskDelete(nullptr);
         return;
@@ -299,39 +286,85 @@ void officialUpdateTask(void*) {
     mbedtls_sha256_init(&shaContext);
     if (mbedtls_sha256_starts(&shaContext, 0) != 0) {
         mbedtls_sha256_free(&shaContext);
-        http.end();
         failOfficial("Could not initialize SHA-256 validation");
         vTaskDelete(nullptr);
         return;
     }
 
-    NetworkClient* stream = http.getStreamPtr();
     uint8_t buffer[1024];
     size_t remaining = expectedSize;
-    uint32_t lastDataAt = millis();
-    bool streamFailed = false;
-    while (remaining > 0) {
-        const int available = stream->available();
-        if (available <= 0) {
-            if (!stream->connected() || millis() - lastDataAt > 20000) { streamFailed = true; break; }
-            vTaskDelay(pdMS_TO_TICKS(10));
-            continue;
+    bool fatalStreamFailure = false;
+    String fatalStreamError;
+    constexpr uint8_t MAX_DOWNLOAD_CONNECTIONS = 8;
+
+    for (uint8_t connection = 0; remaining > 0 && connection < MAX_DOWNLOAD_CONNECTIONS; ++connection) {
+        const size_t offset = expectedSize - remaining;
+        NetworkClientSecure client;
+        client.setCACertBundle(rootca_crt_bundle_start,
+                               static_cast<size_t>(rootca_crt_bundle_end - rootca_crt_bundle_start));
+        HTTPClient http;
+        http.setConnectTimeout(12000);
+        http.setTimeout(20000);
+        if (!http.begin(client, firmwareUrl)) {
+            fatalStreamFailure = true;
+            fatalStreamError = "Could not open the official firmware URL";
+            break;
         }
-        const size_t chunk = min(remaining, min(sizeof(buffer), static_cast<size_t>(available)));
-        const size_t received = stream->readBytes(buffer, chunk);
-        if (received == 0 || mbedtls_sha256_update(&shaContext, buffer, received) != 0 ||
-            Update.write(buffer, received) != received) { streamFailed = true; break; }
-        remaining -= received;
-        s_downloadedBytes.fetch_add(static_cast<uint32_t>(received), std::memory_order_relaxed);
-        lastDataAt = millis();
+        if (offset > 0) {
+            http.addHeader("Range", "bytes=" + String(static_cast<unsigned long>(offset)) + "-");
+            log_w("[OTA] Resuming official download at byte %u (connection %u/%u)",
+                  static_cast<unsigned>(offset), static_cast<unsigned>(connection + 1),
+                  static_cast<unsigned>(MAX_DOWNLOAD_CONNECTIONS));
+        }
+
+        const int status = http.GET();
+        const int responseSize = http.getSize();
+        const int expectedStatus = offset == 0 ? HTTP_CODE_OK : HTTP_CODE_PARTIAL_CONTENT;
+        if (status != expectedStatus || responseSize <= 0 || static_cast<size_t>(responseSize) != remaining) {
+            http.end();
+            fatalStreamFailure = true;
+            fatalStreamError = offset == 0
+                ? "Official firmware download returned an invalid size or status"
+                : "Official server rejected the safe resume request";
+            break;
+        }
+
+        NetworkClient* stream = http.getStreamPtr();
+        uint32_t lastDataAt = millis();
+        while (remaining > 0) {
+            const int available = stream->available();
+            if (available <= 0) {
+                if (!stream->connected() || millis() - lastDataAt > 20000) break;
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+            const size_t chunk = min(remaining, min(sizeof(buffer), static_cast<size_t>(available)));
+            const size_t received = stream->readBytes(buffer, chunk);
+            if (received == 0) break;
+            if (mbedtls_sha256_update(&shaContext, buffer, received) != 0) {
+                fatalStreamFailure = true;
+                fatalStreamError = "SHA-256 processing failed during download";
+                break;
+            }
+            if (Update.write(buffer, received) != received) {
+                fatalStreamFailure = true;
+                fatalStreamError = Update.errorString();
+                break;
+            }
+            remaining -= received;
+            s_downloadedBytes.fetch_add(static_cast<uint32_t>(received), std::memory_order_relaxed);
+            lastDataAt = millis();
+        }
+        http.end();
+        if (fatalStreamFailure) break;
+        if (remaining > 0) vTaskDelay(pdMS_TO_TICKS(250));
     }
 
     uint8_t actualDigest[32];
     const bool digestFinished = mbedtls_sha256_finish(&shaContext, actualDigest) == 0;
     mbedtls_sha256_free(&shaContext);
-    http.end();
-    if (streamFailed || remaining != 0) {
-        failOfficial("Firmware download was interrupted");
+    if (fatalStreamFailure || remaining != 0) {
+        failOfficial(fatalStreamError.isEmpty() ? "Firmware download was interrupted after all retry attempts" : fatalStreamError);
         vTaskDelete(nullptr);
         return;
     }

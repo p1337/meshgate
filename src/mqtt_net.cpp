@@ -154,6 +154,8 @@ static MqttDownlinkCallback downlinkCallback = nullptr;
 static std::atomic<uint32_t> s_ble_disconnected_at{0};
 static std::atomic<bool> s_in_grace_period{false};
 static std::atomic<bool> s_start_deferred{false};
+static std::atomic<bool> s_paused_for_ota{false};
+static MqttConfig s_config_before_ota;
 
 /**
  * Resets grace timer state (assumes caller holds mqttMutex / MqttLockGuard).
@@ -737,6 +739,40 @@ void mqtt_net_apply_config(const MqttConfig& cfg) {
  */
 bool mqtt_net_is_enabled() {
     return s_mqtt_enabled.load(std::memory_order_relaxed);
+}
+
+void mqtt_net_pause_for_ota() {
+    mqtt_net_init();
+    bool expected = false;
+    if (!s_paused_for_ota.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    {
+        MqttLockGuard lock;
+        s_config_before_ota = currentConfig;
+        currentConfig.enabled = false;
+        s_mqtt_enabled.store(false, std::memory_order_relaxed);
+        s_start_deferred.store(false, std::memory_order_relaxed);
+    }
+    log_i("[MQTT] Pausing broker session to reserve TLS/heap resources for OTA...");
+    mqtt_net_stop_client();
+    bridge_clear_mqtt_to_ble_queue();
+}
+
+void mqtt_net_resume_after_ota() {
+    bool expected = true;
+    if (!s_paused_for_ota.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    MqttConfig saved;
+    {
+        MqttLockGuard lock;
+        saved = s_config_before_ota;
+    }
+    log_i("[MQTT] OTA did not reboot; restoring broker configuration...");
+    mqtt_net_apply_config(saved);
 }
 
 /**
