@@ -103,6 +103,11 @@ rebooting into normal bridge mode.
      namespaces and applies it immediately. It is accepted only in setup mode
      from the setup AP's own subnet, never from LAN or VPN clients.
 
+The `/api/ota/token` handler must be registered before `/api/ota`.
+ESPAsyncWebServer considers a route to match slash-delimited child paths, so
+registering the parent first would shadow the provisioning endpoint with the
+raw firmware-body handler.
+
 ## Memory & Non-Volatile Storage (NVS)
 The following keys are stored in the `Preferences` namespace (`bridge_cfg`):
 * `wifi_ssid` (String)

@@ -1828,8 +1828,6 @@ static void backupCurrentConfiguration() {
  * Start the UI Captive Portal Server.
  */
 void config_ui_start_server() {
-    ota_update_register(server, config_ui_get_ota_token());
-
     // A fresh public image cannot contain a shared OTA secret. Permit one-time
     // or replacement key provisioning only from a client connected directly
     // to the local setup AP. The secret is write-only and mirrored in NVS.
@@ -1867,6 +1865,11 @@ void config_ui_start_server() {
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
     });
+
+    // ESPAsyncWebServer treats a handler URI as matching its slash-delimited
+    // child paths too. Register the specific /api/ota/token route before the
+    // parent /api/ota upload handler so provisioning cannot be shadowed.
+    ota_update_register(server, config_ui_get_ota_token());
 
     // Machine-readable diagnostics endpoint used for remote support. It mirrors
     // the bounded serial log ring without exposing pairing PIN values.
