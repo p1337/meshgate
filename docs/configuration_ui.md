@@ -74,6 +74,15 @@ edit form; the selected tab is reflected in the URL fragment.
     and download progress; no file chooser or user key is shown.
   * Downloads only the production ESP32-S3 image named by the official release
     metadata and verifies TLS, board identity, size and SHA-256 before activation.
+* **Community Card:**
+  * Reuses the public FlagCounter ID `kOa` from the GitHub Page so ordinary LAN
+    and Tailscale control-page visits contribute to the same country/flag view.
+  * Loads the external counter exactly once per page load and only after
+    `/status` confirms normal connected Wi-Fi. Setup AP mode remains completely
+    offline and never contacts the counter service.
+  * Displays a privacy notice that FlagCounter receives the visitor's public IP
+    address for country-level geolocation and counting.
+  * Provides the fixed €3 PayPal.Me support link for MeshGate development.
 * **Footer:**
   * Dynamically embeds the compiled Firmware Version and links only to the
     MeshGate repository (`https://github.com/p1337/meshgate`). Upstream credits

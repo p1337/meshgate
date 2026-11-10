@@ -15,6 +15,25 @@ redundant configuration storage, remote logs, watchdog recovery, scheduled
 maintenance restarts, MQTT proxying, classic WireGuard, Prometheus metrics and
 an RGB IP-address indicator.
 
+## Contents
+
+- [Why this fork exists](#why-this-fork-exists)
+- [Data path](#data-path)
+- [Supported build targets](#supported-build-targets)
+- [Install](#install)
+- [First-time setup](#first-time-setup)
+- [Tailscale remote access](#tailscale-remote-access)
+- [MQTT gateway](#mqtt-gateway)
+- [Operations and recovery](#operations-and-recovery)
+- [Documentation](#documentation)
+- [Verified result](#verified-result)
+- [Security](#security)
+- [Credits and license](#credits-and-license)
+
+### Support MeshGate
+
+**[☕ Buy me a coffee — donate €3 via PayPal](https://paypal.me/p1337/3EUR)**
+
 ### Recommended and tested hardware
 
 [![Arduino Nano ESP32 tested with MeshGate](web/assets/arduino-nano-esp32.png)](https://link.amazon/B0bHRPLPo)

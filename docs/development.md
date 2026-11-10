@@ -181,6 +181,15 @@ The embedded control page uses four client-side tab panels (`connection`,
 inactive panel is hidden, so live polling, edit state and write-only secret
 placeholders survive tab changes. Deep links use the matching URL fragment.
 
+GitHub Pages and the normal device control page share FlagCounter ID `kOa`.
+The device must assign the external image URL only after `/status` proves that
+station Wi-Fi is connected and setup AP mode is inactive. This preserves the
+offline captive-portal contract and emits at most one country-counter request
+per page load. Keep `referrerpolicy="no-referrer"` and the visible privacy note:
+the external request exposes the visitor's public IP to flagcounter.me for
+country-level geolocation. GitHub Pages remains static and stores no counter
+state itself.
+
 Interactive enrollment follows the native Tailscale registration protocol.
 An unauthenticated RegisterResponse supplies `AuthURL`; MicroLink holds it in
 RAM, exposes it through `microlink_get_auth_url()`, and sends it in the next

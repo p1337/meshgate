@@ -232,6 +232,11 @@ const char index_html[] PROGMEM = R"rawliteral(
   .remote-address-value { color:var(--green); font:700 18px var(--mono); word-break:break-all; }
   .remote-summary p { margin:7px 0; color:var(--text); font-size:13px; line-height:1.5; }
   .remote-summary code { color:var(--accent); font:700 12px var(--mono); word-break:break-all; }
+  .community-card { text-align:center; }
+  .visitor-counter { display:none; max-width:100%; height:auto; margin:4px auto 12px; border:0; }
+  .community-copy { margin:8px 0; color:var(--dim); font-size:12px; line-height:1.5; }
+  .community-meta { margin:10px 0; color:var(--muted); font:10px/1.45 var(--mono); }
+  .support-link { display:block; margin-top:12px; padding:10px 12px; border:1px solid var(--accent); border-radius:3px; color:#07110b; background:var(--accent); text-decoration:none; font:700 12px var(--mono); }
   .enrollment-state { margin-top:9px; padding:10px; border-left:3px solid var(--muted); background:rgba(125,141,170,.06); }
   .enrollment-state.active { border-color:var(--yellow); }
   .enrollment-state.success { border-color:var(--green); background:rgba(57,255,20,.05); }
@@ -720,6 +725,21 @@ const char index_html[] PROGMEM = R"rawliteral(
     <button class="btn-danger" id="btn-reset" onclick="resetBridge()">Reset All Settings</button>
   </div>
 
+  <!-- Shared GitHub Pages and device visitor counter -->
+  <div class="card community-card" id="card-community">
+    <div class="card-header">
+      <div class="card-title">MeshGate Community</div>
+      <span class="status-pill connecting">Live</span>
+    </div>
+    <a href="https://flagcounter.me/details/kOa" target="_blank" rel="noopener noreferrer">
+      <img id="visitor-counter-image" class="visitor-counter" alt="MeshGate visitors by country" referrerpolicy="no-referrer">
+    </a>
+    <p id="visitor-counter-status" class="community-copy">The country counter loads when MeshGate has normal internet access.</p>
+    <p class="community-copy">GitHub Pages and MeshGate device visits share this counter, producing one combined country view.</p>
+    <p class="community-meta">Privacy: loading the counter sends the visitor's public IP address to flagcounter.me for country-level geolocation and counting. It is never loaded in setup AP mode.</p>
+    <a class="support-link" href="https://paypal.me/p1337/3EUR" target="_blank" rel="noopener noreferrer">Buy me a coffee · Donate €3 with PayPal</a>
+  </div>
+
   </section>
 
   <div class="footer">
@@ -747,6 +767,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     let tailscaleEnrollmentTimer = null;
     let tailscaleEnrollmentActive = false;
     let tailscaleAuthOpenedUrl = '';
+    let visitorCounterLoaded = false;
 
     const meshGateTabs = ['connection', 'remote', 'services', 'system'];
 
@@ -770,6 +791,25 @@ const char index_html[] PROGMEM = R"rawliteral(
         window.history.replaceState(null, '', '#' + selected);
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
+    }
+
+    function loadVisitorCounter(wifiStatus) {
+      const image = document.getElementById('visitor-counter-image');
+      const status = document.getElementById('visitor-counter-status');
+      if (!image || !status || visitorCounterLoaded) return;
+      if (!wifiStatus || !wifiStatus.connected || wifiStatus.is_ap_mode) {
+        status.innerText = 'The country counter is inactive in setup AP mode.';
+        return;
+      }
+      visitorCounterLoaded = true;
+      image.onload = function() {
+        image.style.display = 'block';
+        status.innerText = 'Live visitors by country — shared with the MeshGate GitHub Page.';
+      };
+      image.onerror = function() {
+        status.innerText = 'Country counter is temporarily unavailable.';
+      };
+      image.src = 'https://flagcounter.me/kOa';
     }
 
     function showAlert(id, type, msg) {
@@ -1291,6 +1331,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         .then(st => {
           // WiFi Metrics
           if (st.wifi) {
+            loadVisitorCounter(st.wifi);
             const wifiPill = document.getElementById('view-wifi-status-pill');
             if (wifiPill) {
               if (st.wifi.is_ap_mode) {
