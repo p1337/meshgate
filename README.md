@@ -2,11 +2,11 @@
   <img src="web/assets/meshgate-logo.svg" alt="MeshGate" width="760">
 </p>
 
-# MeshGate
+<p align="center"><strong>Remote administration for Bluetooth-only Meshtastic radios, built on ESP32.</strong></p>
+
+![MeshGate connects an ultra-low-power solar WisBlock node over BLE to an indoor ESP32-S3 gateway with Wi-Fi, VPN, MQTT and message services](web/assets/meshgate-architecture.png)
 
 [![MeshGate visitors by country](https://flagcounter.me/kOa)](https://flagcounter.me/details/kOa)
-
-**Remote administration for Bluetooth-only Meshtastic radios, built on ESP32.**
 
 MeshGate connects to a Meshtastic radio over BLE and exposes the native
 Meshtastic PhoneAPI on TCP port `4403` and through the standard HTTP endpoints
@@ -303,7 +303,14 @@ MeshGate retains the MIT license from the upstream
 The native Tailscale work uses
 [MicroLink](https://github.com/kaieda/microlink). The design theme is inspired
 by [MeshRadar](https://meshradar.pl/) without copying its logo or proprietary
-assets. Meshtastic is a trademark of its respective owner.
+assets. MeshGate is an independent community project and is not sponsored or
+endorsed by Meshtastic LLC.
+
+Meshtastic® is a registered trademark of Meshtastic LLC. Meshtastic software
+components are released under various licenses; see GitHub for details. No
+warranty is provided — use at your own risk. The Meshtastic logo trademark is
+the trademark of Meshtastic LLC and links to
+[meshtastic.org](https://meshtastic.org/).
 
 ## Support MeshGate
 
