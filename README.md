@@ -1,5 +1,9 @@
 # MeshGate
 
+[![MeshGate visitors by country](https://flagcounter.me/kOa)](https://flagcounter.me/details/kOa)
+
+*Live MeshGate visitors by country — shared with the GitHub Page and device control interface.*
+
 **Remote administration for Bluetooth-only Meshtastic radios, built on ESP32.**
 
 MeshGate connects to a Meshtastic radio over BLE and exposes the native
@@ -280,11 +284,3 @@ The native Tailscale work uses
 [MicroLink](https://github.com/kaieda/microlink). The design theme is inspired
 by [MeshRadar](https://meshradar.pl/) without copying its logo or proprietary
 assets. Meshtastic is a trademark of its respective owner.
-
-### Recommended and tested hardware
-
-[![Arduino Nano ESP32 tested with MeshGate](web/assets/arduino-nano-esp32.png)](https://link.amazon/B0bHRPLPo)
-
-**Arduino Nano ESP32 (ESP32-S3, without headers)** is the recommended board and the production firmware, native Tailscale and one-click OTA path are tested on it.
-
-**[Buy the tested board on Amazon](https://link.amazon/B0bHRPLPo)** · **[Install MeshGate in the Web Flasher](https://p1337.github.io/meshgate/)**
