@@ -260,9 +260,12 @@ To support secure MQTTS connections to any public broker (such as `mqtt.meshtast
 
 ### How it Works
 1. **Pre-Compiled Bundle (`data/cert/x509_crt_bundle.bin`):** Contains ~130+ standard trusted root CA certificates compressed into a binary format (subject names + public keys only, ~86 KB total).
-2. **PlatformIO Embedding:** Configured in `platformio.ini` via:
+2. **PlatformIO Embedding:** Configured in `platformio.ini` together with the
+   shared MeshGate logo via:
    ```ini
-   board_build.embed_files = data/cert/x509_crt_bundle.bin
+   board_build.embed_files =
+       data/cert/x509_crt_bundle.bin
+       web/assets/meshgate-logo.png
    ```
    During compilation, the linker exposes the binary start symbol `_binary_data_cert_x509_crt_bundle_bin_start`.
 3. **Runtime Initialization:** On boot, `mqtt_net_init()` invokes:
@@ -294,6 +297,15 @@ rm -rf /tmp/ca_env /tmp/gen_crt_bundle.py /tmp/cacert.pem
 ```
 
 *Note: Make sure to commit the updated `data/cert/x509_crt_bundle.bin` to Git so CI/CD and other developers compile with the new certificate store.*
+
+### Shared MeshGate brand asset
+
+`web/assets/meshgate-logo.png` is the canonical transparent logo. The README,
+GitHub Pages Web Flasher and embedded device UI must reference that same file;
+do not create divergent copies or redraw it. The linker exposes the embedded
+asset as `_binary_web_assets_meshgate_logo_png_start` and `_end`, and the
+device serves it at `/assets/meshgate-logo.png`. Keep this route local so the
+captive portal remains usable without internet access.
 
 ---
 ## 9. Releasing a New Version

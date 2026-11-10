@@ -27,6 +27,11 @@ Preferences backupPreferences;
  */
 AsyncWebServer server(80);
 
+// Official MeshGate logo. PlatformIO embeds the exact shared PNG used by the
+// repository and Web Flasher, so the captive portal never needs the internet.
+extern const uint8_t meshgate_logo_png_start[] asm("_binary_web_assets_meshgate_logo_png_start");
+extern const uint8_t meshgate_logo_png_end[] asm("_binary_web_assets_meshgate_logo_png_end");
+
 /**
  * Defines the namespace which preferences are stored to NVS under.
  */
@@ -181,11 +186,12 @@ const char index_html[] PROGMEM = R"rawliteral(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MeshGate Control</title>
+<link rel="icon" type="image/png" href="/assets/meshgate-logo.png">
 <style>
   :root { --bg:#0a0c10; --panel:#0f1318; --panel2:#111a24; --border:#1e2a38; --accent:#5eed97; --accent2:#ff6b35; --green:#39ff14; --yellow:#ffd60a; --red:#ff3860; --muted:#7d8daa; --text:#c8d6e5; --dim:#8ea2bb; --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace; --sans:"Segoe UI","Exo 2",sans-serif; }
   * { box-sizing: border-box; }
   body { font-family:var(--sans); padding:16px; max-width:680px; margin:auto; background:var(--bg); color:var(--text); }
-  h2 { margin:8px 0 2px; color:var(--accent); text-align:center; font:700 22px var(--mono); letter-spacing:3px; text-shadow:0 0 12px rgba(94,237,151,.2); }
+  .brand-logo { display:block; width:min(100%,560px); height:auto; margin:8px auto 6px; }
   .brand-subtitle { margin:0 0 20px; color:var(--dim); text-align:center; font:11px var(--mono); letter-spacing:2px; text-transform:uppercase; }
   .tab-nav { position:sticky; top:0; z-index:20; display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:0 0 16px; padding:8px; border:1px solid var(--border); border-radius:4px; background:rgba(10,12,16,.96); box-shadow:0 8px 22px rgba(0,0,0,.28); backdrop-filter:blur(8px); }
   .tab-button { min-width:0; margin:0; padding:10px 6px; border-color:transparent; background:transparent; color:var(--dim); font-size:11px; text-transform:uppercase; }
@@ -290,7 +296,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 </style>
 </head>
 <body>
-  <h2>◇ MESH GATE</h2>
+  <img class="brand-logo" src="/assets/meshgate-logo.png" alt="MeshGate">
   <p class="brand-subtitle">Meshtastic remote access gateway</p>
 
   <nav class="tab-nav" role="tablist" aria-label="MeshGate settings">
@@ -2446,6 +2452,20 @@ void config_ui_start_server() {
     server.on("/api/logs", HTTP_GET, [](AsyncWebServerRequest *request){
         AsyncWebServerResponse* response = request->beginResponse(200, "text/plain; charset=utf-8", web_log_snapshot());
         response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+    });
+
+    // Serve the official logo from the same flash bytes used by the repository
+    // and Web Flasher. No external request is made in setup AP mode.
+    server.on("/assets/meshgate-logo.png", HTTP_GET, [](AsyncWebServerRequest *request){
+        const size_t logoSize = static_cast<size_t>(meshgate_logo_png_end - meshgate_logo_png_start);
+        AsyncWebServerResponse* response = request->beginResponse(
+            200,
+            "image/png",
+            meshgate_logo_png_start,
+            logoSize
+        );
+        response->addHeader("Cache-Control", "public, max-age=86400");
         request->send(response);
     });
 

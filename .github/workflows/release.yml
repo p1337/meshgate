@@ -114,7 +114,8 @@ jobs:
           - Full instructions: https://github.com/p1337/meshgate#install
           - Verify downloaded assets with `SHA256SUMS.txt`.
           """
-          Path("release_body.md").write_text(section + instructions, encoding="utf-8")
+          logo = f"![MeshGate](https://raw.githubusercontent.com/p1337/meshgate/{version}/web/assets/meshgate-logo.png)\n\n"
+          Path("release_body.md").write_text(logo + section + instructions, encoding="utf-8")
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

@@ -4,6 +4,13 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.6] - 2026-11-10
+
+- Embedded the canonical MeshGate logo in firmware flash and added the local
+  `/assets/meshgate-logo.png` endpoint for the offline control interface.
+- Reused the same versioned logo asset in the device browser icon, Web Flasher,
+  repository documentation and generated GitHub Release notes.
+
 ## [v0.7.5] - 2026-11-10
 
 - Added a checksummed LittleFS mailbox that retains the newest 128 decoded

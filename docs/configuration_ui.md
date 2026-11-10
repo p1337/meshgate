@@ -22,6 +22,12 @@ Wi-Fi and Bluetooth, **Remote VPN** contains Tailscale and WireGuard,
 and reset controls. Changing tabs never reloads the page or discards an open
 edit form; the selected tab is reflected in the URL fragment.
 
+The header and browser icon use the official transparent MeshGate logo from
+`web/assets/meshgate-logo.png`. PlatformIO embeds those exact PNG bytes in the
+firmware, and `GET /assets/meshgate-logo.png` serves them locally. The setup AP
+therefore displays the same identity as GitHub and the Web Flasher without an
+internet dependency.
+
 * **WiFi Network Card:**
   * Displays the current configured SSID, masked password status, live WiFi connection status pill (`Connected` / `AP Mode` / `Disconnected` / `Not Configured`), active IP address, advertised mDNS hostname (e.g. `dsc-ae28.local`), and live WiFi RSSI signal strength with colored quality pill (`Excellent` / `Good` / `Fair` / `Weak`).
   * Displays active **TCP Clients** (`X / 3`) and live **TCP Traffic** counters (sent, received, invalid).
@@ -117,6 +123,7 @@ edit form; the selected tab is reflected in the URL fragment.
 
 2. **Web Server Endpoints (`config_ui.cpp`)**:
    * **`GET /`**: Serves the single-page HTML/CSS/JS application directly from flash (`PROGMEM`) via `AsyncProgmemResponse` with zero heap allocation.
+   * **`GET /assets/meshgate-logo.png`**: Serves the official PNG directly from embedded flash with a bounded cache lifetime; no filesystem mount or external network is required.
    * **`GET /config`**: Returns current settings as JSON, including WiFi/BLE/MQTT/WireGuard values plus `tailscale_enabled`, `tailscale_supported`, `tailscale_device_name`, and `tailscale_has_auth_key`. Secret WiFi, BLE PIN, WireGuard, OTA, and Tailscale values are never returned. `ble_has_pin` reports only whether a PIN is stored.
    * **`GET /status`**: Returns unified live diagnostic and telemetry JSON polled every 7 seconds by the client: contains `uptime_seconds`, `heap` (free, min_free, max_alloc), `wifi` (connected, is_ap_mode, ip, rssi, mdns_host), `ble` (connected, rx_count, tx_count, invalid_count), `tcp` (connected_clients, max_clients, rx_count, tx_count, invalid_count), `traffic` (ble, tcp, mqtt rx/tx/invalid), `queues` (waiting, capacity, dropped for `tcp_to_ble`, `ble_to_tcp`, `mqtt_to_ble`), `stacks` (ble_task, net_task free bytes), and `mqtt` (gateway_enabled, state, radio_proxy_enabled, broker, root, published, received, dropped, invalid).
    * **`GET /metrics`**: Standards-compliant Prometheus / OpenMetrics scraping endpoint (`text/plain; version=0.0.4; charset=utf-8`). Streams line-by-line metrics (`meshbridge_*`) directly into lwIP network output buffers via `AsyncResponseStream` with zero large heap allocations. Suitable for scraping by Prometheus, VictoriaMetrics, Grafana Agent, and Home Assistant.

@@ -269,6 +269,7 @@ meshtastic-esp32-bt-bridge/
 │   ├── config_ui.cpp      # Captive portal / Preferences logic
 │   └── status_led.cpp     # Asynchronous LED visual indicators
 ├── web/                   # Zero-install Web Flasher UI (index.html)
+│   └── assets/meshgate-logo.png # Canonical logo shared with firmware and GitHub
 └── platformio.ini         # PlatformIO build configurations
 ```
 

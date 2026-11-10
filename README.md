@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="web/assets/meshgate-logo.png" alt="MeshGate" width="760">
+</p>
+
 # MeshGate
 
 [![MeshGate visitors by country](https://flagcounter.me/kOa)](https://flagcounter.me/details/kOa)
