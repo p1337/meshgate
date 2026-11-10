@@ -104,6 +104,22 @@
 #define HTTP_PHONEAPI_ACTIVE_TIMEOUT_MS 15000
 #endif
 
+// Persistent decoded text messages retained in the flash mailbox. The raw
+// FromRadio protobuf is stored too, allowing exact replay to Meshtastic apps.
+#ifndef MESSAGE_MAILBOX_CAPACITY
+#define MESSAGE_MAILBOX_CAPACITY 128
+#endif
+
+#ifndef MESSAGE_MAILBOX_TEXT_MAX
+#define MESSAGE_MAILBOX_TEXT_MAX 233
+#endif
+
+// JSON is assembled in an AsyncResponseStream before transmission. Keep each
+// page bounded so DERP, MQTT/TLS and the Web API retain internal-RAM headroom.
+#ifndef MESSAGE_MAILBOX_API_PAGE_MAX
+#define MESSAGE_MAILBOX_API_PAGE_MAX 32
+#endif
+
 // -----------------------------------------
 // MQTT Gateway Settings
 // -----------------------------------------
@@ -144,7 +160,7 @@
 // Keep main on the next real release version. The release workflow injects
 // the matching Git tag during its clean build. MeshGate does not distribute
 // versionless/dev OTA images to end users.
-#define FIRMWARE_VERSION "v0.7.4"
+#define FIRMWARE_VERSION "v0.7.5"
 #endif
 
 #ifndef HARDWARE_BOARD_NAME

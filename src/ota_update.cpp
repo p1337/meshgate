@@ -17,10 +17,12 @@
 
 namespace {
 enum class RequestState : uintptr_t { None = 0, Unauthorized, Busy, Invalid, Uploading, Failed, Success };
-enum class OfficialState : uint8_t { Idle = 0, Checking, Current, Downloading, Verifying, Installing, Rebooting, Failed, Unsupported };
+enum class OfficialState : uint8_t { Idle = 0, Checking, Current, Available, Downloading, Verifying, Installing, Rebooting, Failed, Unsupported };
+enum class OfficialTaskMode : uintptr_t { CheckOnly = 0, Install = 1 };
 
 constexpr const char* OFFICIAL_METADATA_URL = "https://p1337.github.io/meshgate/latest_ota.json";
 constexpr const char* OFFICIAL_FIRMWARE_URL = "https://p1337.github.io/meshgate/firmware/arduino_nano_esp32_idf5/firmware.bin";
+constexpr const char* OFFICIAL_CHANGELOG_URL = "https://github.com/p1337/meshgate/blob/main/CHANGELOG.md";
 constexpr const char* OFFICIAL_BOARD = "arduino_nano_esp32_idf5";
 
 String s_token;
@@ -77,6 +79,7 @@ const char* officialStateName(OfficialState state) {
         case OfficialState::Idle: return "idle";
         case OfficialState::Checking: return "checking";
         case OfficialState::Current: return "current";
+        case OfficialState::Available: return "available";
         case OfficialState::Downloading: return "downloading";
         case OfficialState::Verifying: return "verifying";
         case OfficialState::Installing: return "installing";
@@ -232,7 +235,9 @@ String digestToHex(const uint8_t digest[32]) {
     return String(output);
 }
 
-void officialUpdateTask(void*) {
+void officialUpdateTask(void* parameter) {
+    const bool installRequested =
+        static_cast<OfficialTaskMode>(reinterpret_cast<uintptr_t>(parameter)) == OfficialTaskMode::Install;
     String version, firmwareUrl, expectedSha256;
     size_t expectedSize = 0;
     s_officialState.store(OfficialState::Checking, std::memory_order_release);
@@ -256,6 +261,12 @@ void officialUpdateTask(void*) {
     }
     if (versionOrder == -2) {
         failOfficial("Firmware version metadata is invalid");
+        vTaskDelete(nullptr);
+        return;
+    }
+    if (!installRequested) {
+        s_officialState.store(OfficialState::Available, std::memory_order_release);
+        s_updateClaimed.store(false, std::memory_order_release);
         vTaskDelete(nullptr);
         return;
     }
@@ -407,6 +418,7 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
         response->print("\",\"busy\":"); response->print(isOfficialBusy(state) ? "true" : "false");
         response->print(",\"current_version\":\""); response->print(FIRMWARE_VERSION);
         response->print("\",\"latest_version\":\""); response->print(utils_escape_json(getOfficialText(s_latestVersion)));
+        response->print("\",\"changelog_url\":\""); response->print(OFFICIAL_CHANGELOG_URL);
         response->print("\",\"downloaded_bytes\":"); response->print(s_downloadedBytes.load(std::memory_order_relaxed));
         response->print(",\"total_bytes\":"); response->print(s_totalBytes.load(std::memory_order_relaxed));
         response->print(",\"error\":\""); response->print(utils_escape_json(getOfficialText(s_officialError)));
@@ -417,17 +429,23 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
 
     server.on("/api/ota/official", HTTP_POST, [](AsyncWebServerRequest* request) {
 #ifdef ESP_IDF5_MIGRATION_BUILD
+        const bool checkOnly = request->hasParam("check_only") &&
+                               request->getParam("check_only")->value() == "true";
         bool expected = false;
         if (!s_updateClaimed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
             request->send(409, "application/json", "{\"success\":false,\"error\":\"Another OTA update is active\"}");
             return;
         }
-        if (xTaskCreate(officialUpdateTask, "official-ota", 10240, nullptr, 2, nullptr) != pdPASS) {
+        void* taskMode = reinterpret_cast<void*>(static_cast<uintptr_t>(
+            checkOnly ? OfficialTaskMode::CheckOnly : OfficialTaskMode::Install));
+        if (xTaskCreate(officialUpdateTask, "official-ota", 10240, taskMode, 2, nullptr) != pdPASS) {
             s_updateClaimed.store(false, std::memory_order_release);
             request->send(503, "application/json", "{\"success\":false,\"error\":\"Could not start the update task\"}");
             return;
         }
-        request->send(202, "application/json", "{\"success\":true,\"message\":\"Checking the official GitHub release\"}");
+        request->send(202, "application/json", checkOnly
+            ? "{\"success\":true,\"message\":\"Checking the official GitHub release without installing\"}"
+            : "{\"success\":true,\"message\":\"Checking and installing the official GitHub release\"}");
 #else
         s_officialState.store(OfficialState::Unsupported, std::memory_order_release);
         request->send(501, "application/json", "{\"success\":false,\"error\":\"Official updates require the ESP-IDF 5 production build\"}");

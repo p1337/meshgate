@@ -7,6 +7,7 @@
 #include "build_options.h"
 #include "utils.h"
 #include "mqtt_net.h"
+#include "message_mailbox.h"
 #include <atomic>
 
 struct BridgePacket {
@@ -68,10 +69,18 @@ static std::atomic<uint32_t> s_http_last_activity_ms{0};
 static std::atomic<uint32_t> s_http_rx_count{0};
 static std::atomic<uint32_t> s_http_tx_count{0};
 static std::atomic<uint32_t> s_http_invalid_count{0};
+static std::atomic<uint32_t> s_http_requested_config_id{0};
+static std::atomic<uint32_t> s_http_replay_cursor{0};
+static std::atomic<uint32_t> s_http_replay_end{0};
+static std::atomic<bool> s_http_replay_active{false};
 
 struct ClientContext {
     AsyncClient* client;
     std::vector<uint8_t> rx_buffer;
+    std::atomic<uint32_t> requested_config_id{0};
+    std::atomic<uint32_t> mailbox_replay_cursor{0};
+    std::atomic<uint32_t> mailbox_replay_end{0};
+    std::atomic<bool> mailbox_replay_active{false};
 };
 
 static AsyncServer* tcpServer = NULL;
@@ -89,6 +98,73 @@ static NimBLERemoteCharacteristic* toRadioChar = NULL;
 static NimBLERemoteCharacteristic* fromRadioChar = NULL;
 static NimBLERemoteCharacteristic* fromNumChar = NULL;
 
+static bool readProtobufVarint(const uint8_t* data, size_t len, size_t& offset, uint64_t& value) {
+    value = 0;
+    for (uint8_t shift = 0; shift < 64 && offset < len; shift += 7) {
+        const uint8_t byte = data[offset++];
+        value |= static_cast<uint64_t>(byte & 0x7f) << shift;
+        if ((byte & 0x80) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Reads a top-level protobuf varint without allocating the very large generated
+// FromRadio union on AsyncTCP's deliberately small 4 KiB task stack.
+static bool findTopLevelVarintField(
+    const uint8_t* data,
+    size_t len,
+    uint32_t wantedField,
+    uint32_t& result
+) {
+    if (!data) {
+        return false;
+    }
+    size_t offset = 0;
+    while (offset < len) {
+        uint64_t key = 0;
+        if (!readProtobufVarint(data, len, offset, key) || key == 0) {
+            return false;
+        }
+        const uint32_t field = static_cast<uint32_t>(key >> 3);
+        const uint8_t wireType = static_cast<uint8_t>(key & 0x07);
+        if (wireType == 0) {
+            uint64_t value = 0;
+            if (!readProtobufVarint(data, len, offset, value)) {
+                return false;
+            }
+            if (field == wantedField && value <= UINT32_MAX) {
+                result = static_cast<uint32_t>(value);
+                return true;
+            }
+        } else if (wireType == 1) {
+            if (len - offset < 8) return false;
+            offset += 8;
+        } else if (wireType == 2) {
+            uint64_t fieldLen = 0;
+            if (!readProtobufVarint(data, len, offset, fieldLen) || fieldLen > len - offset) {
+                return false;
+            }
+            offset += static_cast<size_t>(fieldLen);
+        } else if (wireType == 5) {
+            if (len - offset < 4) return false;
+            offset += 4;
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
+
+static bool extractWantConfigId(const uint8_t* data, size_t len, uint32_t& id) {
+    return findTopLevelVarintField(data, len, 3, id);
+}
+
+static bool extractConfigCompleteId(const uint8_t* data, size_t len, uint32_t& id) {
+    return findTopLevelVarintField(data, len, 7, id);
+}
+
 void bridge_http_phoneapi_mark_active() {
     const uint32_t now = millis();
     const uint32_t previous = s_http_last_activity_ms.exchange(now, std::memory_order_relaxed);
@@ -99,6 +175,8 @@ void bridge_http_phoneapi_mark_active() {
     if (ble_to_http_queue &&
         (previous == 0 || static_cast<uint32_t>(now - previous) > HTTP_PHONEAPI_ACTIVE_TIMEOUT_MS)) {
         xQueueReset(ble_to_http_queue);
+        s_http_requested_config_id.store(0, std::memory_order_relaxed);
+        s_http_replay_active.store(false, std::memory_order_relaxed);
     }
 }
 
@@ -117,6 +195,11 @@ bool bridge_enqueue_http_to_ble(const uint8_t* data, size_t len) {
     BridgePacket packet = {};
     packet.len = len;
     memcpy(packet.data, data, len);
+    uint32_t configId = 0;
+    if (extractWantConfigId(data, len, configId)) {
+        s_http_requested_config_id.store(configId, std::memory_order_relaxed);
+        s_http_replay_active.store(false, std::memory_order_relaxed);
+    }
     if (xQueueSend(tcp_to_ble_queue, &packet, pdMS_TO_TICKS(100)) != pdTRUE) {
         s_tcp_to_ble_dropped.fetch_add(1, std::memory_order_relaxed);
         s_http_invalid_count.fetch_add(1, std::memory_order_relaxed);
@@ -135,7 +218,22 @@ size_t bridge_dequeue_http_from_ble(uint8_t* data, size_t capacity) {
 
     BridgePacket packet = {};
     if (xQueueReceive(ble_to_http_queue, &packet, 0) != pdTRUE) {
-        return 0;
+        if (!s_http_replay_active.load(std::memory_order_relaxed)) {
+            return 0;
+        }
+        uint32_t cursor = s_http_replay_cursor.load(std::memory_order_relaxed);
+        const uint32_t end = s_http_replay_end.load(std::memory_order_relaxed);
+        size_t replayLen = 0;
+        if (!message_mailbox_next_raw(&cursor, end, data, capacity, &replayLen)) {
+            s_http_replay_active.store(false, std::memory_order_relaxed);
+            return 0;
+        }
+        s_http_replay_cursor.store(cursor, std::memory_order_relaxed);
+        if (cursor >= end) {
+            s_http_replay_active.store(false, std::memory_order_relaxed);
+        }
+        s_http_tx_count.fetch_add(1, std::memory_order_relaxed);
+        return replayLen;
     }
     if (packet.len > capacity) {
         s_http_invalid_count.fetch_add(1, std::memory_order_relaxed);
@@ -144,6 +242,17 @@ size_t bridge_dequeue_http_from_ble(uint8_t* data, size_t capacity) {
     }
 
     memcpy(data, packet.data, packet.len);
+    uint32_t completeId = 0;
+    if (extractConfigCompleteId(packet.data, packet.len, completeId) &&
+        completeId == s_http_requested_config_id.load(std::memory_order_relaxed)) {
+        uint32_t cursor = 0;
+        uint32_t end = 0;
+        message_mailbox_get_replay_bounds(&cursor, &end);
+        s_http_replay_cursor.store(cursor, std::memory_order_relaxed);
+        s_http_replay_end.store(end, std::memory_order_relaxed);
+        s_http_replay_active.store(cursor < end, std::memory_order_relaxed);
+        log_i("[Mailbox] Armed HTTP replay of %u messages", static_cast<unsigned>(end - cursor));
+    }
     s_http_tx_count.fetch_add(1, std::memory_order_relaxed);
     return packet.len;
 }
@@ -214,6 +323,11 @@ static void onClientConnected(void* arg, AsyncClient* client) {
                     packet.len = payload_len;
                     if (payload_len <= sizeof(packet.data)) {
                         memcpy(packet.data, &ctx->rx_buffer[processed + 4], payload_len);
+                        uint32_t configId = 0;
+                        if (extractWantConfigId(packet.data, packet.len, configId)) {
+                            ctx->requested_config_id.store(configId, std::memory_order_relaxed);
+                            ctx->mailbox_replay_active.store(false, std::memory_order_relaxed);
+                        }
                         if (xQueueSend(tcp_to_ble_queue, &packet, pdMS_TO_TICKS(100)) != pdTRUE) {
                             log_w("[Bridge-TCP] WARNING: tcp_to_ble_queue full, dropped packet");
                             s_tcp_to_ble_dropped.fetch_add(1, std::memory_order_relaxed);
@@ -588,7 +702,8 @@ static void bridgeBleTask(void* parameter) {
             const bool tcpConsumerActive = connectedClientsCount.load() > 0;
             const bool httpConsumerActive = bridge_http_phoneapi_is_active();
             const bool httpQueueHasSpace = ble_to_http_queue && uxQueueSpacesAvailable(ble_to_http_queue) > 0;
-            const bool otherConsumerActive = tcpConsumerActive || mqtt_net_is_enabled();
+            const bool mailboxConsumerActive = message_mailbox_is_ready();
+            const bool otherConsumerActive = tcpConsumerActive || mqtt_net_is_enabled() || mailboxConsumerActive;
 
             // An active HTTP PhoneAPI session owns a complete logical config
             // stream. Stop draining the radio whenever its polling queue is
@@ -619,6 +734,14 @@ static void bridgeBleTask(void* parameter) {
 
                         log_d("[Bridge-BLE] Fast-Polled %d new bytes from FromRadio!", currentVal.length());
                         s_ble_rx_count.fetch_add(1, std::memory_order_relaxed);
+
+                        // Persist decoded chat packets before any subsystem can
+                        // consume the envelope. Duplicate mesh packets are
+                        // rejected by the mailbox's bounded fingerprint index.
+                        message_mailbox_capture_from_radio(
+                            reinterpret_cast<const uint8_t*>(currentVal.data()),
+                            currentVal.length()
+                        );
 
                         /*
                          * Pass the raw packet to the MQTT subsystem to determine if its relevant to it or not.
@@ -685,12 +808,11 @@ static void bridgeNetTask(void* parameter) {
 
     while (bridgeRunning) {
         BridgePacket packet;
-        if (xQueueReceive(ble_to_tcp_queue, &packet, pdMS_TO_TICKS(100)) == pdTRUE) {
+        uint8_t frame[MESHTASTIC_MAX_PACKET_SIZE + 4];
+        if (xQueueReceive(ble_to_tcp_queue, &packet, pdMS_TO_TICKS(50)) == pdTRUE) {
             log_d("[Bridge-Net] Broadcasting %zu bytes to %zu TCP client", packet.len, connectedClientsCount.load());
             // Build contiguous TCP frame to prevent fragmentation desyncs
             size_t frame_len = packet.len + 4;
-            uint8_t frame[MESHTASTIC_MAX_PACKET_SIZE + 4]; // Max packet size + 4-byte header
-
             if (frame_len <= sizeof(frame)) {
                 frame[0] = 0x94;
                 frame[1] = 0xC3;
@@ -699,12 +821,28 @@ static void bridgeNetTask(void* parameter) {
                 memcpy(&frame[4], packet.data, packet.len);
 
                 // Send to all connected clients under mutex protection!
+                uint32_t completeId = 0;
+                const bool isConfigComplete = extractConfigCompleteId(packet.data, packet.len, completeId);
                 if (xSemaphoreTake(tcpClientsMutex, portMAX_DELAY) == pdTRUE) {
                     for (ClientContext* ctx : tcpClients) {
                         if (ctx->client->space() >= frame_len) {
                             ctx->client->write((const char*)frame, frame_len);
                             ctx->client->send(); // Force immediate transmission
                             s_tcp_tx_count.fetch_add(1, std::memory_order_relaxed);
+                            if (isConfigComplete &&
+                                ctx->requested_config_id.load(std::memory_order_relaxed) == completeId) {
+                                uint32_t cursor = 0;
+                                uint32_t end = 0;
+                                message_mailbox_get_replay_bounds(&cursor, &end);
+                                ctx->mailbox_replay_cursor.store(cursor, std::memory_order_relaxed);
+                                ctx->mailbox_replay_end.store(end, std::memory_order_relaxed);
+                                ctx->mailbox_replay_active.store(cursor < end, std::memory_order_relaxed);
+                                log_i(
+                                    "[Mailbox] Armed TCP replay of %u messages for %s",
+                                    static_cast<unsigned>(end - cursor),
+                                    ctx->client->remoteIP().toString().c_str()
+                                );
+                            }
                         } else {
                             log_e("[Bridge-Net] ERROR: Client TX buffer full! Dropped %zu bytes for %s", packet.len, ctx->client->remoteIP().toString().c_str());
                             s_tcp_invalid_count.fetch_add(1, std::memory_order_relaxed);
@@ -716,6 +854,40 @@ static void bridgeNetTask(void* parameter) {
                 log_e("[Bridge-Net] ERROR: Packet too large for frame buffer (%zu bytes)", packet.len);
                 s_tcp_invalid_count.fetch_add(1, std::memory_order_relaxed);
             }
+        }
+
+        // Replay at most one retained packet per client and loop. Live BLE
+        // traffic remains first priority, while the bounded pace avoids
+        // overflowing AsyncTCP buffers after a large configuration response.
+        if (xSemaphoreTake(tcpClientsMutex, portMAX_DELAY) == pdTRUE) {
+            for (ClientContext* ctx : tcpClients) {
+                if (!ctx->mailbox_replay_active.load(std::memory_order_relaxed) ||
+                    ctx->client->space() < MESHTASTIC_MAX_PACKET_SIZE + 4) {
+                    continue;
+                }
+
+                uint32_t cursor = ctx->mailbox_replay_cursor.load(std::memory_order_relaxed);
+                const uint32_t end = ctx->mailbox_replay_end.load(std::memory_order_relaxed);
+                packet = {};
+                if (!message_mailbox_next_raw(&cursor, end, packet.data, sizeof(packet.data), &packet.len)) {
+                    ctx->mailbox_replay_active.store(false, std::memory_order_relaxed);
+                    continue;
+                }
+
+                frame[0] = 0x94;
+                frame[1] = 0xC3;
+                frame[2] = static_cast<uint8_t>(packet.len >> 8);
+                frame[3] = static_cast<uint8_t>(packet.len & 0xff);
+                memcpy(&frame[4], packet.data, packet.len);
+                ctx->client->write(reinterpret_cast<const char*>(frame), packet.len + 4);
+                ctx->client->send();
+                s_tcp_tx_count.fetch_add(1, std::memory_order_relaxed);
+                ctx->mailbox_replay_cursor.store(cursor, std::memory_order_relaxed);
+                if (cursor >= end) {
+                    ctx->mailbox_replay_active.store(false, std::memory_order_relaxed);
+                }
+            }
+            xSemaphoreGive(tcpClientsMutex);
         }
     }
     vTaskDelete(NULL);

@@ -2,8 +2,6 @@
 
 [![MeshGate visitors by country](https://flagcounter.me/kOa)](https://flagcounter.me/details/kOa)
 
-*Live MeshGate visitors by country — shared with the GitHub Page and device control interface.*
-
 **Remote administration for Bluetooth-only Meshtastic radios, built on ESP32.**
 
 MeshGate connects to a Meshtastic radio over BLE and exposes the native
@@ -16,8 +14,8 @@ Raspberry Pi.
 
 The firmware includes a self-contained setup portal, authenticated OTA,
 redundant configuration storage, remote logs, watchdog recovery, scheduled
-maintenance restarts, MQTT proxying, classic WireGuard, Prometheus metrics and
-an RGB IP-address indicator.
+maintenance restarts, a persistent offline message mailbox, MQTT proxying,
+classic WireGuard, Prometheus metrics and an RGB IP-address indicator.
 
 ## Contents
 
@@ -29,6 +27,7 @@ an RGB IP-address indicator.
 - [Tailscale remote access](#tailscale-remote-access)
 - [MQTT gateway](#mqtt-gateway)
 - [Operations and recovery](#operations-and-recovery)
+- [Technical changelog](CHANGELOG.md)
 - [Documentation](#documentation)
 - [Verified result](#verified-result)
 - [Security](#security)
@@ -78,6 +77,7 @@ Meshtastic radio
 MeshGate on ESP32 ───── Wi-Fi LAN ───── TCP 4403 ───── Meshtastic app
       │
       ├── HTTP /api/v1/{to,from}radio ─ browser-based Meshtastic client
+      ├── flash mailbox ─────────────── retained chat replay + JSON GET API
       ├── Tailscale / DERP ──────────── remote TCP 4403 + HTTP + Web UI + OTA
       ├── optional classic WireGuard
       └── optional MQTT proxy ───────── radio-selected MQTT broker
@@ -132,7 +132,10 @@ MeshGate control page at its LAN or Tailscale IP and select **Check & Install
 Latest Release**. The device downloads the newest official GitHub release,
 validates its TLS origin, board, size and SHA-256 digest, writes the inactive
 application slot and reboots. It never erases NVS, so all configuration and
-secrets survive. No firmware file or OTA key is required.
+secrets survive. No firmware file or OTA key is required. On every normal
+control-page connection, MeshGate checks the official release metadata without
+installing anything. The installed and latest version numbers link to the
+[technical changelog](CHANGELOG.md), newest first.
 
 To build locally:
 
@@ -226,6 +229,8 @@ the current broker instructions published by [MeshRadar](https://meshradar.pl/).
 - `GET /status` — structured runtime, queue, BLE, TCP, VPN and MQTT state
 - `PUT /api/v1/toradio` / `GET /api/v1/fromradio` — Meshtastic HTTP PhoneAPI
 - `GET /api/logs` — bounded in-memory runtime log
+- `GET /api/mailbox` — retained text messages as JSON; supports
+  `after=<sequence>` and `limit=<1..32>` for cursor-based polling
 - `GET /metrics` — Prometheus/OpenMetrics endpoint
 - `POST /api/reboot` — controlled restart
 - `GET /api/ota/official` — official release update state and progress
@@ -235,6 +240,16 @@ the current broker instructions published by [MeshRadar](https://meshradar.pl/).
 Configuration is mirrored between `bridge_cfg` and `bridge_backup` NVS
 namespaces. Ordinary reboots, watchdog recovery and OTA never erase it. Only
 the explicit factory-reset action clears both copies.
+
+The newest 128 decoded Meshtastic text messages are also retained in a
+checksummed LittleFS ring on the existing data partition. MeshGate drains and
+stores them while no phone or computer is connected. After a native TCP or
+browser PhoneAPI client completes its normal configuration handshake, the
+retained `FromRadio.packet` envelopes are replayed automatically; the inner
+Meshtastic packet IDs remain intact so clients can deduplicate messages already
+in their local database. The mailbox survives reboots and OTA and is removed by
+the explicit factory reset. When full, the oldest record is overwritten and
+the API's `overwritten` counter increases.
 
 For OTA from the project directory:
 
@@ -250,6 +265,7 @@ transport update metadata and SHA-256 digest.
 
 ## Documentation
 
+- [Technical changelog](CHANGELOG.md)
 - [User guide](docs/user_guide.md)
 - [Architecture](docs/architecture.md)
 - [Configuration UI and API](docs/configuration_ui.md)
@@ -271,6 +287,10 @@ Do not expose TCP `4403`, the Web UI or OTA directly to the public internet.
 Use Tailscale, WireGuard or another authenticated private network. Before a
 public release, run the included history and working-tree secret checks and
 verify that deployment files such as `.ota-token` remain untracked.
+
+Mailbox text is stored decoded on the ESP32 data partition so it can be read
+through the JSON API. Treat physical access to the device and access to its Web
+UI as access to those retained messages.
 
 ## Credits and license
 

@@ -14,6 +14,7 @@
 #include "web_log.h"
 #include "ota_update.h"
 #include "esp_log.h"
+#include "message_mailbox.h"
 
 /**
  * For retrieving configuration properties stored in NVS.
@@ -98,7 +99,7 @@ struct HttpPhoneApiBody {
     uint8_t data[MESHTASTIC_MAX_PACKET_SIZE] = {};
 };
 
-static void addHttpPhoneApiHeaders(AsyncWebServerResponse* response, const char* methods) {
+static void addApiCorsHeaders(AsyncWebServerResponse* response, const char* methods) {
     response->addHeader("Access-Control-Allow-Origin", "*");
     response->addHeader("Access-Control-Allow-Methods", methods);
     response->addHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
@@ -107,6 +108,10 @@ static void addHttpPhoneApiHeaders(AsyncWebServerResponse* response, const char*
     response->addHeader("Access-Control-Allow-Private-Network", "true");
     response->addHeader("Access-Control-Max-Age", "600");
     response->addHeader("Cache-Control", "no-store");
+}
+
+static void addHttpPhoneApiHeaders(AsyncWebServerResponse* response, const char* methods) {
+    addApiCorsHeaders(response, methods);
     response->addHeader(
         "X-Protobuf-Schema",
         "https://raw.githubusercontent.com/meshtastic/protobufs/master/meshtastic/mesh.proto"
@@ -117,6 +122,30 @@ static void sendHttpPhoneApiError(AsyncWebServerRequest* request, int status, co
     AsyncWebServerResponse* response = request->beginResponse(status, "text/plain; charset=utf-8", message);
     addHttpPhoneApiHeaders(response, "PUT, GET, OPTIONS");
     request->send(response);
+}
+
+static void writeJsonBytes(Print& out, const char* data, size_t len) {
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < len; ++i) {
+        const uint8_t c = static_cast<uint8_t>(data[i]);
+        switch (c) {
+            case '"': out.print("\\\""); break;
+            case '\\': out.print("\\\\"); break;
+            case '\b': out.print("\\b"); break;
+            case '\f': out.print("\\f"); break;
+            case '\n': out.print("\\n"); break;
+            case '\r': out.print("\\r"); break;
+            case '\t': out.print("\\t"); break;
+            default:
+                if (c < 0x20) {
+                    out.print("\\u00");
+                    out.print(hex[c >> 4]);
+                    out.print(hex[c & 0x0f]);
+                } else {
+                    out.write(c);
+                }
+        }
+    }
 }
 
 static void writeStoredConfiguration(Preferences& target, const BridgeConfig& cfg) {
@@ -171,6 +200,8 @@ const char index_html[] PROGMEM = R"rawliteral(
   .info-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 14px; }
   .info-label { color:var(--dim); font-weight:500; }
   .info-val { font-family:var(--mono); font-weight:600; color:var(--text); word-break:break-all; }
+  .version-link { color:var(--accent); text-decoration:none; border-bottom:1px dotted var(--accent); }
+  .version-link:hover { color:var(--green); border-bottom-color:var(--green); }
   label { font-weight:600; margin-top:12px; display:block; color:var(--text); font-size:13px; }
   input, select, textarea { width:100%; padding:10px; margin:6px 0 12px; border:1px solid var(--border)!important; border-radius:3px!important; color:var(--text); font:14px var(--mono); background:var(--bg)!important; }
   input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
@@ -654,8 +685,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="card-title">Firmware OTA Update</div>
       <span id="view-ota-status" class="status-pill waiting">Loading</span>
     </div>
-    <div class="info-row"><span class="info-label">Firmware:</span><span class="info-val" id="view-ota-version">Loading...</span></div>
-    <div class="info-row"><span class="info-label">Latest release:</span><span class="info-val" id="view-ota-latest">Not checked</span></div>
+    <div class="info-row"><span class="info-label">Firmware:</span><a class="info-val version-link" id="view-ota-version" href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" title="Open technical changelog">Loading...</a></div>
+    <div class="info-row"><span class="info-label">Latest release:</span><a class="info-val version-link" id="view-ota-latest" href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" title="Open technical changelog">Not checked</a></div>
     <div class="info-row"><span class="info-label">Running slot:</span><span class="info-val" id="view-ota-running">Loading...</span></div>
     <div class="info-row"><span class="info-label">Update slot:</span><span class="info-val" id="view-ota-next">Loading...</span></div>
     <div class="alert alert-info" style="display:block; margin-bottom:12px;">
@@ -1867,8 +1898,14 @@ const char index_html[] PROGMEM = R"rawliteral(
       ]).then(results => {
         const slots = results[0];
         const status = results[1];
-        document.getElementById('view-ota-version').innerText = status.current_version || slots.firmware_version || '(Unknown)';
-        document.getElementById('view-ota-latest').innerText = status.latest_version || 'Not checked';
+        const versionLink = document.getElementById('view-ota-version');
+        const latestLink = document.getElementById('view-ota-latest');
+        versionLink.innerText = status.current_version || slots.firmware_version || '(Unknown)';
+        latestLink.innerText = status.latest_version || 'Not checked';
+        if (status.changelog_url) {
+          versionLink.href = status.changelog_url;
+          latestLink.href = status.changelog_url;
+        }
         document.getElementById('view-ota-running').innerText = slots.running_partition || '(Unknown)';
         document.getElementById('view-ota-next').innerText = slots.next_partition || '(Unavailable)';
         updateOfficialOtaDisplay(status);
@@ -1887,14 +1924,22 @@ const char index_html[] PROGMEM = R"rawliteral(
       const bar = document.getElementById('ota-progress-bar');
       const labels = {
         idle: 'Ready', checking: 'Checking GitHub', current: 'Up to date',
+        available: 'Update available',
         downloading: 'Downloading', verifying: 'Verifying', installing: 'Installing',
         rebooting: 'Rebooting', failed: 'Failed', unsupported: 'Unsupported'
       };
       pill.innerText = labels[status.state] || status.state || 'Unknown';
       pill.className = 'status-pill ' + (status.state === 'failed' ? 'error' :
-        (status.state === 'current' ? 'connected' : (status.busy ? 'waiting' : 'connected')));
+        (status.state === 'available' || status.busy ? 'waiting' : 'connected'));
       btn.disabled = !!status.busy || !status.supported;
       if (status.latest_version) document.getElementById('view-ota-latest').innerText = status.latest_version;
+      if (status.changelog_url) {
+        document.getElementById('view-ota-version').href = status.changelog_url;
+        document.getElementById('view-ota-latest').href = status.changelog_url;
+      }
+      btn.innerText = status.state === 'available' && status.latest_version
+        ? 'Install ' + status.latest_version
+        : 'Check & Install Latest Release';
       const total = Number(status.total_bytes || 0);
       const downloaded = Number(status.downloaded_bytes || 0);
       const percent = total > 0 ? Math.min(100, Math.round(downloaded * 100 / total)) : 0;
@@ -1902,6 +1947,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       bar.className = 'progress-fill ' + (status.state === 'failed' ? 'progress-red' : 'progress-green');
       if (status.state === 'failed') showAlert('ota-alert', 'error', status.error || 'Official update failed.');
       if (status.state === 'current') showAlert('ota-alert', 'success', 'MeshGate is already running the latest official release.');
+      if (status.state === 'available') showAlert('ota-alert', 'warning', 'A newer official MeshGate release is available. Select its version to read the technical changelog before installing.');
       if (status.state === 'rebooting') showAlert('ota-alert', 'success', 'Official release verified and installed. MeshGate is rebooting now.');
     }
 
@@ -1929,6 +1975,37 @@ const char index_html[] PROGMEM = R"rawliteral(
           btn.disabled = false;
           showAlert('ota-alert', 'error', err.message || 'The update could not be started.');
         });
+    }
+
+    function checkOfficialReleaseOnConnect() {
+      return Promise.all([
+        refreshOtaStatus(),
+        fetch('/status', { cache: 'no-store' }).then(r => r.json())
+      ]).then(results => {
+        const otaStatus = results[0];
+        const runtimeStatus = results[1];
+        const wifi = runtimeStatus && runtimeStatus.wifi;
+        if (!otaStatus.supported || !wifi || !wifi.connected || wifi.is_ap_mode) return;
+        if (otaStatus.busy) {
+          pollOfficialOta();
+          return;
+        }
+        showAlert('ota-alert', 'info', 'Checking the latest official GitHub release...');
+        return fetch('/api/ota/official?check_only=true', { method: 'POST' })
+          .then(r => r.json().then(body => ({ ok: r.ok, status: r.status, body: body })))
+          .then(result => {
+            if (result.status === 409) {
+              pollOfficialOta();
+              return;
+            }
+            if (!result.ok || !result.body.success) {
+              throw new Error(result.body.error || 'The release check could not be started.');
+            }
+            pollOfficialOta();
+          });
+      }).catch(err => {
+        showAlert('ota-alert', 'error', err.message || 'The latest release could not be checked.');
+      });
     }
 
     let modalConfirmCallback = null;
@@ -2030,7 +2107,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       selectTab(window.location.hash.replace('#', ''), false);
       loadConfig();
       updateStatus();
-      refreshOtaStatus().catch(() => {});
+      checkOfficialReleaseOnConnect();
     };
 
     window.addEventListener('hashchange', function() {
@@ -2218,14 +2295,106 @@ void config_ui_start_server() {
         addHttpPhoneApiHeaders(response, "GET, OPTIONS");
 
         uint8_t packet[MESHTASTIC_MAX_PACKET_SIZE];
+        size_t drained = 0;
         do {
             const size_t len = bridge_dequeue_http_from_ble(packet, sizeof(packet));
             if (len == 0) {
                 break;
             }
             response->write(packet, len);
-        } while (drainAll);
+            ++drained;
+        } while (drainAll && drained < HTTP_PHONEAPI_QUEUE_SIZE);
 
+        request->send(response);
+    });
+
+    server.on("/api/mailbox", HTTP_OPTIONS, [](AsyncWebServerRequest* request) {
+        AsyncWebServerResponse* response = request->beginResponse(204);
+        addApiCorsHeaders(response, "GET, OPTIONS");
+        request->send(response);
+    });
+
+    // Persistent decoded text-message history. The default response contains
+    // the newest page in chronological order. `after` is an exclusive
+    // sequence cursor for efficient polling; `limit` is capped at ring size.
+    server.on("/api/mailbox", HTTP_GET, [](AsyncWebServerRequest* request) {
+        const MessageMailboxStats stats = message_mailbox_get_stats();
+        size_t limit = MESSAGE_MAILBOX_API_PAGE_MAX;
+        if (request->hasParam("limit")) {
+            const long requested = request->getParam("limit")->value().toInt();
+            if (requested > 0) {
+                limit = static_cast<size_t>(requested);
+            }
+        }
+        if (limit > MESSAGE_MAILBOX_API_PAGE_MAX) {
+            limit = MESSAGE_MAILBOX_API_PAGE_MAX;
+        }
+
+        const bool hasAfter = request->hasParam("after");
+        uint32_t cursor = stats.oldest_sequence;
+        if (hasAfter) {
+            const String value = request->getParam("after")->value();
+            bool digitsOnly = !value.isEmpty();
+            for (size_t i = 0; digitsOnly && i < value.length(); ++i) {
+                digitsOnly = value[i] >= '0' && value[i] <= '9';
+            }
+            char* endPtr = nullptr;
+            const unsigned long parsed = strtoul(value.c_str(), &endPtr, 10);
+            if (!digitsOnly || endPtr == value.c_str() || *endPtr != '\0') {
+                AsyncWebServerResponse* error = request->beginResponse(
+                    400,
+                    "application/json",
+                    "{\"success\":false,\"error\":\"after must be an unsigned sequence number\"}"
+                );
+                addApiCorsHeaders(error, "GET, OPTIONS");
+                request->send(error);
+                return;
+            }
+            cursor = parsed == ULONG_MAX ? stats.next_sequence : static_cast<uint32_t>(parsed + 1UL);
+            if (cursor < stats.oldest_sequence) {
+                cursor = stats.oldest_sequence;
+            }
+        } else if (stats.count > limit) {
+            cursor = stats.next_sequence - static_cast<uint32_t>(limit);
+        }
+
+        AsyncResponseStream* response = request->beginResponseStream("application/json; charset=utf-8");
+        addApiCorsHeaders(response, "GET, OPTIONS");
+        response->print("{\"ready\":");
+        response->print(stats.ready ? "true" : "false");
+        response->print(",\"count\":"); response->print(stats.count);
+        response->print(",\"capacity\":"); response->print(stats.capacity);
+        response->print(",\"oldest_sequence\":"); response->print(stats.oldest_sequence);
+        response->print(",\"next_sequence\":"); response->print(stats.next_sequence);
+        response->print(",\"overwritten\":"); response->print(stats.overwritten);
+        response->print(",\"duplicates\":"); response->print(stats.duplicates);
+        response->print(",\"invalid\":"); response->print(stats.invalid);
+        response->print(",\"messages\":[");
+
+        bool first = true;
+        size_t emitted = 0;
+        MessageMailboxEntry entry = {};
+        while (emitted < limit && message_mailbox_next_entry(&cursor, stats.next_sequence, &entry)) {
+            if (!first) response->print(',');
+            first = false;
+            ++emitted;
+            char fromId[11] = {};
+            char toId[11] = {};
+            snprintf(fromId, sizeof(fromId), "!%08lx", static_cast<unsigned long>(entry.from));
+            snprintf(toId, sizeof(toId), "!%08lx", static_cast<unsigned long>(entry.to));
+            response->print("{\"sequence\":"); response->print(entry.sequence);
+            response->print(",\"from\":\""); response->print(fromId);
+            response->print("\",\"to\":\""); response->print(toId);
+            response->print("\",\"packet_id\":"); response->print(entry.packet_id);
+            response->print(",\"channel\":"); response->print(entry.channel);
+            response->print(",\"rx_time\":"); response->print(entry.rx_time);
+            response->print(",\"rx_rssi\":"); response->print(entry.rx_rssi);
+            response->print(",\"rx_snr\":"); response->print(entry.rx_snr_x4 / 4.0f, 2);
+            response->print(",\"text\":\"");
+            writeJsonBytes(*response, entry.text, entry.text_len);
+            response->print("\"}");
+        }
+        response->print("]}");
         request->send(response);
     });
 
@@ -2684,6 +2853,7 @@ void config_ui_start_server() {
         tailscale_net_factory_reset();
         preferences.clear();
         backupPreferences.clear();
+        message_mailbox_clear();
         if (!scheduleRestart()) {
             request->send(503, "application/json", "{\"success\":false,\"message\":\"Settings erased but reboot scheduling failed\"}");
             return;

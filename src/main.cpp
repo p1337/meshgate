@@ -12,6 +12,7 @@
 #include "reliability_manager.h"
 #include "web_log.h"
 #include "ip_led.h"
+#include "message_mailbox.h"
 
 /**
  * Main Entry point.
@@ -51,6 +52,7 @@ void setup() {
 
     // Load stored configuration properties from NVS
     config_ui_init();
+    message_mailbox_init();
     BridgeConfig cfg = config_ui_load();
 
     // Set global ESP-IDF log level based on UI setting

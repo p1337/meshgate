@@ -148,6 +148,11 @@ Each `BridgePacket` holds a 576-byte payload plus length metadata ($\approx 584\
   - `ble_to_tcp_queue`: $32 \text{ packets} \times 584\text{ B} = 18.7\text{ KB}$
   - `mqtt_to_ble_queue`: $16 \text{ packets} \times 584\text{ B} = 9.3\text{ KB}$
   - **Total Static Queue RAM:** $\approx 46.7\text{ KB}$ in `.bss`.
+* **Classic ESP32 override:** `esp32dev` uses `BRIDGE_QUEUE_SIZE=24`. Its
+  statically linkable DRAM window is smaller than ESP32-S3, and this retains
+  24 complete packets per direction while leaving linker/runtime headroom for
+  the persistent mailbox. S3 profiles retain the default 32 unless explicitly
+  overridden below.
 * **Runtime Free Heap Footprint:**
   - **Seeed XIAO ESP32-S3:** **~106 KB free heap** (Min: ~88 KB, MaxBlock: ~95 KB).
   - **Classic ESP32 (`esp32dev`):** **~95 KB free heap** (Min: ~78 KB, MaxBlock: ~80 KB).
@@ -300,15 +305,20 @@ Follow these steps to trigger the CI/CD pipeline:
 1. **Commit your code to `main`**: Ensure all your local changes are pushed to the `main` branch.
 2. **Set the release version**: Update `FIRMWARE_VERSION` in
    `include/build_options.h` to the exact SemVer version being released.
-3. **Tag the release**: Create the identical SemVer Git tag (e.g., `v1.2.0`) and push it to GitHub:
+3. **Write the technical release entry**: Add a matching newest-first
+   `## [vX.Y.Z]` section to `CHANGELOG.md`. Record firmware, runtime, security,
+   compatibility, API, build and release-pipeline changes only. Do not include
+   promotional or documentation-only edits. The release job fails if the
+   matching entry is missing and uses that entry as the GitHub Release body.
+4. **Tag the release**: Create the identical SemVer Git tag (e.g., `v1.2.0`) and push it to GitHub:
    ```bash
    git tag v1.2.0
    git push origin v1.2.0
    ```
-4. **Wait for the Release Pipeline**:
+5. **Wait for the Release Pipeline**:
    * Navigate to the **Actions** tab on your GitHub repository.
    * The **Release Firmware** workflow injects the tag into the firmware, builds the Arduino Nano ESP32 IDF-5 production profile, publishes its ZIP, OTA/factory binaries and SHA-256 checksums, and creates a public GitHub Release.
-5. **Wait for the Web Flasher Pipeline**:
+6. **Wait for the Web Flasher Pipeline**:
    * Successful completion of the release workflow automatically triggers **Deploy Web Flasher to GitHub Pages**. A `workflow_run` trigger is used because releases created with `GITHUB_TOKEN` do not emit another ordinary workflow event.
    * It will securely download the release binaries, automatically generate the `manifest.json` configurations for ESP Web Tools, and deploy them to `https://p1337.github.io/meshgate/`.
    * It also creates `latest_ota.json` with the production OTA image URL, exact

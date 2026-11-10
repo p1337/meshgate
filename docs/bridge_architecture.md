@@ -64,11 +64,17 @@ Because BLE operations (connecting, reading characteristics) can block, and we a
 - **Subscribe**: Register notification callbacks on `FromNum` and `FromRadio`.
 - **Receive (BLE -> Network / MQTT)**: 
   - When notified or on fast-poll, read `FromRadio`.
+  - Decode `TEXT_MESSAGE_APP` packets into the persistent mailbox before any
+    transport-specific consumer can consume the envelope. The mailbox keeps
+    the BLE drain active even when no app or MQTT client is online.
   - Pass the raw bytes to `mqtt_net_handle_from_radio()`:
     - If it contains `ModuleConfig.mqtt`, automatically syncs broker address, port, and credentials.
     - If it contains `MqttClientProxyMessage`, publishes directly to the active MQTT broker and consumes the packet.
   - If not consumed and active TCP clients exist, prepend `0x94 0xC3` framing and push to `ble_to_tcp_queue`.
   - Core 0 network task broadcasts framed packet to all active TCP clients.
+  - After a client receives the `config_complete_id` matching its own
+    `want_config_id`, replay a bounded snapshot of the retained mailbox directly
+    to that client. Browser PhoneAPI applies the same handshake gate.
 - **Transmit (Network / MQTT -> BLE)**:
   - High-priority TCP app frames are parsed, stripped of framing, and pushed to `tcp_to_ble_queue`.
   - Background MQTT downlink packets are framed as `ToRadio` protobufs and pushed to `mqtt_to_ble_queue`.

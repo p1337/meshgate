@@ -70,6 +70,11 @@ edit form; the selected tab is reflected in the URL fragment.
   * Contains a **Reset All Settings** action (with confirmation dialog) that clears all stored NVS credentials and restarts into Setup Mode.
 * **Firmware OTA Update Card:**
   * Shows the running firmware version and active/next application slots.
+  * Checks the fixed official GitHub release channel automatically whenever a
+    normal connected control page opens. The check does not install firmware
+    and is skipped in offline setup AP mode.
+  * Makes both version values link to the newest-first technical changelog in
+    the MeshGate repository.
   * Provides one **Check & Install Latest Release** action with visible state
     and download progress; no file chooser or user key is shown.
   * Downloads only the production ESP32-S3 image named by the official release
@@ -117,6 +122,12 @@ edit form; the selected tab is reflected in the URL fragment.
    * **`GET /metrics`**: Standards-compliant Prometheus / OpenMetrics scraping endpoint (`text/plain; version=0.0.4; charset=utf-8`). Streams line-by-line metrics (`meshbridge_*`) directly into lwIP network output buffers via `AsyncResponseStream` with zero large heap allocations. Suitable for scraping by Prometheus, VictoriaMetrics, Grafana Agent, and Home Assistant.
    * **`OPTIONS|PUT /api/v1/toradio`**: Standard Meshtastic HTTP PhoneAPI write endpoint. The PUT body is one bounded raw `ToRadio` protobuf and returns `204` after it is queued for BLE.
    * **`OPTIONS|GET /api/v1/fromradio`**: Standard Meshtastic HTTP PhoneAPI polling endpoint. Returns one raw `FromRadio` protobuf, an empty body, or all queued packets when `all=true`. Responses include CORS and Private Network Access headers for local browser clients.
+   * **`OPTIONS|GET /api/mailbox`**: Returns retained decoded text messages as
+     JSON. The default response contains the newest 32 entries in chronological
+     order. `after=<sequence>` is an exclusive cursor and `limit=<1..32>`
+     bounds each response. Ring and integrity counters are included. The native
+     TCP and HTTP PhoneAPI paths replay these records automatically after a
+     matching configuration handshake; they do not require this JSON endpoint.
    * **`GET /start_scan_wifi`**: Initiates an asynchronous WiFi network scan.
    * **`GET /scan_wifi_results`**: Polls WiFi scan progress and returns JSON array of discovered networks: `[{"ssid":"MyWiFi","rssi":-58,"is_open":false}]`.
    * **`GET /start_scan`**: Initiates an asynchronous 4-second BLE scan.
@@ -138,10 +149,13 @@ edit form; the selected tab is reflected in the URL fragment.
      namespaces and applies it immediately. It is accepted only in setup mode
      from the setup AP's own subnet, never from LAN or VPN clients.
    * **`GET /api/ota/official`**: Reports official update support, current and
-     latest version, lifecycle state, byte progress and a bounded error string.
+     latest version, technical changelog URL, lifecycle state, byte progress
+     and a bounded error string.
    * **`POST /api/ota/official`**: Starts the background official-release
      download and install task. It accepts no URL, file or credential from the
      browser, so it cannot be used to install arbitrary firmware.
+     `check_only=true` runs the same fixed-metadata validation but stops at
+     `current` or `available` without downloading or installing an image.
 
 The `/api/ota/token` and `/api/ota/official` handlers must be registered before `/api/ota`.
 ESPAsyncWebServer considers a route to match slash-delimited child paths, so
@@ -163,6 +177,12 @@ The following keys are stored in the `Preferences` namespace (`bridge_cfg`):
 * `ts_enabled` (Bool, duplicated in `bridge_backup`)
 * `ts_name` (String, duplicated in `bridge_backup`)
 * `ts_auth` (String, write-only Tailscale auth key, duplicated in `bridge_backup`)
+
+Message history is deliberately not stored in NVS. `message_mailbox.cpp` uses
+a fixed checksummed LittleFS ring on the existing `spiffs` data partition for
+the newest 128 decoded text messages. This avoids exhausting the 20 KiB NVS
+partition and keeps credentials independent from mailbox writes. OTA preserves
+the data partition; the explicit `/reset` factory action clears the ring.
 
 ## Technical Decisions & Considerations
 * **Captive Portal / WebView Compatibility Constraints (macOS / iOS CNA & Windows):**

@@ -10,6 +10,7 @@ This project is an ESP32-based transparent bridge that connects to a Meshtastic 
 *   **TCP Server:** Expose a TCP port (default Meshtastic port is 4403) that accepts incoming connections.
 *   **HTTP PhoneAPI:** Expose the standard naked-protobuf `/api/v1/toradio` and `/api/v1/fromradio` endpoints for browser clients.
 *   **Transparent Bridging:** Seamlessly forward data back and forth between the TCP socket and the BLE connection.
+*   **Offline Mailbox:** Retain decoded text messages while no app is connected and replay them through the native PhoneAPI after the next valid client configuration handshake.
 *   **Configuration:** Provide a user-friendly mechanism to configure WiFi credentials, the target Meshtastic radio, and the BLE PIN code.
 
 ## Architecture & Design
@@ -136,10 +137,21 @@ starts an internal task which fetches `latest_ota.json` from the project's
 GitHub Pages release channel over the embedded Mozilla CA bundle. The Pages
 workflow creates that metadata from the latest GitHub Release and includes the
 fixed production board, fixed firmware URL, byte length and SHA-256 digest.
+Opening the normal connected control page starts the same metadata validation
+in check-only mode. It never downloads or installs firmware automatically; it
+only records whether the fixed official channel is current or newer. Setup AP
+mode skips the network check so the captive portal remains fully offline.
+Installed and available version values link to the repository's newest-first
+technical `CHANGELOG.md`.
 Firmware is streamed into the inactive OTA slot and hashed simultaneously;
 the slot is activated only after all metadata, size and digest checks succeed.
 The older authenticated raw endpoint is retained solely for development and
 recovery and shares a process-wide lock with the official updater.
+
+`CHANGELOG.md` is the release-note source of truth. The release workflow fails
+when a firmware tag has no matching heading and publishes that technical entry
+as the GitHub Release body. Documentation-only and promotional edits are not
+firmware changelog entries.
 
 The production updater pauses and destroys the active MQTT client before
 opening its own TLS stream. This is required on the Nano ESP32 because a live
@@ -186,6 +198,37 @@ To provide the best user experience, configuration is handled via a web-based ca
         while the browser has not drained it yet.
     *   **Keep-alives:** Handle reconnections if the TCP client drops or the BLE radio goes out of range.
 
+### 5. Persistent message mailbox
+
+`message_mailbox.cpp` mounts LittleFS on the already provisioned `spiffs` data
+partition; it does not change the partition table and does not consume the
+small NVS partition used for credentials. The on-flash file is a fixed,
+checksummed ring containing the latest 128 decoded `TEXT_MESSAGE_APP` packets.
+Each record keeps the readable text and a replay-safe `FromRadio` protobuf.
+Duplicate LoRa delivery is rejected by a RAM fingerprint index. When the ring
+is full, the oldest record is replaced.
+
+The BLE task treats an initialized mailbox as a permanent consumer, so the
+radio is drained even with zero TCP/HTTP/MQTT clients. MQTT proxy envelopes,
+configuration records, telemetry, node information and encrypted packets that
+the paired radio cannot decode are not mailbox messages.
+
+TCP clients are armed for replay only after they send `ToRadio.want_config_id`
+and receive the matching `FromRadio.config_complete_id`. HTTP PhoneAPI uses the
+same rule and serves retained records only after its live response queue has
+delivered that completion marker. Replay snapshots a half-open sequence range,
+so newly arriving packets do not turn one connection into an unbounded history
+stream. The stored wrapper uses `FromRadio.id = 0` because that identifier is
+local to the old radio FIFO session; the inner `MeshPacket.id` is preserved for
+normal Meshtastic client deduplication and its `delayed` flag identifies the
+replay as a delayed broadcast or direct message.
+
+`GET /api/mailbox` exposes the same ring as JSON. `after` is an exclusive
+sequence cursor and each response is capped at 32 messages to protect TLS/VPN
+heap headroom. The endpoint reports ring bounds,
+overwrite, duplicate and invalid-record counters. Ordinary reboot and OTA keep
+the data partition; the explicit factory-reset endpoint clears the mailbox.
+
 ## Project Structure
 ```text
 meshtastic-esp32-bt-bridge/
@@ -209,6 +252,7 @@ meshtastic-esp32-bt-bridge/
 │   ├── config_ui.h
 │   ├── diag_telemetry.h   # Periodic health and queue diagnostics
 │   ├── mqtt_net.h         # MQTT subsystem interface & state types
+│   ├── message_mailbox.h  # Persistent message ring and replay interface
 │   ├── ota_update.h       # Authenticated HTTP OTA endpoint
 │   ├── status_led.h
 │   ├── utils.h
@@ -219,6 +263,7 @@ meshtastic-esp32-bt-bridge/
 │   ├── ble_client.cpp     # NimBLE client and security callbacks
 │   ├── diag_telemetry.cpp # Low-priority periodic telemetry logger
 │   ├── mqtt_net.cpp       # MQTT Gateway subsystem (Auto-Sync, 3-tier TLS)
+│   ├── message_mailbox.cpp # LittleFS mailbox, deduplication and replay records
 │   ├── ota_update.cpp     # Dual-slot OTA writer and image validation
 │   ├── wifi_net.cpp       # WiFi, AP Mode, and mDNS management
 │   ├── config_ui.cpp      # Captive portal / Preferences logic

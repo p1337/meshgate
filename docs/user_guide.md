@@ -39,6 +39,23 @@ connection; an HTTPS page is not allowed to call an HTTP device because of
 browser mixed-content rules. CORS and Private Network Access preflights are
 handled by MeshGate. The Tailscale tunnel still encrypts remote traffic.
 
+### Offline message mailbox
+
+MeshGate stores the newest 128 decoded Meshtastic text messages even when no
+phone or computer is connected. Reconnect the native Meshtastic app to
+`<meshgate-ip>:4403`, or reconnect a browser Meshtastic Client over HTTP. After
+the normal radio configuration finishes, MeshGate automatically replays the
+retained messages through the standard PhoneAPI. Existing inner packet IDs are
+preserved so the client can ignore messages already present locally.
+
+For another integration, request
+`http://<meshgate-ip>/api/mailbox?limit=32`. Poll incrementally with the last
+returned sequence, for example `/api/mailbox?after=123&limit=32`. The response
+also reports capacity, oldest/next sequence, overwritten, duplicate and invalid
+counters. The mailbox survives reboot and OTA. **Reset All Settings** clears it
+along with configuration. Retained text is readable to anyone who can access
+the private MeshGate Web API, so do not publish that API to the internet.
+
 ### Native Tailscale on the IDF 5 Nano build
 
 The `arduino_nano_esp32_idf5` image can join a tailnet directly through
