@@ -275,7 +275,6 @@ transport update metadata and SHA-256 digest.
 - [Architecture](docs/architecture.md)
 - [Configuration UI and API](docs/configuration_ui.md)
 - [Upstream comparison](docs/upstream-differences.md)
-- [Hackaday project draft](docs/HACKADAY_PROJECT.md)
 - [Development and release process](docs/development.md)
 
 ## Verified result
