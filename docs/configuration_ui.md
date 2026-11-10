@@ -15,6 +15,13 @@ rebooting into normal bridge mode.
 ## User Interface & Features
 
 ### 1. Modular Card Design
+The control page is split into four persistent, mobile-friendly tabs so the
+device does not present every card as one long page: **Connection** contains
+Wi-Fi and Bluetooth, **Remote VPN** contains Tailscale and WireGuard,
+**Services** contains MQTT, and **System** contains OTA, diagnostics, restart
+and reset controls. Changing tabs never reloads the page or discards an open
+edit form; the selected tab is reflected in the URL fragment.
+
 * **WiFi Network Card:**
   * Displays the current configured SSID, masked password status, live WiFi connection status pill (`Connected` / `AP Mode` / `Disconnected` / `Not Configured`), active IP address, advertised mDNS hostname (e.g. `dsc-ae28.local`), and live WiFi RSSI signal strength with colored quality pill (`Excellent` / `Good` / `Fair` / `Weak`).
   * Displays active **TCP Clients** (`X / 3`) and live **TCP Traffic** counters (sent, received, invalid).

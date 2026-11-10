@@ -155,9 +155,16 @@ const char index_html[] PROGMEM = R"rawliteral(
 <style>
   :root { --bg:#0a0c10; --panel:#0f1318; --panel2:#111a24; --border:#1e2a38; --accent:#5eed97; --accent2:#ff6b35; --green:#39ff14; --yellow:#ffd60a; --red:#ff3860; --muted:#7d8daa; --text:#c8d6e5; --dim:#8ea2bb; --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace; --sans:"Segoe UI","Exo 2",sans-serif; }
   * { box-sizing: border-box; }
-  body { font-family:var(--sans); padding:16px; max-width:540px; margin:auto; background:var(--bg); color:var(--text); }
+  body { font-family:var(--sans); padding:16px; max-width:680px; margin:auto; background:var(--bg); color:var(--text); }
   h2 { margin:8px 0 2px; color:var(--accent); text-align:center; font:700 22px var(--mono); letter-spacing:3px; text-shadow:0 0 12px rgba(94,237,151,.2); }
   .brand-subtitle { margin:0 0 20px; color:var(--dim); text-align:center; font:11px var(--mono); letter-spacing:2px; text-transform:uppercase; }
+  .tab-nav { position:sticky; top:0; z-index:20; display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:0 0 16px; padding:8px; border:1px solid var(--border); border-radius:4px; background:rgba(10,12,16,.96); box-shadow:0 8px 22px rgba(0,0,0,.28); backdrop-filter:blur(8px); }
+  .tab-button { min-width:0; margin:0; padding:10px 6px; border-color:transparent; background:transparent; color:var(--dim); font-size:11px; text-transform:uppercase; }
+  .tab-button:hover { color:var(--text); border-color:var(--border); opacity:1; }
+  .tab-button.active { color:#07110b; background:var(--accent); border-color:var(--accent); }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; animation:tab-in .16s ease-out; }
+  @keyframes tab-in { from { opacity:.35; transform:translateY(3px); } to { opacity:1; transform:none; } }
   .card { background:linear-gradient(135deg,var(--panel),var(--panel2)); padding:18px; border:1px solid var(--border); border-radius:4px; box-shadow:0 8px 28px rgba(0,0,0,.25); margin-bottom:16px; }
   .card-header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px; margin-bottom:14px; }
   .card-title { color:var(--accent); font:700 14px var(--mono); letter-spacing:1px; text-transform:uppercase; display:flex; align-items:center; gap:8px; }
@@ -237,6 +244,8 @@ const char index_html[] PROGMEM = R"rawliteral(
     .tailscale-qr { margin:auto; }
     .platform-links { grid-template-columns:1fr 1fr; }
     .remote-address-row { grid-template-columns:1fr; gap:2px; }
+    .tab-nav { gap:4px; padding:6px; }
+    .tab-button { padding:9px 3px; font-size:9px; letter-spacing:0; }
   }
   .card small { color:var(--dim)!important; }
   .footer { text-align:center; font:12px var(--mono); color:var(--muted); margin-top:24px; padding-bottom:20px; }
@@ -247,6 +256,15 @@ const char index_html[] PROGMEM = R"rawliteral(
 <body>
   <h2>◇ MESH GATE</h2>
   <p class="brand-subtitle">Meshtastic remote access gateway</p>
+
+  <nav class="tab-nav" role="tablist" aria-label="MeshGate settings">
+    <button type="button" class="tab-button active" id="tab-button-connection" role="tab" aria-controls="tab-connection" aria-selected="true" onclick="selectTab('connection')">Connection</button>
+    <button type="button" class="tab-button" id="tab-button-remote" role="tab" aria-controls="tab-remote" aria-selected="false" onclick="selectTab('remote')">Remote VPN</button>
+    <button type="button" class="tab-button" id="tab-button-services" role="tab" aria-controls="tab-services" aria-selected="false" onclick="selectTab('services')">Services</button>
+    <button type="button" class="tab-button" id="tab-button-system" role="tab" aria-controls="tab-system" aria-selected="false" onclick="selectTab('system')">System</button>
+  </nav>
+
+  <section class="tab-panel active" id="tab-connection" role="tabpanel" aria-labelledby="tab-button-connection">
 
   <!-- WiFi Configuration Card -->
   <div class="card" id="card-wifi">
@@ -361,6 +379,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
     </div>
   </div>
+
+  </section>
+  <section class="tab-panel" id="tab-remote" role="tabpanel" aria-labelledby="tab-button-remote" hidden>
 
   <!-- Native Tailscale VPN Card -->
   <div class="card" id="card-tailscale">
@@ -527,6 +548,9 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
   </div>
 
+  </section>
+  <section class="tab-panel" id="tab-services" role="tabpanel" aria-labelledby="tab-button-services" hidden>
+
   <!-- MQTT Gateway Card -->
   <div class="card" id="card-mqtt">
     <div class="card-header">
@@ -616,6 +640,9 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
   </div>
 
+  </section>
+  <section class="tab-panel" id="tab-system" role="tabpanel" aria-labelledby="tab-button-system" hidden>
+
   <!-- Official one-click OTA Card -->
   <div class="card" id="card-ota">
     <div class="card-header">
@@ -635,7 +662,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 
   <!-- System Actions Card -->
-  <div class="card">
+  <div class="card" id="card-system">
     <div class="card-header">
       <div class="card-title">System</div>
     </div>
@@ -693,6 +720,8 @@ const char index_html[] PROGMEM = R"rawliteral(
     <button class="btn-danger" id="btn-reset" onclick="resetBridge()">Reset All Settings</button>
   </div>
 
+  </section>
+
   <div class="footer">
     Firmware Version: )rawliteral" FIRMWARE_VERSION R"rawliteral(<br>
     <a href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(" target="_blank">View Project on GitHub</a>
@@ -718,6 +747,30 @@ const char index_html[] PROGMEM = R"rawliteral(
     let tailscaleEnrollmentTimer = null;
     let tailscaleEnrollmentActive = false;
     let tailscaleAuthOpenedUrl = '';
+
+    const meshGateTabs = ['connection', 'remote', 'services', 'system'];
+
+    function selectTab(tabName, updateHash = true) {
+      const selected = meshGateTabs.includes(tabName) ? tabName : 'connection';
+      meshGateTabs.forEach(name => {
+        const panel = document.getElementById('tab-' + name);
+        const button = document.getElementById('tab-button-' + name);
+        const active = name === selected;
+        if (panel) {
+          panel.classList.toggle('active', active);
+          panel.hidden = !active;
+        }
+        if (button) {
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-selected', active ? 'true' : 'false');
+          button.tabIndex = active ? 0 : -1;
+        }
+      });
+      if (updateHash && window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', '#' + selected);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
 
     function showAlert(id, type, msg) {
       const el = document.getElementById(id);
@@ -1933,10 +1986,15 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     window.onload = function() {
       document.getElementById('modal-btn-confirm').onclick = confirmModalAction;
+      selectTab(window.location.hash.replace('#', ''), false);
       loadConfig();
       updateStatus();
       refreshOtaStatus().catch(() => {});
     };
+
+    window.addEventListener('hashchange', function() {
+      selectTab(window.location.hash.replace('#', ''), false);
+    });
   </script>
 </body>
 </html>

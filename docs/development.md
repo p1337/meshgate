@@ -176,6 +176,11 @@ Do not repeat the address in the lower status list. The firmware footer must
 resolve `PROJECT_GITHUB_URL` to the MeshGate repository; upstream attribution
 belongs in repository documentation rather than the product navigation.
 
+The embedded control page uses four client-side tab panels (`connection`,
+`remote`, `services`, and `system`). Cards remain mounted in the DOM while an
+inactive panel is hidden, so live polling, edit state and write-only secret
+placeholders survive tab changes. Deep links use the matching URL fragment.
+
 Interactive enrollment follows the native Tailscale registration protocol.
 An unauthenticated RegisterResponse supplies `AuthURL`; MicroLink holds it in
 RAM, exposes it through `microlink_get_auth_url()`, and sends it in the next
