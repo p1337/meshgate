@@ -4,6 +4,11 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.9] - 2026-11-10
+
+- Made the large MeshGate header logo in the embedded control interface link
+  to the canonical project repository.
+
 ## [v0.7.8] - 2026-11-10
 
 - Replaced the embedded raster logo with a native 1.7 KB SVG composed only of
@@ -139,6 +144,10 @@ are intentionally omitted.
 
 - Initial ESP32 BLE-to-TCP Meshtastic bridge release.
 
+[v0.7.9]: https://github.com/p1337/meshgate/compare/v0.7.8...v0.7.9
+[v0.7.8]: https://github.com/p1337/meshgate/compare/v0.7.7...v0.7.8
+[v0.7.7]: https://github.com/p1337/meshgate/compare/v0.7.6...v0.7.7
+[v0.7.6]: https://github.com/p1337/meshgate/compare/v0.7.5...v0.7.6
 [v0.7.5]: https://github.com/p1337/meshgate/compare/v0.7.4...v0.7.5
 [v0.7.4]: https://github.com/p1337/meshgate/compare/v0.7.3...v0.7.4
 [v0.7.3]: https://github.com/p1337/meshgate/compare/v0.7.2...v0.7.3

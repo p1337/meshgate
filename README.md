@@ -36,6 +36,7 @@ classic WireGuard, Prometheus metrics and an RGB IP-address indicator.
 - [Verified result](#verified-result)
 - [Security](#security)
 - [Credits and license](#credits-and-license)
+- [Contact](#contact)
 
 ### Recommended and tested hardware
 
@@ -311,6 +312,11 @@ components are released under various licenses; see GitHub for details. No
 warranty is provided — use at your own risk. The Meshtastic logo trademark is
 the trademark of Meshtastic LLC and links to
 [meshtastic.org](https://meshtastic.org/).
+
+## Contact
+
+MeshGate is maintained by **Robert Stefanowicz (p1337)**. Connect with the
+author on [LinkedIn](https://de.linkedin.com/in/robert-stefanowicz-367304180).
 
 ## Support MeshGate
 

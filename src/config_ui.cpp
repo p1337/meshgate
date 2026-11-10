@@ -191,7 +191,8 @@ const char index_html[] PROGMEM = R"rawliteral(
   :root { --bg:#0a0c10; --panel:#0f1318; --panel2:#111a24; --border:#1e2a38; --accent:#5eed97; --accent2:#ff6b35; --green:#39ff14; --yellow:#ffd60a; --red:#ff3860; --muted:#7d8daa; --text:#c8d6e5; --dim:#8ea2bb; --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace; --sans:"Segoe UI","Exo 2",sans-serif; }
   * { box-sizing: border-box; }
   body { font-family:var(--sans); padding:16px; max-width:680px; margin:auto; background:var(--bg); color:var(--text); }
-  .brand-logo { display:block; width:100%; max-width:560px; height:auto; aspect-ratio:900/296; object-fit:contain; margin:8px auto 6px; }
+  .brand-link { display:block; width:100%; max-width:560px; margin:8px auto 6px; }
+  .brand-logo { display:block; width:100%; height:auto; aspect-ratio:900/296; object-fit:contain; }
   .brand-subtitle { margin:0 0 20px; color:var(--dim); text-align:center; font:11px var(--mono); letter-spacing:2px; text-transform:uppercase; }
   .tab-nav { position:sticky; top:0; z-index:20; display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:0 0 16px; padding:8px; border:1px solid var(--border); border-radius:4px; background:rgba(10,12,16,.96); box-shadow:0 8px 22px rgba(0,0,0,.28); backdrop-filter:blur(8px); }
   .tab-button { min-width:0; margin:0; padding:10px 6px; border-color:transparent; background:transparent; color:var(--dim); font-size:11px; text-transform:uppercase; }
@@ -296,7 +297,9 @@ const char index_html[] PROGMEM = R"rawliteral(
 </style>
 </head>
 <body>
-  <img class="brand-logo" src="/assets/meshgate-logo.svg?v=)rawliteral" FIRMWARE_VERSION R"rawliteral(" width="900" height="296" decoding="sync" alt="MeshGate">
+  <a class="brand-link" href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(" target="_blank" rel="noopener noreferrer" aria-label="Open the MeshGate project on GitHub">
+    <img class="brand-logo" src="/assets/meshgate-logo.svg?v=)rawliteral" FIRMWARE_VERSION R"rawliteral(" width="900" height="296" decoding="sync" alt="MeshGate">
+  </a>
   <p class="brand-subtitle">Meshtastic remote access gateway</p>
 
   <nav class="tab-nav" role="tablist" aria-label="MeshGate settings">

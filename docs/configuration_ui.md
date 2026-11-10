@@ -31,6 +31,9 @@ its intrinsic dimensions in HTML: a larger response can monopolize the constrain
 AsyncTCP/Tailscale output path after a mobile browser interrupts the download.
 The image URL carries the firmware version as its cache key so an OTA cannot
 reuse a failed response from an older build.
+The large header logo links to the canonical MeshGate GitHub repository in a
+separate browser tab, using the same compile-time `PROJECT_GITHUB_URL` as the
+footer so the two destinations cannot diverge.
 
 * **WiFi Network Card:**
   * Displays the current configured SSID, masked password status, live WiFi connection status pill (`Connected` / `AP Mode` / `Disconnected` / `Not Configured`), active IP address, advertised mDNS hostname (e.g. `dsc-ae28.local`), and live WiFi RSSI signal strength with colored quality pill (`Excellent` / `Good` / `Fair` / `Weak`).
