@@ -52,6 +52,14 @@ response lists the known peer VPN IPs and whether each peer uses a direct or
 relayed path. Joining a tailnet still requires explicit browser approval by an
 authenticated user; the firmware cannot derive authorization from an email.
 
+The control UI turns that protocol into one user action without weakening the
+approval boundary. It synchronously pre-opens a same-browser waiting tab from
+the **Add This Device to Tailscale** click, saves and reboots the gateway, then
+polls `/tailscale_status` until `AuthURL` exists and navigates the waiting tab
+to it. This avoids popup blocking after an asynchronous reboot and preserves a
+manual link fallback for captive browsers. The original device page remains
+open, polls authorization and exposes the resulting `100.x:4403` endpoint.
+
 The Nano's local variant disables Arduino's stock double-tap recovery path.
 That path expects a factory partition, while this project's 16 MB layout uses
 two 6.25 MiB OTA application slots and has no factory application. Leaving the

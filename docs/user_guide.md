@@ -45,18 +45,21 @@ The `arduino_nano_esp32_idf5` image can join a tailnet directly through
 MicroLink. No public IP, dynamic DNS, inbound firewall rule or additional Linux
 computer is required.
 
-The Web UI contains a four-step keyless wizard:
+The Web UI contains a three-step keyless wizard:
 
 1. Install Tailscale on the phone or computer that will access MeshGate and
-   sign in to the intended tailnet.
-2. In **Tailscale Remote Access**, enable Tailscale and choose a lowercase
-   MeshGate device name. No auth key or API key is required.
-3. Select **Save & Reboot**, then reopen the local MeshGate page. Select
-   **Connect with Tailscale** and approve the device in the normal browser.
-4. Keep the MeshGate page open while it checks authorization automatically.
-   Verify **Connected**, a `100.x` IP and a ready remote path.
+   sign in to the intended tailnet. The wizard contains an offline QR code and
+   direct iOS, Android, Windows and macOS installation buttons.
+2. Choose a lowercase device name and select **Add This Device to Tailscale**.
+   MeshGate saves, reboots, reconnects the still-open page and opens the
+   one-time Tailscale browser approval automatically. No auth/API key, admin
+   console or command line is required.
+3. Sign in and approve MeshGate. The original page checks authorization and
+   changes to **Your device has been added**, then prominently displays
+   `<tailscale-ip>:4403` for Meshtastic and `http://<tailscale-ip>/` for later
+   configuration.
 
-The connected card then displays and copies both addresses needed remotely:
+The connected **Tailscale (Remote VPN)** card displays and copies both addresses needed remotely:
 `http://<tailscale-ip>/` for MeshGate and `<tailscale-ip>:4403` for the
 Meshtastic app. On the remote phone or computer, Tailscale must be active and
 signed into the same tailnet.

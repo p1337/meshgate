@@ -212,6 +212,29 @@ const char index_html[] PROGMEM = R"rawliteral(
   .wizard-actions a:hover,.wizard-actions button:hover { background:rgba(94,237,151,.08); opacity:1; }
   .connection-box { display:none; margin-top:14px; padding:12px; border:1px solid var(--accent); background:rgba(94,237,151,.04); border-radius:3px; }
   .connection-value { display:block; margin:6px 0; color:var(--accent); font:700 14px var(--mono); word-break:break-all; }
+  .tailscale-install { display:grid; grid-template-columns:112px 1fr; gap:12px; align-items:center; margin-top:10px; }
+  .tailscale-qr { display:block; width:112px; height:112px; padding:7px; background:#fff; border-radius:5px; }
+  .platform-links { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+  .platform-link { display:flex; align-items:center; gap:7px; min-height:38px; padding:7px 9px; border:1px solid var(--border); border-radius:3px; color:var(--text); background:var(--panel2); text-decoration:none; font:600 11px var(--mono); }
+  .platform-link:hover { border-color:var(--accent); color:var(--accent); }
+  .platform-link svg { width:20px; height:20px; flex:0 0 20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .remote-summary { display:none; margin-bottom:14px; padding:14px; border:1px solid var(--accent); background:rgba(94,237,151,.05); border-radius:3px; }
+  .remote-summary h3 { margin:0 0 7px; color:var(--accent); font:700 15px var(--mono); letter-spacing:.4px; }
+  .remote-primary-address { display:block; margin:5px 0 10px; color:var(--green); font:700 20px var(--mono); word-break:break-all; }
+  .remote-summary p { margin:7px 0; color:var(--text); font-size:13px; line-height:1.5; }
+  .remote-summary code { color:var(--accent); font:700 12px var(--mono); word-break:break-all; }
+  .enrollment-state { margin-top:9px; padding:10px; border-left:3px solid var(--muted); background:rgba(125,141,170,.06); }
+  .enrollment-state.active { border-color:var(--yellow); }
+  .enrollment-state.success { border-color:var(--green); background:rgba(57,255,20,.05); }
+  .enrollment-state.error { border-color:var(--red); background:rgba(255,56,96,.05); }
+  .enrollment-state strong { display:block; color:var(--text); font:700 12px var(--mono); margin-bottom:3px; }
+  .enrollment-state span { color:var(--dim); font-size:12px; line-height:1.4; }
+  .btn-oneclick { margin-top:10px; padding:12px; font-size:14px; }
+  @media (max-width:430px) {
+    .tailscale-install { grid-template-columns:1fr; }
+    .tailscale-qr { margin:auto; }
+    .platform-links { grid-template-columns:1fr 1fr; }
+  }
   .card small { color:var(--dim)!important; }
   .footer { text-align:center; font:12px var(--mono); color:var(--muted); margin-top:24px; padding-bottom:20px; }
   .footer a { color:var(--accent); text-decoration:none; font-weight:600; }
@@ -339,10 +362,20 @@ const char index_html[] PROGMEM = R"rawliteral(
   <!-- Native Tailscale VPN Card -->
   <div class="card" id="card-tailscale">
     <div class="card-header">
-      <div class="card-title">Tailscale Remote Access</div>
+      <div class="card-title">Tailscale (Remote VPN)</div>
       <button class="btn-edit" id="btn-edit-tailscale" onclick="toggleEditTailscale(true)">Setup</button>
     </div>
     <div id="tailscale-view">
+      <div id="tailscale-connection-box" class="remote-summary">
+        <h3>Tailscale IP: <span class="remote-primary-address" id="view-tailscale-phoneapi"></span></h3>
+        <p>To connect to your Meshtastic node through Tailscale, add a <strong>Network / TCP</strong> device in the Meshtastic app and enter <code id="view-tailscale-phoneapi-inline"></code>.</p>
+        <p>For configuration, logs and future updates, open <a id="link-tailscale-web" href="#"><code id="view-tailscale-web-address"></code></a>.</p>
+        <div class="wizard-actions">
+          <a id="link-tailscale-web-button" href="#">Open MeshGate</a>
+          <button type="button" onclick="copyTailscaleAddress()">Copy Meshtastic address</button>
+          <a href="https://login.tailscale.com/admin/machines" target="_blank" rel="noopener noreferrer">Manage key expiry (optional)</a>
+        </div>
+      </div>
       <div class="info-row">
         <span class="info-label">Tailnet:</span>
         <span class="info-val"><span id="view-tailscale-status" class="status-pill disabled">Disabled</span></span>
@@ -352,27 +385,15 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="info-row"><span class="info-label">Remote path:</span><span class="info-val" id="view-tailscale-path">(Not connected)</span></div>
       <div class="info-row"><span class="info-label">Known peers:</span><span class="info-val" id="view-tailscale-peers">0</span></div>
       <div class="info-row"><span class="info-label">Enrollment:</span><span class="info-val" id="view-tailscale-enrollment">Browser login</span></div>
-      <button class="btn-secondary" type="button" onclick="toggleEditTailscale(true)">Guided setup / change settings</button>
+      <button class="btn-secondary" type="button" onclick="toggleEditTailscale(true)">Set up / reconnect Tailscale</button>
       <div id="tailscale-login-box" class="connection-box" style="display:none;">
         <div class="wizard-title">Approve MeshGate in Tailscale</div>
-        <div class="wizard-copy">Tailscale supplied this one-time login link. Open it in a normal browser, sign in, and approve the device. MeshGate keeps checking automatically.</div>
+        <div class="wizard-copy">Sign in and approve this device. This MeshGate page remains open and detects the approval automatically.</div>
         <span class="connection-value" id="view-tailscale-auth-url"></span>
         <div class="wizard-actions">
-          <a id="link-tailscale-auth" href="#" target="_blank" rel="noopener noreferrer">Connect with Tailscale</a>
+          <a id="link-tailscale-auth" href="#" target="_blank" rel="noopener noreferrer">Add This Device to Tailscale</a>
           <button type="button" onclick="copyTailscaleLoginUrl()">Copy login link</button>
         </div>
-      </div>
-      <div id="tailscale-connection-box" class="connection-box">
-        <div class="wizard-title">Remote access is ready</div>
-        <div class="wizard-copy">On a phone or computer connected to the same tailnet, use:</div>
-        <span class="connection-value" id="view-tailscale-web-address"></span>
-        <span class="connection-value" id="view-tailscale-phoneapi"></span>
-        <div class="wizard-actions">
-          <a id="link-tailscale-web" href="#">Open MeshGate</a>
-          <button type="button" onclick="copyTailscaleAddress()">Copy Meshtastic address</button>
-          <a href="https://login.tailscale.com/admin/machines" target="_blank" rel="noopener noreferrer">Open Machines</a>
-        </div>
-        <div class="wizard-copy" style="margin-top:8px;">For unattended operation, open the device in Machines and disable key expiry after enrollment.</div>
       </div>
       <div id="tailscale-use-alert" class="alert"></div>
     </div>
@@ -384,46 +405,57 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="wizard-step">
           <div class="wizard-number">1</div>
           <div>
-            <div class="wizard-title">Install Tailscale on the remote device</div>
-            <div class="wizard-copy">Your phone or computer needs Tailscale only so it can securely reach MeshGate's private 100.x address. Sign in there with the same account you will use to approve MeshGate.</div>
-            <div class="wizard-actions">
-              <a href="https://login.tailscale.com/admin" target="_blank" rel="noopener noreferrer">Open Admin Console</a>
-              <a href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer">Install Tailscale</a>
+            <div class="wizard-title">Install Tailscale on your phone or computer</div>
+            <div class="wizard-copy">The app is needed only on devices that should reach MeshGate remotely. Install it and sign in with your Tailscale account. No admin console or command line is required.</div>
+            <div class="tailscale-install">
+              <a href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer" aria-label="Open Tailscale download page">
+                <svg id="tailscale-download-qr" class="tailscale-qr" viewBox="0 0 33 33" role="img" aria-label="QR code for Tailscale download">
+                  <rect width="33" height="33" rx="1" fill="#fff"/><path id="tailscale-download-qr-path" d="M2 2h7v1H2zM10 2h1v1H10zM12 2h1v1H12zM15 2h3v1H15zM20 2h3v1H20zM24 2h7v1H24zM2 3h1v1H2zM8 3h1v1H8zM10 3h3v1H10zM14 3h2v1H14zM18 3h3v1H18zM24 3h1v1H24zM30 3h1v1H30zM2 4h1v1H2zM4 4h3v1H4zM8 4h1v1H8zM11 4h3v1H11zM18 4h1v1H18zM22 4h1v1H22zM24 4h1v1H24zM26 4h3v1H26zM30 4h1v1H30zM2 5h1v1H2zM4 5h3v1H4zM8 5h1v1H8zM10 5h1v1H10zM14 5h1v1H14zM16 5h2v1H16zM19 5h1v1H19zM21 5h1v1H21zM24 5h1v1H24zM26 5h3v1H26zM30 5h1v1H30zM2 6h1v1H2zM4 6h3v1H4zM8 6h1v1H8zM12 6h2v1H12zM16 6h1v1H16zM18 6h1v1H18zM21 6h2v1H21zM24 6h1v1H24zM26 6h3v1H26zM30 6h1v1H30zM2 7h1v1H2zM8 7h1v1H8zM12 7h1v1H12zM15 7h1v1H15zM17 7h6v1H17zM24 7h1v1H24zM30 7h1v1H30zM2 8h7v1H2zM10 8h1v1H10zM12 8h1v1H12zM14 8h1v1H14zM16 8h1v1H16zM18 8h1v1H18zM20 8h1v1H20zM22 8h1v1H22zM24 8h7v1H24zM10 9h3v1H10zM17 9h4v1H17zM2 10h1v1H2zM4 10h2v1H4zM7 10h3v1H7zM15 10h1v1H15zM17 10h1v1H17zM19 10h2v1H19zM24 10h1v1H24zM27 10h1v1H27zM29 10h2v1H29zM7 11h1v1H7zM11 11h1v1H11zM14 11h4v1H14zM21 11h2v1H21zM24 11h3v1H24zM30 11h1v1H30zM2 12h1v1H2zM4 12h2v1H4zM7 12h2v1H7zM12 12h2v1H12zM15 12h1v1H15zM18 12h1v1H18zM20 12h1v1H20zM25 12h1v1H25zM28 12h2v1H28zM2 13h1v1H2zM5 13h1v1H5zM7 13h1v1H7zM12 13h1v1H12zM18 13h1v1H18zM20 13h1v1H20zM22 13h2v1H22zM25 13h2v1H25zM30 13h1v1H30zM3 14h2v1H3zM6 14h5v1H6zM12 14h1v1H12zM14 14h1v1H14zM16 14h2v1H16zM19 14h1v1H19zM21 14h1v1H21zM27 14h2v1H27zM2 15h1v1H2zM4 15h2v1H4zM7 15h1v1H7zM11 15h2v1H11zM16 15h1v1H16zM18 15h1v1H18zM21 15h1v1H21zM24 15h1v1H24zM28 15h3v1H28zM2 16h1v1H2zM4 16h1v1H4zM6 16h5v1H6zM13 16h1v1H13zM15 16h1v1H15zM17 16h6v1H17zM24 16h2v1H24zM28 16h3v1H28zM2 17h1v1H2zM5 17h1v1H5zM7 17h1v1H7zM10 17h1v1H10zM12 17h1v1H12zM14 17h1v1H14zM16 17h1v1H16zM18 17h1v1H18zM20 17h2v1H20zM24 17h1v1H24zM29 17h1v1H29zM3 18h1v1H3zM8 18h2v1H8zM11 18h1v1H11zM13 18h1v1H13zM16 18h3v1H16zM20 18h1v1H20zM22 18h2v1H22zM25 18h3v1H25zM29 18h1v1H29zM3 19h3v1H3zM9 19h6v1H9zM16 19h1v1H16zM18 19h2v1H18zM22 19h1v1H22zM25 19h1v1H25zM27 19h3v1H27zM2 20h1v1H2zM4 20h2v1H4zM8 20h1v1H8zM10 20h1v1H10zM15 20h4v1H15zM23 20h1v1H23zM25 20h2v1H25zM28 20h1v1H28zM4 21h3v1H4zM9 21h2v1H9zM13 21h4v1H13zM19 21h1v1H19zM21 21h1v1H21zM23 21h1v1H23zM25 21h1v1H25zM28 21h1v1H28zM3 22h2v1H3zM7 22h2v1H7zM11 22h1v1H11zM13 22h4v1H13zM18 22h3v1H18zM22 22h7v1H22zM10 23h1v1H10zM12 23h3v1H12zM17 23h4v1H17zM22 23h1v1H22zM26 23h5v1H26zM2 24h7v1H2zM10 24h1v1H10zM13 24h1v1H13zM16 24h2v1H16zM20 24h3v1H20zM24 24h1v1H24zM26 24h2v1H26zM29 24h1v1H29zM2 25h1v1H2zM8 25h1v1H8zM10 25h3v1H10zM15 25h3v1H15zM20 25h3v1H20zM26 25h2v1H26zM2 26h1v1H2zM4 26h3v1H4zM8 26h1v1H8zM12 26h1v1H12zM14 26h1v1H14zM19 26h1v1H19zM22 26h5v1H22zM28 26h1v1H28zM30 26h1v1H30zM2 27h1v1H2zM4 27h3v1H4zM8 27h1v1H8zM10 27h2v1H10zM15 27h1v1H15zM19 27h1v1H19zM21 27h3v1H21zM25 27h3v1H25zM29 27h1v1H29zM2 28h1v1H2zM4 28h3v1H4zM8 28h1v1H8zM10 28h2v1H10zM15 28h1v1H15zM18 28h1v1H18zM25 28h1v1H25zM28 28h1v1H28zM30 28h1v1H30zM2 29h1v1H2zM8 29h1v1H8zM16 29h3v1H16zM22 29h1v1H22zM24 29h1v1H24zM26 29h2v1H26zM29 29h1v1H29zM2 30h7v1H2zM10 30h1v1H10zM12 30h2v1H12zM15 30h2v1H15zM20 30h3v1H20zM27 30h1v1H27zM29 30h1v1H29z" fill="#111"/>
+                </svg>
+              </a>
+              <div class="platform-links">
+                <a class="platform-link" href="https://apps.apple.com/app/tailscale/id1470499037" target="_blank" rel="noopener noreferrer">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 17 12 7l4 10M9.2 14h5.6M7 17h2M15 17h2"/></svg><span>iPhone / iPad<br>App Store</span>
+                </a>
+                <a class="platform-link" href="https://play.google.com/store/apps/details?id=com.tailscale.ipn" target="_blank" rel="noopener noreferrer">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9h10v8a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9ZM9 9 7.5 6.5M15 9l1.5-2.5M9.5 12h.01M14.5 12h.01M5 10v6M19 10v6M9 19v2M15 19v2"/></svg><span>Android<br>Google Play</span>
+                </a>
+                <a class="platform-link" href="https://tailscale.com/download/windows" target="_blank" rel="noopener noreferrer">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5 10.5 4v7H3v-5.5ZM13 3.5 21 2v9h-8V3.5ZM3 13h7.5v7L3 18.5V13ZM13 13h8v9l-8-1.5V13Z"/></svg><span>Windows</span>
+                </a>
+                <a class="platform-link" href="https://tailscale.com/download/mac" target="_blank" rel="noopener noreferrer">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg><span>macOS</span>
+                </a>
+              </div>
             </div>
           </div>
         </div>
         <div class="wizard-step">
           <div class="wizard-number">2</div>
           <div>
-            <div class="wizard-title">Enable MeshGate and choose its name</div>
-            <div class="wizard-copy">No auth key or API key is required. Save and reboot; MeshGate asks Tailscale for a one-time browser login link.</div>
+            <div class="wizard-title">Add MeshGate to Tailscale</div>
+            <div class="wizard-copy">Choose a name, then press the single button below. MeshGate saves the setting, restarts, obtains its one-time browser login and opens it automatically. No auth key is copied.</div>
+            <label>Tailnet device name:</label>
+            <input type="text" id="input-tailscale-name" maxlength="63" placeholder="meshgate">
+            <input type="checkbox" id="input-tailscale-enabled" style="display:none;" checked>
+            <button class="btn-success btn-oneclick" id="btn-save-tailscale" onclick="startTailscaleEnrollment()">Add This Device to Tailscale</button>
           </div>
         </div>
         <div class="wizard-step">
           <div class="wizard-number">3</div>
           <div>
-            <div class="wizard-title">Open the browser login link</div>
-            <div class="wizard-copy">After reboot, reopen this local page. Select <strong>Connect with Tailscale</strong>, sign in, and approve MeshGate. If a captive setup window cannot open it, copy the displayed link into your normal browser.</div>
+            <div class="wizard-title">Sign in and finish</div>
+            <div class="wizard-copy">Approve MeshGate on the Tailscale page. Keep this page open: it automatically changes to <strong>Your device has been added</strong> and displays the new 100.x address.</div>
+            <div id="tailscale-enrollment-state" class="enrollment-state">
+              <strong>Ready</strong><span>Install Tailscale first, then add this device.</span>
+            </div>
           </div>
         </div>
       </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <label for="input-tailscale-enabled" style="margin:0;">Enable Tailscale</label>
-        <input type="checkbox" id="input-tailscale-enabled" style="width:20px; height:20px; margin:0;">
-      </div>
-      <label>Tailnet device name:</label>
-      <input type="text" id="input-tailscale-name" maxlength="63" placeholder="meshgate">
       <div id="tailscale-alert" class="alert"></div>
-      <div class="wizard-step" style="margin-top:10px;">
-        <div class="wizard-number">4</div>
-        <div>
-          <div class="wizard-title">Approve and verify</div>
-          <div class="wizard-copy">After browser approval, this page changes automatically to <strong>Connected</strong> and shows the <strong>100.x</strong> IP. No key is copied into MeshGate.</div>
-        </div>
-      </div>
       <div class="btn-group">
-        <button class="btn-success" id="btn-save-tailscale" onclick="saveTailscale(true)">Save &amp; Reboot</button>
         <button class="btn-secondary" onclick="toggleEditTailscale(false)">Cancel</button>
+        <button class="btn-danger" id="btn-disable-tailscale" onclick="disableTailscale()">Disable Remote VPN</button>
       </div>
     </div>
   </div>
@@ -672,6 +704,10 @@ const char index_html[] PROGMEM = R"rawliteral(
     let currentConfig = { wifi_ssid: '', wifi_has_pass: false, ble_mac: '', ble_has_pin: false };
     let pollInterval = null;
     let wifiPollInterval = null;
+    let tailscaleEnrollmentWindow = null;
+    let tailscaleEnrollmentTimer = null;
+    let tailscaleEnrollmentActive = false;
+    let tailscaleAuthOpenedUrl = '';
 
     function showAlert(id, type, msg) {
       const el = document.getElementById(id);
@@ -813,7 +849,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       const pill = document.getElementById('view-tailscale-status');
       const connectionBox = document.getElementById('tailscale-connection-box');
       const loginBox = document.getElementById('tailscale-login-box');
-      fetch('/tailscale_status')
+      return fetch('/tailscale_status')
         .then(r => r.json())
         .then(status => {
           document.getElementById('view-tailscale-ip').innerText = status.vpn_ip || '(Not connected)';
@@ -825,13 +861,39 @@ const char index_html[] PROGMEM = R"rawliteral(
           if (status.auth_url) {
             document.getElementById('view-tailscale-auth-url').innerText = status.auth_url;
             document.getElementById('link-tailscale-auth').href = status.auth_url;
+            if (tailscaleEnrollmentActive && tailscaleAuthOpenedUrl !== status.auth_url) {
+              tailscaleAuthOpenedUrl = status.auth_url;
+              setTailscaleEnrollmentState('active', 'Tailscale login is ready', 'Sign in and approve MeshGate in the opened browser tab. This page keeps checking automatically.');
+              if (tailscaleEnrollmentWindow && !tailscaleEnrollmentWindow.closed) {
+                try { tailscaleEnrollmentWindow.location.replace(status.auth_url); } catch (e) {
+                  tailscaleEnrollmentWindow.location.href = status.auth_url;
+                }
+              }
+            }
           }
           if (status.connected && status.vpn_ip) {
             const webAddress = 'http://' + status.vpn_ip + '/';
             const phoneApi = status.vpn_ip + ':4403';
             document.getElementById('view-tailscale-web-address').innerText = webAddress;
             document.getElementById('view-tailscale-phoneapi').innerText = phoneApi;
+            document.getElementById('view-tailscale-phoneapi-inline').innerText = phoneApi;
             document.getElementById('link-tailscale-web').href = webAddress;
+            document.getElementById('link-tailscale-web-button').href = webAddress;
+            if (tailscaleEnrollmentActive) {
+              tailscaleEnrollmentActive = false;
+              if (tailscaleEnrollmentTimer) {
+                clearInterval(tailscaleEnrollmentTimer);
+                tailscaleEnrollmentTimer = null;
+              }
+              setTailscaleEnrollmentState('success', 'Your device has been added', 'Remote access is connected. The Meshtastic address is ' + phoneApi + '.');
+              const button = document.getElementById('btn-save-tailscale');
+              if (button) button.disabled = false;
+              if (currentConfig) currentConfig.tailscale_enabled = true;
+              setTimeout(() => {
+                toggleEditTailscale(false);
+                loadConfig();
+              }, 1400);
+            }
           }
           if (!currentConfig || !currentConfig.tailscale_supported) {
             pill.className = 'status-pill disabled';
@@ -848,8 +910,8 @@ const char index_html[] PROGMEM = R"rawliteral(
           }
         })
         .catch(() => {
-          pill.className = 'status-pill error';
-          pill.innerText = 'Status unavailable';
+          pill.className = tailscaleEnrollmentActive ? 'status-pill connecting' : 'status-pill error';
+          pill.innerText = tailscaleEnrollmentActive ? 'Restarting / reconnecting' : 'Status unavailable';
           connectionBox.style.display = 'none';
           loginBox.style.display = 'none';
         });
@@ -891,8 +953,9 @@ const char index_html[] PROGMEM = R"rawliteral(
         return;
       }
       if (edit && currentConfig) {
-        document.getElementById('input-tailscale-enabled').checked = !!currentConfig.tailscale_enabled;
+        document.getElementById('input-tailscale-enabled').checked = true;
         document.getElementById('input-tailscale-name').value = currentConfig.tailscale_device_name || 'meshgate';
+        document.getElementById('btn-disable-tailscale').style.display = currentConfig.tailscale_enabled ? 'block' : 'none';
       }
       document.getElementById('tailscale-view').style.display = edit ? 'none' : 'block';
       document.getElementById('tailscale-edit').style.display = edit ? 'block' : 'none';
@@ -900,22 +963,52 @@ const char index_html[] PROGMEM = R"rawliteral(
       hideAlert('tailscale-alert');
     }
 
-    function saveTailscale(rebootAfterSave) {
-      const enabled = document.getElementById('input-tailscale-enabled').checked;
+    function setTailscaleEnrollmentState(kind, title, message) {
+      const state = document.getElementById('tailscale-enrollment-state');
+      if (!state) return;
+      state.className = 'enrollment-state' + (kind ? ' ' + kind : '');
+      state.innerHTML = '<strong></strong><span></span>';
+      state.querySelector('strong').innerText = title;
+      state.querySelector('span').innerText = message;
+    }
+
+    function openTailscaleWaitingWindow() {
+      try {
+        const popup = window.open('about:blank', 'meshgate-tailscale-enrollment');
+        if (!popup) return null;
+        popup.document.title = 'MeshGate · Tailscale';
+        popup.document.body.style.cssText = 'margin:0;padding:32px;background:#0a0c10;color:#c8d6e5;font:16px Segoe UI,sans-serif;';
+        popup.document.body.innerHTML = '<h2 style="color:#5eed97">MeshGate is preparing Tailscale…</h2><p>The device is restarting and requesting its secure one-time login. Keep this tab open.</p>';
+        return popup;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function pollTailscaleEnrollment() {
+      if (tailscaleEnrollmentTimer) clearInterval(tailscaleEnrollmentTimer);
+      tailscaleEnrollmentTimer = setInterval(updateTailscaleStatus, 2500);
+      updateTailscaleStatus();
+    }
+
+    function startTailscaleEnrollment() {
       const deviceName = document.getElementById('input-tailscale-name').value.trim().toLowerCase();
 
-      if (enabled && !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(deviceName)) {
+      if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(deviceName)) {
         showAlert('tailscale-alert', 'error', 'Enter a valid lowercase device name.');
         return;
       }
 
       const button = document.getElementById('btn-save-tailscale');
       button.disabled = true;
+      tailscaleEnrollmentActive = true;
+      tailscaleAuthOpenedUrl = '';
+      tailscaleEnrollmentWindow = openTailscaleWaitingWindow();
+      setTailscaleEnrollmentState('active', 'Preparing MeshGate', 'Saving the device name and restarting. This page reconnects automatically.');
       fetch('/save_tailscale', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'enabled=' + (enabled ? 'true' : 'false') +
-              '&device_name=' + encodeURIComponent(deviceName)
+        body: 'enabled=true&device_name=' + encodeURIComponent(deviceName)
       })
       .then(async r => {
         const result = await r.json();
@@ -923,20 +1016,47 @@ const char index_html[] PROGMEM = R"rawliteral(
         return result;
       })
       .then(() => {
-        if (!rebootAfterSave) {
-          button.disabled = false;
-          showAlert('tailscale-alert', 'success', 'Tailscale saved redundantly. Reboot to connect.');
-          setTimeout(() => { toggleEditTailscale(false); loadConfig(); }, 900);
-          return;
-        }
-        showAlert('tailscale-alert', 'success', 'Tailscale saved. MeshGate is rebooting now. Reopen this page on the local address in 30–90 seconds.');
-        return fetch('/reboot', { method: 'POST' }).then(r => {
-          if (!r.ok && r.status !== 202) throw new Error('Settings were saved, but reboot could not be scheduled. Use Reboot & Start Bridge below.');
-        });
+        setTailscaleEnrollmentState('active', 'MeshGate is restarting', 'Please wait. The login opens automatically as soon as the device is back online.');
+        pollTailscaleEnrollment();
+        return fetch('/reboot', { method: 'POST' })
+          .then(r => {
+            if (!r.ok && r.status !== 202) throw new Error('Settings were saved, but reboot could not be scheduled. Use Reboot & Start Bridge below.');
+          })
+          .catch(() => {
+            // A connection reset is expected when the restart wins the race
+            // against the HTTP response. Enrollment polling determines the
+            // real result after the device returns.
+          });
       })
       .catch(err => {
         button.disabled = false;
+        tailscaleEnrollmentActive = false;
+        if (tailscaleEnrollmentTimer) {
+          clearInterval(tailscaleEnrollmentTimer);
+          tailscaleEnrollmentTimer = null;
+        }
+        setTailscaleEnrollmentState('error', 'Setup could not start', err.message || 'Network error saving Tailscale.');
         showAlert('tailscale-alert', 'error', err.message || 'Network error saving Tailscale.');
+      });
+    }
+
+    function disableTailscale() {
+      const deviceName = document.getElementById('input-tailscale-name').value.trim().toLowerCase() || 'meshgate';
+      const button = document.getElementById('btn-disable-tailscale');
+      button.disabled = true;
+      fetch('/save_tailscale', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'enabled=false&device_name=' + encodeURIComponent(deviceName)
+      })
+      .then(r => {
+        if (!r.ok) throw new Error('Could not disable Tailscale.');
+        showAlert('tailscale-alert', 'success', 'Tailscale disabled. MeshGate is restarting.');
+        return fetch('/reboot', { method: 'POST' });
+      })
+      .catch(err => {
+        button.disabled = false;
+        showAlert('tailscale-alert', 'error', err.message || 'Network error disabling Tailscale.');
       });
     }
 

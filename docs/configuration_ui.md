@@ -35,12 +35,18 @@ rebooting into normal bridge mode.
   * Independent **Save MQTT Settings** button persists settings to NVS and applies them immediately.
 * **Tailscale Card (IDF-5 Nano build):**
   * Displays enablement, live connection state, device name, assigned VPN IPv4 address, known peer count, and enrollment state.
-  * Includes a self-contained four-step setup wizard. No auth/API key is
-    copied: after save/reboot, the card displays the one-time control-plane
-    browser URL and polls automatically while the user approves the device.
+  * Includes a self-contained three-step one-click setup wizard with an
+    offline Tailscale download QR code and direct iOS, Android, Windows and
+    macOS install buttons. No auth/API key is copied.
+  * **Add This Device to Tailscale** pre-opens a browser tab from the user's
+    click, saves the configuration, reboots MeshGate, polls the local device
+    during recovery and redirects that tab to the one-time control-plane URL.
+    The original page remains open and reports approval automatically. A
+    visible login link remains as the fallback for captive browsers that block
+    popups.
   * After enrollment, displays copyable Web UI and Meshtastic PhoneAPI
-    addresses (`http://100.x/` and `100.x:4403`) plus a direct Machines link
-    for disabling device key expiry on unattended gateways.
+    addresses (`http://100.x/` and `100.x:4403`) with a short Meshtastic
+    connection instruction. Machine/key-expiry management is optional.
   * Accepts a lowercase device name. Existing legacy auth-key values remain
     write-only and preserved but are ignored by interactive enrollment.
   * Tailscale and classic WireGuard are mutually exclusive because both share the same embedded WireGuard engine.

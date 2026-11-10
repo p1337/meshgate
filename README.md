@@ -148,13 +148,14 @@ the secret values.
 ## Tailscale remote access
 
 The IDF 5 Nano build embeds a Tailscale-compatible client through MicroLink.
-Enable it in the Web UI, choose a device name, save and reboot. MeshGate then
-shows the one-time login URL returned by the Tailscale control plane. Open that
-URL, sign in and approve the device; MeshGate follows the authorization in the
-background and connects without a copied auth/API key. The four-step wizard
-also explains why the remote phone or computer needs Tailscale. The Tailscale
-card reports the assigned `100.x` address, control state, DERP readiness and
-known peers.
+The Web UI provides a three-step one-click enrollment. Install Tailscale on the
+phone or computer that will access MeshGate, choose a device name and select
+**Add This Device to Tailscale**. MeshGate saves the setting, reboots, obtains
+the one-time login URL from the Tailscale control plane and directs the already
+opened browser tab to it. Sign in and approve the device; the original MeshGate
+page keeps polling and changes to **Your device has been added** with the
+assigned `100.x:4403` Meshtastic address. No admin console, command line,
+auth key or API key is required.
 
 From another tailnet device:
 
