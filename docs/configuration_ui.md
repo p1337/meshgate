@@ -64,6 +64,11 @@ footer so the two destinations cannot diverge.
     The original page remains open and reports approval automatically. A
     visible login link remains as the fallback for captive browsers that block
     popups.
+  * The waiting tab also polls `/tailscale_status` independently. If MeshGate
+    already owns an approved persistent identity and therefore receives no new
+    login URL, the tab returns directly to the Remote VPN page instead of
+    remaining on `about:blank`. After a new approval, the original page sends
+    the same tab back to MeshGate.
   * After enrollment, displays two copyable connection values without
     repeating the IP in the lower status list: `100.x:4403` for the Meshtastic
     app, and bare `100.x` for the browser-based Meshtastic Client using HTTP
@@ -85,7 +90,10 @@ footer so the two destinations cannot diverge.
   * Shows the running firmware version and active/next application slots.
   * Checks the fixed official GitHub release channel automatically whenever a
     normal connected control page opens. The check does not install firmware
-    and is skipped in offline setup AP mode.
+    and is skipped in offline setup AP mode. If DERP or MQTTS startup has
+    temporarily fragmented internal memory, the metadata-only task uses a
+    smaller stack and the browser defers and retries the check without showing
+    an installation failure.
   * Makes both version values link to the newest-first technical changelog in
     the MeshGate repository.
   * Provides one **Check & Install Latest Release** action with visible state
@@ -106,6 +114,9 @@ footer so the two destinations cannot diverge.
     MeshGate repository (`https://github.com/p1337/meshgate`). Upstream credits
     remain in the repository documentation and are not used as the product
     footer destination.
+  * Identifies Robert Stefanowicz as the copyright holder for the MeshGate
+    extensions and links the project source and MIT license. The original
+    SourceLab.org copyright remains preserved in the repository license.
 
 ### 2. Live WiFi & BLE Scanning
 * **WiFi Scanning:** Runs asynchronously via `WiFi.scanNetworks(true)` in `WIFI_AP_STA` mode without dropping the captive portal AP connection. Discovered networks are deduplicated and ordered by signal strength (RSSI).

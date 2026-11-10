@@ -15,6 +15,15 @@ that the GitHub network banner therefore cannot show.
 - MQTT proxy architecture
 - MIT license and upstream authorship
 
+## License and attribution
+
+Commercial use, modification and redistribution are permitted under the MIT
+license. The original SourceLab.org notice remains intact. The same root
+license identifies Robert Stefanowicz as the copyright holder for the
+MeshGate-specific modifications, and both notices must remain with every copy
+or substantial portion of the software. Attribution does not imply endorsement
+of a third-party product.
+
 ## MeshGate additions
 
 | Area | Upstream baseline | MeshGate |

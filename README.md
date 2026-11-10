@@ -301,6 +301,14 @@ UI as access to those retained messages.
 
 MeshGate retains the MIT license from the upstream
 [SourceLabOrg project](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
+The original SourceLab.org copyright notice remains intact, and the root
+license additionally identifies Robert Stefanowicz as the copyright holder for
+the MeshGate modifications. Both are distributed under the same MIT terms.
+Commercial use, modification and redistribution are permitted. Every copy or
+substantial portion must retain the copyright and permission notice from the
+root [LICENSE](LICENSE), including the attribution of the MeshGate
+modifications to **Robert Stefanowicz**. This attribution does not imply that
+Robert Stefanowicz or MeshGate endorses a third-party product.
 The native Tailscale work uses
 [MicroLink](https://github.com/kaieda/microlink). The design theme is inspired
 by [MeshRadar](https://meshradar.pl/) without copying its logo or proprietary

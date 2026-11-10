@@ -784,7 +784,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 
   <div class="footer">
     Firmware Version: )rawliteral" FIRMWARE_VERSION R"rawliteral(<br>
-    <a href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(" target="_blank">View Project on GitHub</a>
+    MeshGate extensions &copy; 2026 Robert Stefanowicz (p1337)<br>
+    <a href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(" target="_blank">Project, source and MIT license on GitHub</a>
   </div>
 
   <!-- Custom In-DOM Modal for Captive Portal compatibility (macOS/iOS CNA) -->
@@ -808,6 +809,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     let tailscaleEnrollmentActive = false;
     let tailscaleAuthOpenedUrl = '';
     let visitorCounterLoaded = false;
+    let otaAutomaticCheckRetries = 0;
 
     const meshGateTabs = ['connection', 'remote', 'services', 'system'];
 
@@ -1020,6 +1022,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             document.getElementById('view-tailscale-client-address').innerText = status.vpn_ip;
             document.getElementById('link-tailscale-web-button').href = webAddress;
             if (tailscaleEnrollmentActive) {
+              redirectTailscaleWaitingWindowToDevice();
               tailscaleEnrollmentActive = false;
               if (tailscaleEnrollmentTimer) {
                 clearInterval(tailscaleEnrollmentTimer);
@@ -1121,12 +1124,25 @@ const char index_html[] PROGMEM = R"rawliteral(
       try {
         const popup = window.open('about:blank', 'meshgate-tailscale-enrollment');
         if (!popup) return null;
+        const statusUrl = window.location.origin + '/tailscale_status';
+        const deviceUrl = window.location.origin + '/#remote';
         popup.document.title = 'MeshGate · Tailscale';
         popup.document.body.style.cssText = 'margin:0;padding:32px;background:#0a0c10;color:#c8d6e5;font:16px Segoe UI,sans-serif;';
         popup.document.body.innerHTML = '<h2 style="color:#5eed97">MeshGate is preparing Tailscale…</h2><p>The device is restarting and requesting its secure one-time login. Keep this tab open.</p>';
+        const script = popup.document.createElement('script');
+        script.text = '(function poll(){fetch(' + JSON.stringify(statusUrl) + ',{cache:"no-store"}).then(function(r){return r.json();}).then(function(s){if(s.connected&&s.vpn_ip){location.replace(' + JSON.stringify(deviceUrl) + ');return;}if(s.auth_url){location.replace(s.auth_url);return;}setTimeout(poll,2000);}).catch(function(){setTimeout(poll,2000);});})();';
+        popup.document.head.appendChild(script);
         return popup;
       } catch (e) {
         return null;
+      }
+    }
+
+    function redirectTailscaleWaitingWindowToDevice() {
+      if (!tailscaleEnrollmentWindow || tailscaleEnrollmentWindow.closed) return;
+      const deviceUrl = window.location.origin + '/#remote';
+      try { tailscaleEnrollmentWindow.location.replace(deviceUrl); } catch (e) {
+        tailscaleEnrollmentWindow.location.href = deviceUrl;
       }
     }
 
@@ -2007,9 +2023,20 @@ const char index_html[] PROGMEM = R"rawliteral(
               pollOfficialOta();
               return;
             }
+            if (result.status === 503) {
+              if (otaAutomaticCheckRetries < 3) {
+                otaAutomaticCheckRetries += 1;
+                showAlert('ota-alert', 'info', 'Release check postponed while VPN and MQTT finish starting. Retrying automatically...');
+                setTimeout(checkOfficialReleaseOnConnect, 15000);
+              } else {
+                showAlert('ota-alert', 'info', 'Automatic release check postponed. Use the update button later to check manually.');
+              }
+              return;
+            }
             if (!result.ok || !result.body.success) {
               throw new Error(result.body.error || 'The release check could not be started.');
             }
+            otaAutomaticCheckRetries = 0;
             pollOfficialOta();
           });
       }).catch(err => {

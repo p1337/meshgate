@@ -438,9 +438,17 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
         }
         void* taskMode = reinterpret_cast<void*>(static_cast<uintptr_t>(
             checkOnly ? OfficialTaskMode::CheckOnly : OfficialTaskMode::Install));
-        if (xTaskCreate(officialUpdateTask, "official-ota", 10240, taskMode, 2, nullptr) != pdPASS) {
+        // A metadata-only check does not enter the flash writer or allocate the
+        // download/hash buffers. Give it a smaller internal stack so opening
+        // the control page during DERP/MQTTS startup does not fail merely
+        // because the 10 KiB install-task allocation is temporarily
+        // fragmented. The installer keeps its proven 10 KiB stack.
+        const uint32_t taskStackBytes = checkOnly ? 8192 : 10240;
+        if (xTaskCreate(officialUpdateTask, "official-ota", taskStackBytes, taskMode, 2, nullptr) != pdPASS) {
             s_updateClaimed.store(false, std::memory_order_release);
-            request->send(503, "application/json", "{\"success\":false,\"error\":\"Could not start the update task\"}");
+            request->send(503, "application/json", checkOnly
+                ? "{\"success\":false,\"error\":\"Release check deferred while network services are starting\"}"
+                : "{\"success\":false,\"error\":\"Could not start the update task\"}");
             return;
         }
         request->send(202, "application/json", checkOnly
