@@ -111,7 +111,8 @@ footer so the two destinations cannot diverge.
   * Provides the fixed €3 PayPal.Me support link for MeshGate development.
 * **Footer:**
   * Dynamically embeds the compiled Firmware Version and links only to the
-    MeshGate repository (`https://github.com/p1337/meshgate`). Upstream credits
+    MeshGate repository (`https://github.com/p1337/meshgate`). Credits for
+    [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge)
     remain in the repository documentation and are not used as the product
     footer destination.
   * Identifies Robert Stefanowicz as the copyright holder for the MeshGate

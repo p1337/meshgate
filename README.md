@@ -25,12 +25,14 @@ classic WireGuard, Prometheus metrics and an RGB IP-address indicator.
 > MeshGate is a source fork of
 > [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
 > This repository was created independently rather than with GitHub's Fork
-> button, so GitHub may not display the usual fork-network banner. Upstream's
-> MIT license and authorship are preserved.
+> button, so GitHub may not display the usual fork-network banner. The MIT
+> license and authorship of
+> [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge)
+> are preserved.
 >
 > MeshGate is built on the valuable groundwork of
 > [Crim](https://github.com/Crim), who deserves explicit credit for the
-> original idea and upstream implementation that made this project possible.
+> original idea and implementation that made this project possible.
 
 ## Contents
 
@@ -59,8 +61,9 @@ classic WireGuard, Prometheus metrics and an RGB IP-address indicator.
 
 ## Why this fork exists
 
-The upstream bridge solves local BLE-to-TCP access. MeshGate extends that idea
-for an unattended remote site:
+[SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge)
+provides local BLE-to-TCP access. MeshGate extends that idea for an unattended
+remote site:
 
 - a production ESP-IDF 5 port using Arduino Core 3.3.9, ESP-IDF 5.5.4 and
   NimBLE-Arduino 2.5.2;
@@ -278,7 +281,7 @@ transport update metadata and SHA-256 digest.
 - [User guide](docs/user_guide.md)
 - [Architecture](docs/architecture.md)
 - [Configuration UI and API](docs/configuration_ui.md)
-- [Upstream comparison](docs/upstream-differences.md)
+- [Original project comparison](docs/upstream-differences.md)
 - [Development and release process](docs/development.md)
 
 ## Verified result
@@ -302,8 +305,8 @@ UI as access to those retained messages.
 
 ## Credits and license
 
-MeshGate retains the MIT license from the upstream
-[SourceLabOrg project](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
+MeshGate retains the MIT license from
+[SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
 The original SourceLab.org copyright notice remains intact, and the root
 license additionally identifies Robert Stefanowicz as the copyright holder for
 the MeshGate modifications. Both are distributed under the same MIT terms.

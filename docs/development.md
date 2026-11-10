@@ -178,8 +178,11 @@ The connected-device UI deliberately exposes two distinct values: the native
 Meshtastic app uses `<tailscale-ip>:4403`, while the browser-based Meshtastic
 Client uses the bare `<tailscale-ip>` with HTTP selected and HTTPS disabled.
 Do not repeat the address in the lower status list. The firmware footer must
-resolve `PROJECT_GITHUB_URL` to the MeshGate repository; upstream attribution
+resolve `PROJECT_GITHUB_URL` to the MeshGate repository; attribution for
+[SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge)
 belongs in repository documentation rather than the product navigation.
+When documentation refers to this original bridge project, use that complete
+linked repository name instead of the ambiguous phrase “upstream bridge.”
 
 The embedded control page uses four client-side tab panels (`connection`,
 `remote`, `services`, and `system`). Cards remain mounted in the DOM while an

@@ -1,4 +1,4 @@
-# Fork and Upstream Differences
+# Fork and Source Project Differences
 
 MeshGate is a source fork of
 [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
@@ -6,14 +6,14 @@ The repository was imported into a new GitHub repository rather than created
 with GitHub's Fork button. This document provides the provenance and comparison
 that the GitHub network banner therefore cannot show.
 
-## Upstream foundation retained
+## Foundation retained from [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge)
 
 - ESP32 BLE client for the Meshtastic GATT service
 - transparent Meshtastic PhoneAPI transport on TCP port 4403
 - captive-portal configuration flow
 - Wi-Fi and mDNS integration
 - MQTT proxy architecture
-- MIT license and upstream authorship
+- MIT license and original authorship
 
 ## License and attribution
 
@@ -26,7 +26,7 @@ of a third-party product.
 
 ## MeshGate additions
 
-| Area | Upstream baseline | MeshGate |
+| Area | [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge) | MeshGate |
 | --- | --- | --- |
 | Remote access | Local LAN | Native Tailscale/MicroLink and classic WireGuard |
 | Runtime generation | Arduino Core 2 / ESP-IDF 4 | Additional production target on Arduino Core 3.3.9 / ESP-IDF 5.5.4 |
@@ -73,7 +73,9 @@ the platform supports it.
 
 ## Keeping the fork reviewable
 
-The `upstream` Git remote should point to the SourceLabOrg repository. New
-upstream work is reviewed and merged deliberately; the IDF 5 networking changes
-must not be replaced by an unreviewed bulk merge because they include required
-lwIP thread-affinity and DERP-path correctness fixes.
+The `upstream` Git remote should point to
+[SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
+New work from that original project is reviewed and merged deliberately; the
+IDF 5 networking changes must not be replaced by an unreviewed bulk merge
+because they include required lwIP thread-affinity and DERP-path correctness
+fixes.

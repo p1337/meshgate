@@ -13,7 +13,7 @@ are intentionally omitted.
 - Reduced the metadata-only release-check task stack and made automatic checks
   defer and retry quietly during transient DERP/MQTTS startup memory pressure.
 - Added the MeshGate modification copyright attribution to the embedded
-  control interface while retaining the upstream SourceLab.org notice.
+  control interface while retaining the original SourceLab.org notice.
 
 ## [v0.7.9] - 2026-11-10
 
