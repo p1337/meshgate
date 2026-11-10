@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0a0c10">
   <title>MeshGate Web Flasher</title>
-  <link rel="icon" type="image/png" href="assets/meshgate-logo.png">
+  <link rel="icon" type="image/png" href="assets/meshgate-logo.png?v=0.7.7">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet">
@@ -16,7 +16,7 @@
     body { margin:0; min-height:100vh; background:radial-gradient(circle at top,#111a24 0,#0a0c10 46%); color:var(--text); font-family:var(--sans); line-height:1.55; }
     main { width:min(940px,calc(100% - 32px)); margin:0 auto; padding:46px 0 64px; }
     header { padding:28px 24px; border:1px solid var(--border); background:linear-gradient(135deg,var(--panel),var(--panel2)); box-shadow:0 18px 50px rgba(0,0,0,.28); }
-    .brand-logo { display:block; width:min(100%,650px); height:auto; margin:0; }
+    .brand-logo { display:block; width:100%; max-width:650px; height:auto; aspect-ratio:900/296; object-fit:contain; margin:0; }
     .kicker,.version { color:var(--dim); font:500 12px var(--mono); letter-spacing:.16em; text-transform:uppercase; }
     .kicker { margin:0 0 10px; }
     .version { margin:12px 0 0; }
@@ -47,7 +47,7 @@
   <main>
     <header>
       <p class="kicker">Meshtastic remote access gateway</p>
-      <img class="brand-logo" src="assets/meshgate-logo.png" alt="MeshGate">
+      <img class="brand-logo" src="assets/meshgate-logo.png?v=0.7.7" width="900" height="296" decoding="sync" alt="MeshGate">
       <p class="lede">Flash an ESP32 bridge that turns a Bluetooth-only Meshtastic radio into a local or Tailscale-reachable TCP node.</p>
       <p class="version" id="version-display">Zero-install WebSerial flasher</p>
     </header>

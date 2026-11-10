@@ -26,7 +26,11 @@ The header and browser icon use the official transparent MeshGate logo from
 `web/assets/meshgate-logo.png`. PlatformIO embeds those exact PNG bytes in the
 firmware, and `GET /assets/meshgate-logo.png` serves them locally. The setup AP
 therefore displays the same identity as GitHub and the Web Flasher without an
-internet dependency.
+internet dependency. The embedded PNG must remain below 100 KiB and declare
+its pixel dimensions in HTML: a larger response can monopolize the constrained
+AsyncTCP/Tailscale output path after a mobile browser interrupts the download.
+The image URL carries the firmware version as its cache key so an OTA cannot
+reuse a failed response from an older build.
 
 * **WiFi Network Card:**
   * Displays the current configured SSID, masked password status, live WiFi connection status pill (`Connected` / `AP Mode` / `Disconnected` / `Not Configured`), active IP address, advertised mDNS hostname (e.g. `dsc-ae28.local`), and live WiFi RSSI signal strength with colored quality pill (`Excellent` / `Good` / `Fair` / `Weak`).

@@ -305,7 +305,12 @@ GitHub Pages Web Flasher and embedded device UI must reference that same file;
 do not create divergent copies or redraw it. The linker exposes the embedded
 asset as `_binary_web_assets_meshgate_logo_png_start` and `_end`, and the
 device serves it at `/assets/meshgate-logo.png`. Keep this route local so the
-captive portal remains usable without internet access.
+captive portal remains usable without internet access. Keep the committed PNG
+at or below 100 KiB and include its exact width and height in both HTML views.
+Large image responses can occupy the constrained AsyncTCP/Tailscale send path
+long enough to delay `/status` and Meshtastic clients after an interrupted
+mobile download. Change the firmware-version query string whenever the asset
+changes so browser caches cannot retain a failed older response.
 
 ---
 ## 9. Releasing a New Version

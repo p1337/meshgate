@@ -4,6 +4,14 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.7] - 2026-11-10
+
+- Reduced the embedded logo payload from 346 KB to 75 KB while preserving its
+  transparent appearance, preventing large image transfers from stalling HTTP
+  diagnostics and competing with Meshtastic traffic over Tailscale DERP.
+- Added explicit image dimensions and a firmware-version cache key so mobile
+  browsers recover cleanly from an interrupted or previously cached logo load.
+
 ## [v0.7.6] - 2026-11-10
 
 - Embedded the canonical MeshGate logo in firmware flash and added the local
