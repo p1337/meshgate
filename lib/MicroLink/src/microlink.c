@@ -152,8 +152,8 @@ esp_err_t microlink_factory_reset(void) {
  * ========================================================================== */
 
 microlink_t *microlink_init(const microlink_config_t *config) {
-    if (!config || !config->auth_key) {
-        ESP_LOGE(TAG, "Invalid config: auth_key required");
+    if (!config) {
+        ESP_LOGE(TAG, "Invalid config");
         return NULL;
     }
 
@@ -178,6 +178,7 @@ microlink_t *microlink_init(const microlink_config_t *config) {
     ml->config.enable_derp = true;  /* Always need DERP for relay */
 
     ml->state = ML_STATE_IDLE;
+    ml->auth_url_mux = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
     ml->coord_sock = -1;
     ml->disco_sock4 = -1;
     ml->disco_sock6 = -1;
@@ -215,10 +216,13 @@ microlink_t *microlink_init(const microlink_config_t *config) {
      * into ml->nvs_* buffers so the const char* pointers remain valid. */
     if (ml->config_httpd) {
         const char *nvs_auth = ml_config_get_auth_key(ml->config_httpd);
-        if (nvs_auth) {
+        if (nvs_auth && !ml->config.interactive_login) {
             strncpy(ml->nvs_auth_key, nvs_auth, sizeof(ml->nvs_auth_key) - 1);
             ml->config.auth_key = ml->nvs_auth_key;
             ESP_LOGI(TAG, "Auth key overridden from NVS (len=%d)", (int)strlen(nvs_auth));
+        } else if (ml->config.interactive_login) {
+            ml->config.auth_key = NULL;
+            ESP_LOGI(TAG, "Interactive browser enrollment enabled (stored auth keys ignored)");
         }
         /* Device name: full name takes priority, then prefix+MAC, then Kconfig */
         const char *nvs_full_name = ml_config_get_device_name_full(ml->config_httpd);
@@ -609,6 +613,16 @@ bool microlink_is_derp_connected(const microlink_t *ml) {
 
 uint32_t microlink_get_vpn_ip(const microlink_t *ml) {
     return ml ? ml->vpn_ip : 0;
+}
+
+esp_err_t microlink_get_auth_url(const microlink_t *ml, char *buffer, size_t buffer_size) {
+    if (!ml || !buffer || buffer_size == 0) return ESP_ERR_INVALID_ARG;
+    microlink_t *mutable_ml = (microlink_t *)ml;
+    taskENTER_CRITICAL(&mutable_ml->auth_url_mux);
+    strncpy(buffer, ml->auth_url, buffer_size - 1);
+    buffer[buffer_size - 1] = '\0';
+    taskEXIT_CRITICAL(&mutable_ml->auth_url_mux);
+    return buffer[0] ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
 int microlink_get_peer_count(const microlink_t *ml) {

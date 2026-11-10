@@ -27,6 +27,7 @@ typedef struct microlink_s microlink_t;
 typedef struct {
     const char *auth_key;       /* Tailscale auth key (tskey-auth-...) */
     const char *device_name;    /* Device hostname on the tailnet */
+    bool interactive_login;     /* Ignore stored auth keys; expose browser AuthURL */
     bool enable_derp;           /* Enable DERP relay (default: true) */
     bool enable_stun;           /* Enable STUN endpoint discovery */
     bool enable_disco;          /* Enable DISCO NAT traversal */
@@ -62,6 +63,7 @@ typedef enum {
     ML_STATE_WIFI_WAIT,
     ML_STATE_CONNECTING,
     ML_STATE_REGISTERING,
+    ML_STATE_NEEDS_LOGIN,
     ML_STATE_CONNECTED,
     ML_STATE_RECONNECTING,
     ML_STATE_ERROR,
@@ -157,6 +159,19 @@ bool microlink_is_derp_connected(const microlink_t *ml);
  * @return VPN IP in host byte order, 0 if not yet assigned
  */
 uint32_t microlink_get_vpn_ip(const microlink_t *ml);
+
+/**
+ * @brief Copy the pending interactive browser-login URL.
+ * @param ml Handle
+ * @param buffer Destination buffer
+ * @param buffer_size Destination size including the terminating NUL
+ * @return ESP_OK when a URL is available, ESP_ERR_NOT_FOUND otherwise
+ *
+ * The URL is supplied by the Tailscale control plane when a node starts
+ * without an auth key. It is intentionally kept in RAM only and cleared
+ * after authorization succeeds.
+ */
+esp_err_t microlink_get_auth_url(const microlink_t *ml, char *buffer, size_t buffer_size);
 
 /**
  * @brief Get number of known peers

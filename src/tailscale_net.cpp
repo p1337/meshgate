@@ -48,17 +48,13 @@ void tailscale_net_start(const BridgeConfig& cfg) {
 
 #ifndef ESP_IDF5_MIGRATION_BUILD
     log_e("[Tailscale] Requires the arduino_nano_esp32_idf5 firmware");
-    s_state.store(6, std::memory_order_relaxed);
+    s_state.store(7, std::memory_order_relaxed);
 #else
-    if (cfg.tailscale_auth_key.isEmpty()) {
-        log_e("[Tailscale] Enabled but no auth key is stored");
-        s_state.store(ML_STATE_ERROR, std::memory_order_relaxed);
-        return;
-    }
-
     // MicroLink stores pointers to these values, so keep private static copies
     // for the complete lifetime of the asynchronous client.
-    s_authKey = cfg.tailscale_auth_key;
+    // Browser enrollment is the default. Keep the legacy configuration field
+    // readable for non-destructive migration, but do not transmit it.
+    s_authKey = "";
     s_deviceName = cfg.tailscale_device_name;
     if (s_deviceName.isEmpty()) {
         s_deviceName = microlink_default_device_name();
@@ -67,6 +63,7 @@ void tailscale_net_start(const BridgeConfig& cfg) {
     microlink_config_t config = {};
     config.auth_key = s_authKey.c_str();
     config.device_name = s_deviceName.c_str();
+    config.interactive_login = true;
     config.enable_derp = true;
     config.enable_stun = true;
     config.enable_disco = true;
@@ -113,10 +110,10 @@ bool tailscale_net_is_derp_connected() {
 String tailscale_net_state_name() {
     static const char* names[] = {
         "idle", "wifi_wait", "connecting", "registering",
-        "connected", "reconnecting", "error"
+        "needs_login", "connected", "reconnecting", "error"
     };
     const int state = s_state.load(std::memory_order_relaxed);
-    return (state >= 0 && state < 7) ? String(names[state]) : String("unknown");
+    return (state >= 0 && state < 8) ? String(names[state]) : String("unknown");
 }
 
 String tailscale_net_vpn_ip() {
@@ -129,6 +126,18 @@ String tailscale_net_vpn_ip() {
 #else
     return String();
 #endif
+}
+
+String tailscale_net_auth_url() {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    if (s_microlink != nullptr) {
+        char url[256] = {};
+        if (microlink_get_auth_url(s_microlink, url, sizeof(url)) == ESP_OK) {
+            return String(url);
+        }
+    }
+#endif
+    return String();
 }
 
 int tailscale_net_peer_count() {

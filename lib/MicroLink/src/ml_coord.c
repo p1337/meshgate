@@ -703,6 +703,14 @@ static int do_register(microlink_t *ml, ml_noise_state_t *noise) {
     snprintf(key_str, sizeof(key_str), "nodekey:%s", key_hex);
     cJSON_AddStringToObject(root, "NodeKey", key_str);
 
+    char followup_url[sizeof(ml->auth_url)] = {0};
+    taskENTER_CRITICAL(&ml->auth_url_mux);
+    strncpy(followup_url, ml->auth_url, sizeof(followup_url) - 1);
+    taskEXIT_CRITICAL(&ml->auth_url_mux);
+    if (followup_url[0]) {
+        cJSON_AddStringToObject(root, "Followup", followup_url);
+    }
+
     /* Auth - only include if auth_key is valid (matching v1 behavior) */
     if (ml->config.auth_key && strlen(ml->config.auth_key) > 0) {
         cJSON *auth = cJSON_CreateObject();
@@ -894,8 +902,9 @@ static int do_register(microlink_t *ml, ml_noise_state_t *noise) {
     if (resp_total == 0) {
         ESP_LOGW(TAG, "No DATA frame in RegisterResponse");
         free(resp_buf);
-        /* Not fatal - server may just return headers-only 200 */
-        return 0;
+        /* A Followup request is a control-plane long poll. A receive timeout
+         * simply means browser approval is still pending. */
+        return followup_url[0] ? 1 : 0;
     }
 
     uint8_t *json_data = resp_buf;
@@ -946,6 +955,33 @@ static int do_register(microlink_t *ml, ml_noise_state_t *noise) {
     }
     parse_start[parse_len] = saved;
     free(resp_buf);
+
+    cJSON *register_error = cJSON_GetObjectItem(resp_json, "Error");
+    if (register_error && cJSON_IsString(register_error) &&
+        register_error->valuestring && register_error->valuestring[0]) {
+        ESP_LOGE(TAG, "Registration rejected: %s", register_error->valuestring);
+        cJSON_Delete(resp_json);
+        return -1;
+    }
+
+    cJSON *auth_url = cJSON_GetObjectItem(resp_json, "AuthURL");
+    if (auth_url && cJSON_IsString(auth_url) && auth_url->valuestring && auth_url->valuestring[0]) {
+        taskENTER_CRITICAL(&ml->auth_url_mux);
+        strncpy(ml->auth_url, auth_url->valuestring, sizeof(ml->auth_url) - 1);
+        ml->auth_url[sizeof(ml->auth_url) - 1] = '\0';
+        taskEXIT_CRITICAL(&ml->auth_url_mux);
+        ml->state = ML_STATE_NEEDS_LOGIN;
+        ESP_LOGI(TAG, "Interactive login required: %s", auth_url->valuestring);
+        if (ml->state_cb) {
+            ml->state_cb(ml, ML_STATE_NEEDS_LOGIN, ml->state_cb_data);
+        }
+        cJSON_Delete(resp_json);
+        return 1;
+    }
+
+    taskENTER_CRITICAL(&ml->auth_url_mux);
+    ml->auth_url[0] = '\0';
+    taskEXIT_CRITICAL(&ml->auth_url_mux);
 
     /* Extract our VPN IP from Node.Addresses */
     cJSON *node = cJSON_GetObjectItem(resp_json, "Node");
@@ -2262,12 +2298,21 @@ void ml_coord_task(void *arg) {
 
         case COORD_REGISTER:
             ESP_LOGI(TAG, "Registering...");
-            if (do_register(ml, &noise) < 0) {
+            {
+                const int register_result = do_register(ml, &noise);
+                if (register_result > 0) {
+                    /* Re-open the Noise/H2 session and repeat with Followup.
+                     * The server then waits for the browser authorization. */
+                    state = COORD_RECONNECTING;
+                    break;
+                }
+                if (register_result < 0) {
                 ESP_LOGE(TAG, "Registration failed");
                 ml_close_sock(ml->coord_sock);
                 ml->coord_sock = -1;
                 state = COORD_RECONNECTING;
                 break;
+                }
             }
             state = COORD_FETCH_PEERS;
             break;
@@ -2550,13 +2595,17 @@ void ml_coord_task(void *arg) {
 
         case COORD_RECONNECTING:
             {
-                uint32_t backoff_ms = 1000 << (reconnect_attempts > 4 ? 4 : reconnect_attempts);
+                taskENTER_CRITICAL(&ml->auth_url_mux);
+                const bool awaiting_login = ml->auth_url[0] != '\0';
+                taskEXIT_CRITICAL(&ml->auth_url_mux);
+                uint32_t backoff_ms = awaiting_login ? 1000 :
+                    (1000 << (reconnect_attempts > 4 ? 4 : reconnect_attempts));
                 if (backoff_ms > ML_CTRL_BACKOFF_MAX_MS) backoff_ms = ML_CTRL_BACKOFF_MAX_MS;
 
                 ESP_LOGI(TAG, "Reconnecting in %lu ms (attempt %d)",
                          (unsigned long)backoff_ms, reconnect_attempts + 1);
 
-                ml->state = ML_STATE_RECONNECTING;
+                if (!awaiting_login) ml->state = ML_STATE_RECONNECTING;
 
                 /* Wait on command queue with backoff timeout (interruptible!) */
                 ml_coord_cmd_t wake_cmd;
@@ -2568,7 +2617,7 @@ void ml_coord_task(void *arg) {
                     }
                 }
 
-                reconnect_attempts++;
+                if (!awaiting_login) reconnect_attempts++;
 
                 /* Close old connection */
                 if (ml->coord_sock >= 0) {

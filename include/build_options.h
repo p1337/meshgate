@@ -91,6 +91,19 @@
 #define BRIDGE_QUEUE_SIZE 32
 #endif
 
+// Number of raw FromRadio protobufs retained for the browser HTTP PhoneAPI.
+// This queue is independent from the immediately drained TCP broadcast queue;
+// it must absorb packets while a browser completes each HTTP polling round trip.
+#ifndef HTTP_PHONEAPI_QUEUE_SIZE
+#define HTTP_PHONEAPI_QUEUE_SIZE 8
+#endif
+
+// The browser transport polls every three seconds. After this idle period the
+// HTTP session is considered gone and its stale FromRadio queue is discarded.
+#ifndef HTTP_PHONEAPI_ACTIVE_TIMEOUT_MS
+#define HTTP_PHONEAPI_ACTIVE_TIMEOUT_MS 15000
+#endif
+
 // -----------------------------------------
 // MQTT Gateway Settings
 // -----------------------------------------
@@ -128,7 +141,10 @@
 // Firmware & Project Info
 // -----------------------------------------
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "v1.0.0-dev"
+// Keep main on the next real release version. The release workflow injects
+// the matching Git tag during its clean build. MeshGate does not distribute
+// versionless/dev OTA images to end users.
+#define FIRMWARE_VERSION "v0.7.0"
 #endif
 
 #ifndef HARDWARE_BOARD_NAME

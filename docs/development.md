@@ -67,6 +67,12 @@ The resulting OTA image is
 NimBLE-Arduino 1.x in this environment; it is retained only for the IDF-4
 recovery profiles.
 
+Production-profile builds report the next real release version from
+`FIRMWARE_VERSION`; MeshGate does not distribute `-dev` OTA images. Bump that
+value before building an end-user image and create the identical SemVer Git
+tag. The release workflow injects the tag again in its clean build, preventing
+the published binary and release name from diverging.
+
 ## 4. Flashing the ESP32
 1. Plug your ESP32-S3 into your Mac via USB.
 2. In the IntelliJ terminal, run:
@@ -127,10 +133,12 @@ build_flags =
 - `BLUETOOTH_MAX_DEVICES_DISCOVERABLE`: Maximum number of BLE devices to keep in memory from discovery scan. (Default: `60`).
 - `WIFI_MAX_NETWORKS_DISCOVERABLE`: Maximum number of WiFi networks to keep in memory from discovery scan. (Default: `30`).
 - `BRIDGE_QUEUE_SIZE`: Capacity of the bidirectional FreeRTOS queues between BLE and TCP tasks. (Default: `32`).
+- `HTTP_PHONEAPI_QUEUE_SIZE`: Capacity of the dedicated BLE-to-HTTP polling queue. (Default: `8`).
+- `HTTP_PHONEAPI_ACTIVE_TIMEOUT_MS`: HTTP client activity window before stale queued packets are cleared. (Default: `15000`).
 - `MQTT_QUEUE_SIZE`: Capacity of the static MQTT downlink queue. (Default: `16`).
 
 ### Static FreeRTOS Queues & RAM Sizing Math
-All FreeRTOS queues (`tcp_to_ble_queue`, `ble_to_tcp_queue`, and `mqtt_to_ble_queue`) are statically allocated in the `.bss` segment using `xQueueCreateStatic` to prevent runtime dynamic heap fragmentation and eliminate Out-Of-Memory crashes.
+All FreeRTOS queues (`tcp_to_ble_queue`, `ble_to_tcp_queue`, `ble_to_http_queue`, and `mqtt_to_ble_queue`) are statically allocated in the `.bss` segment using `xQueueCreateStatic` to prevent runtime dynamic heap fragmentation and eliminate Out-Of-Memory crashes.
 
 Each `BridgePacket` holds a 576-byte payload plus length metadata ($\approx 584\text{ bytes}$).
 
@@ -160,6 +168,13 @@ three-client TCP stress test.
 `GET /tailscale_status` must show both `connected: true` and
 `derp_connected: true`. The first value alone only proves Tailscale control-plane
 registration and does not prove that HTTP or TCP 4403 can traverse the tailnet.
+
+Interactive enrollment follows the native Tailscale registration protocol.
+An unauthenticated RegisterResponse supplies `AuthURL`; MicroLink holds it in
+RAM, exposes it through `microlink_get_auth_url()`, and sends it in the next
+RegisterRequest as `Followup`. Receive timeouts during this control-plane long
+poll mean approval is still pending, not registration success. Do not persist
+the URL or replace this flow with copied OAuth/API credentials.
 
 The vendored MicroLink WireGuard-interface initialization must retain its
 TCPIP-core lock around raw lwIP `netif`/PCB registration. On ESP-IDF 5, removing
@@ -262,15 +277,17 @@ The project is fully automated using GitHub Actions. To release a new firmware v
 Follow these steps to trigger the CI/CD pipeline:
 
 1. **Commit your code to `main`**: Ensure all your local changes are pushed to the `main` branch.
-2. **Tag the release**: Create a SemVer-compliant git tag (e.g., `v1.2.0`) and push it to GitHub:
+2. **Set the release version**: Update `FIRMWARE_VERSION` in
+   `include/build_options.h` to the exact SemVer version being released.
+3. **Tag the release**: Create the identical SemVer Git tag (e.g., `v1.2.0`) and push it to GitHub:
    ```bash
    git tag v1.2.0
    git push origin v1.2.0
    ```
-3. **Wait for the Release Pipeline**:
+4. **Wait for the Release Pipeline**:
    * Navigate to the **Actions** tab on your GitHub repository.
    * The **Release Firmware** workflow injects the tag into the firmware, builds the Arduino Nano ESP32 IDF-5 production profile, publishes its ZIP, OTA/factory binaries and SHA-256 checksums, and creates a public GitHub Release.
-4. **Wait for the Web Flasher Pipeline**:
+5. **Wait for the Web Flasher Pipeline**:
    * Successful completion of the release workflow automatically triggers **Deploy Web Flasher to GitHub Pages**. A `workflow_run` trigger is used because releases created with `GITHUB_TOKEN` do not emit another ordinary workflow event.
    * It will securely download the release binaries, automatically generate the `manifest.json` configurations for ESP Web Tools, and deploy them to `https://p1337.github.io/meshgate/`.
    * It also creates `latest_ota.json` with the production OTA image URL, exact

@@ -33,16 +33,18 @@ SystemTelemetrySnapshot diag_telemetry_get_snapshot() {
 void diag_telemetry_format_serial(const SystemTelemetrySnapshot& s, char* buf, size_t maxLen) {
     snprintf(buf, maxLen,
              "[Diag] Heap: %u KB (Min: %u KB, MaxBlock: %u KB) | WiFi: %d dBm | TCP: %zu | "
-             "Traffic: [BLE Rx:%u/Tx:%u (inv:%u), TCP Rx:%u/Tx:%u (inv:%u), MQTT Rx:%u/Tx:%u (inv:%u)] | "
-             "Queues: [T->B: %zu/%zu (d:%u), B->T: %zu/%zu (d:%u), M->B: %zu/%zu (d:%u)] | "
+             "Traffic: [BLE Rx:%u/Tx:%u (inv:%u), TCP Rx:%u/Tx:%u (inv:%u), HTTP Rx:%u/Tx:%u (inv:%u), MQTT Rx:%u/Tx:%u (inv:%u)] | "
+             "Queues: [T->B: %zu/%zu (d:%u), B->T: %zu/%zu (d:%u), B->H: %zu/%zu (d:%u), M->B: %zu/%zu (d:%u)] | "
              "Stacks: [BLE: %u B, Net: %u B] | MQTT: %s",
              s.heap_free_bytes / 1024, s.heap_min_free_bytes / 1024, s.heap_max_alloc_bytes / 1024,
              (int)s.wifi_rssi, s.bridge.connected_tcp_clients,
              s.bridge.ble_rx_count, s.bridge.ble_tx_count, s.bridge.ble_invalid_count,
              s.bridge.tcp_rx_count, s.bridge.tcp_tx_count, s.bridge.tcp_invalid_count,
+             s.bridge.http_rx_count, s.bridge.http_tx_count, s.bridge.http_invalid_count,
              s.mqtt.msgs_received, s.mqtt.msgs_published, s.mqtt.msgs_invalid,
              s.bridge.tcp_to_ble_waiting, s.bridge.tcp_to_ble_capacity, s.bridge.tcp_to_ble_dropped,
              s.bridge.ble_to_tcp_waiting, s.bridge.ble_to_tcp_capacity, s.bridge.ble_to_tcp_dropped,
+             s.bridge.ble_to_http_waiting, s.bridge.ble_to_http_capacity, s.bridge.ble_to_http_dropped,
              s.bridge.mqtt_to_ble_waiting, s.bridge.mqtt_to_ble_capacity, s.bridge.mqtt_to_ble_dropped,
              s.bridge.ble_task_stack_free_bytes, s.bridge.net_task_stack_free_bytes,
              s.mqtt.state_str.c_str());
@@ -91,6 +93,14 @@ void diag_telemetry_format_json(const SystemTelemetrySnapshot& s, Print& out) {
     out.print(s.bridge.tcp_tx_count);
     out.print(",\"invalid_count\":");
     out.print(s.bridge.tcp_invalid_count);
+    out.print("},\"http_phoneapi\":{\"active\":");
+    out.print(s.bridge.http_phoneapi_active ? "true" : "false");
+    out.print(",\"rx_count\":");
+    out.print(s.bridge.http_rx_count);
+    out.print(",\"tx_count\":");
+    out.print(s.bridge.http_tx_count);
+    out.print(",\"invalid_count\":");
+    out.print(s.bridge.http_invalid_count);
     out.print("},\"traffic\":{\"ble\":{\"rx\":");
     out.print(s.bridge.ble_rx_count);
     out.print(",\"tx\":");
@@ -103,6 +113,12 @@ void diag_telemetry_format_json(const SystemTelemetrySnapshot& s, Print& out) {
     out.print(s.bridge.tcp_tx_count);
     out.print(",\"invalid\":");
     out.print(s.bridge.tcp_invalid_count);
+    out.print("},\"http\":{\"rx\":");
+    out.print(s.bridge.http_rx_count);
+    out.print(",\"tx\":");
+    out.print(s.bridge.http_tx_count);
+    out.print(",\"invalid\":");
+    out.print(s.bridge.http_invalid_count);
     out.print("},\"mqtt\":{\"rx\":");
     out.print(s.mqtt.msgs_received);
     out.print(",\"tx\":");
@@ -121,6 +137,12 @@ void diag_telemetry_format_json(const SystemTelemetrySnapshot& s, Print& out) {
     out.print(s.bridge.ble_to_tcp_capacity);
     out.print(",\"dropped\":");
     out.print(s.bridge.ble_to_tcp_dropped);
+    out.print("},\"ble_to_http\":{\"waiting\":");
+    out.print(s.bridge.ble_to_http_waiting);
+    out.print(",\"capacity\":");
+    out.print(s.bridge.ble_to_http_capacity);
+    out.print(",\"dropped\":");
+    out.print(s.bridge.ble_to_http_dropped);
     out.print("},\"mqtt_to_ble\":{\"waiting\":");
     out.print(s.bridge.mqtt_to_ble_waiting);
     out.print(",\"capacity\":");
@@ -235,6 +257,8 @@ void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& o
     out.println(s.bridge.ble_rx_count);
     out.print("meshbridge_messages_rx_total{channel=\"tcp\"} ");
     out.println(s.bridge.tcp_rx_count);
+    out.print("meshbridge_messages_rx_total{channel=\"http\"} ");
+    out.println(s.bridge.http_rx_count);
     out.print("meshbridge_messages_rx_total{channel=\"mqtt\"} ");
     out.println(s.mqtt.msgs_received);
 
@@ -244,6 +268,8 @@ void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& o
     out.println(s.bridge.ble_tx_count);
     out.print("meshbridge_messages_tx_total{channel=\"tcp\"} ");
     out.println(s.bridge.tcp_tx_count);
+    out.print("meshbridge_messages_tx_total{channel=\"http\"} ");
+    out.println(s.bridge.http_tx_count);
     out.print("meshbridge_messages_tx_total{channel=\"mqtt\"} ");
     out.println(s.mqtt.msgs_published);
 
@@ -253,6 +279,8 @@ void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& o
     out.println(s.bridge.ble_invalid_count);
     out.print("meshbridge_messages_invalid_total{channel=\"tcp\"} ");
     out.println(s.bridge.tcp_invalid_count);
+    out.print("meshbridge_messages_invalid_total{channel=\"http\"} ");
+    out.println(s.bridge.http_invalid_count);
     out.print("meshbridge_messages_invalid_total{channel=\"mqtt\"} ");
     out.println(s.mqtt.msgs_invalid);
     out.println();
@@ -264,6 +292,8 @@ void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& o
     out.println(s.bridge.tcp_to_ble_waiting);
     out.print("meshbridge_queue_messages{queue=\"ble_to_tcp\"} ");
     out.println(s.bridge.ble_to_tcp_waiting);
+    out.print("meshbridge_queue_messages{queue=\"ble_to_http\"} ");
+    out.println(s.bridge.ble_to_http_waiting);
     out.print("meshbridge_queue_messages{queue=\"mqtt_to_ble\"} ");
     out.println(s.bridge.mqtt_to_ble_waiting);
 
@@ -273,6 +303,8 @@ void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& o
     out.println(s.bridge.tcp_to_ble_capacity);
     out.print("meshbridge_queue_capacity{queue=\"ble_to_tcp\"} ");
     out.println(s.bridge.ble_to_tcp_capacity);
+    out.print("meshbridge_queue_capacity{queue=\"ble_to_http\"} ");
+    out.println(s.bridge.ble_to_http_capacity);
     out.print("meshbridge_queue_capacity{queue=\"mqtt_to_ble\"} ");
     out.println(s.bridge.mqtt_to_ble_capacity);
 
@@ -282,6 +314,8 @@ void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& o
     out.println(s.bridge.tcp_to_ble_dropped);
     out.print("meshbridge_queue_dropped_total{queue=\"ble_to_tcp\"} ");
     out.println(s.bridge.ble_to_tcp_dropped);
+    out.print("meshbridge_queue_dropped_total{queue=\"ble_to_http\"} ");
+    out.println(s.bridge.ble_to_http_dropped);
     out.print("meshbridge_queue_dropped_total{queue=\"mqtt_to_ble\"} ");
     out.println(s.bridge.mqtt_to_ble_dropped);
     out.println();

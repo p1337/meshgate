@@ -26,8 +26,8 @@ struct BridgeConfig {
     String wireguard_public_key;
     String wireguard_preshared_key;
 
-    // Native Tailscale settings. The auth key is write-only and is never
-    // returned by an HTTP endpoint or written to logs.
+    // Native Tailscale settings. Interactive browser enrollment does not use
+    // an auth key. The legacy field remains write-only for migration only.
     bool tailscale_enabled;
     String tailscale_device_name;
     String tailscale_auth_key;

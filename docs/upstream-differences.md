@@ -22,7 +22,7 @@ that the GitHub network banner therefore cannot show.
 | Remote access | Local LAN | Native Tailscale/MicroLink and classic WireGuard |
 | Runtime generation | Arduino Core 2 / ESP-IDF 4 | Additional production target on Arduino Core 3.3.9 / ESP-IDF 5.5.4 |
 | BLE stack | NimBLE-Arduino 1.x | NimBLE-Arduino 2.5.2 in the IDF 5 target |
-| Tailscale data plane | Not present | Coordination, DERP, WireGuard, peer status and TCP/HTTP access |
+| Tailscale data plane | Not present | Coordination, keyless browser enrollment, DERP, WireGuard, peer status and TCP/HTTP access |
 | lwIP delivery | Not applicable | Decrypted packets are queued onto the lwIP TCPIP thread |
 | Mobile relay routing | Not applicable | DERP remains authoritative until DISCO proves a direct endpoint |
 | Concurrent TLS | One broker path | Remote-first startup plus PSRAM-backed large mbedTLS buffers for DERP and MQTTS |
@@ -30,7 +30,7 @@ that the GitHub network banner therefore cannot show.
 | Reliability | Normal reconnect behavior | Redundant NVS, task watchdog, scheduled restart and outage recovery |
 | Diagnostics | Serial / UI status | Remote log ring, JSON status, OpenMetrics and controlled reboot API |
 | BLE recovery | Saved address | Service/name rediscovery for rotating nRF52 private addresses |
-| Secret handling | Configuration storage | Write-only BLE PIN, VPN keys, auth key and OTA token APIs |
+| Secret handling | Configuration storage | Browser-based Tailscale enrollment plus write-only BLE PIN, VPN keys and OTA token APIs |
 | Hardware | Existing ESP32 targets | Arduino Nano ESP32 recovery and IDF 5 production profiles |
 | Interface | Light card UI | Self-contained MeshRadar-inspired dark operations UI |
 

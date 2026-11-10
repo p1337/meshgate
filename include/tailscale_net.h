@@ -9,6 +9,7 @@ bool tailscale_net_is_connected();
 bool tailscale_net_is_derp_connected();
 String tailscale_net_state_name();
 String tailscale_net_vpn_ip();
+String tailscale_net_auth_url();
 int tailscale_net_peer_count();
 String tailscale_net_peer_ip(int index);
 String tailscale_net_peer_name(int index);

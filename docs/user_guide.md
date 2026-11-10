@@ -32,28 +32,43 @@ Use Tailscale or another authenticated VPN for TCP 4403. Meshtastic PhoneAPI
 over TCP is plaintext and must never be exposed directly to the public
 internet.
 
+Browser-based Meshtastic clients use the HTTP PhoneAPI instead. Choose
+**HTTP**, enter the MeshGate LAN or Tailscale IP without `:4403`, and leave
+HTTPS disabled. The browser client itself must be opened over HTTP for this
+connection; an HTTPS page is not allowed to call an HTTP device because of
+browser mixed-content rules. CORS and Private Network Access preflights are
+handled by MeshGate. The Tailscale tunnel still encrypts remote traffic.
+
 ### Native Tailscale on the IDF 5 Nano build
 
 The `arduino_nano_esp32_idf5` image can join a tailnet directly through
 MicroLink. No public IP, dynamic DNS, inbound firewall rule or additional Linux
 computer is required.
 
-1. Open the MeshGate Web UI on the local network.
-2. In **Tailscale Remote Access**, enable Tailscale, choose a lowercase device
-   name and paste an enrollment auth key.
-3. Save and reboot.
-4. Wait until the status reports both control-plane connectivity and a ready
-   DERP data channel.
-5. From another tailnet device, open `http://<tailscale-ip>/` and configure the
-   Meshtastic app manually as `<tailscale-ip>:4403`.
+The Web UI contains a four-step keyless wizard:
+
+1. Install Tailscale on the phone or computer that will access MeshGate and
+   sign in to the intended tailnet.
+2. In **Tailscale Remote Access**, enable Tailscale and choose a lowercase
+   MeshGate device name. No auth key or API key is required.
+3. Select **Save & Reboot**, then reopen the local MeshGate page. Select
+   **Connect with Tailscale** and approve the device in the normal browser.
+4. Keep the MeshGate page open while it checks authorization automatically.
+   Verify **Connected**, a `100.x` IP and a ready remote path.
+
+The connected card then displays and copies both addresses needed remotely:
+`http://<tailscale-ip>/` for MeshGate and `<tailscale-ip>:4403` for the
+Meshtastic app. On the remote phone or computer, Tailscale must be active and
+signed into the same tailnet.
 
 mDNS is link-local and normally does not cross a VPN. Manual IP entry is
 therefore expected. A machine appearing in the Tailscale console proves only
 registration; successful HTTP or TCP 4403 traffic proves the data plane.
 
-Enrollment auth keys can expire, but the joined machine continues using its
-own node key. For a trusted unattended gateway, review and disable device key
-expiry in the Tailscale Machines page after enrollment.
+The login URL is temporary and is never stored. The joined machine continues
+using its persistent MicroLink identity after reboots and OTA updates. For a
+trusted unattended gateway, review and disable device key expiry in the
+Tailscale Machines page after enrollment.
 
 ### Classic WireGuard
 

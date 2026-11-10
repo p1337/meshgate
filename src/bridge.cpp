@@ -36,11 +36,21 @@ static uint8_t mqtt_to_ble_queue_storage[MQTT_QUEUE_SIZE * sizeof(BridgePacket)]
 static QueueHandle_t mqtt_to_ble_queue = NULL;
 
 /**
+ * Queue for raw FromRadio protobufs waiting for HTTP polling clients.
+ * HTTP round trips are much slower than the continuously drained TCP stream,
+ * so this transport needs its own bounded buffer.
+ */
+static StaticQueue_t ble_to_http_queue_struct;
+static uint8_t ble_to_http_queue_storage[HTTP_PHONEAPI_QUEUE_SIZE * sizeof(BridgePacket)];
+static QueueHandle_t ble_to_http_queue = NULL;
+
+/**
  * Tracks if we drop packets from our queues (capacity full).
  */
 static std::atomic<uint32_t> s_tcp_to_ble_dropped{0};
 static std::atomic<uint32_t> s_ble_to_tcp_dropped{0};
 static std::atomic<uint32_t> s_mqtt_to_ble_dropped{0};
+static std::atomic<uint32_t> s_ble_to_http_dropped{0};
 static std::atomic<bool> s_ble_connected{false};
 
 /**
@@ -53,6 +63,11 @@ static std::atomic<uint32_t> s_ble_invalid_count{0};
 static std::atomic<uint32_t> s_tcp_rx_count{0};
 static std::atomic<uint32_t> s_tcp_tx_count{0};
 static std::atomic<uint32_t> s_tcp_invalid_count{0};
+
+static std::atomic<uint32_t> s_http_last_activity_ms{0};
+static std::atomic<uint32_t> s_http_rx_count{0};
+static std::atomic<uint32_t> s_http_tx_count{0};
+static std::atomic<uint32_t> s_http_invalid_count{0};
 
 struct ClientContext {
     AsyncClient* client;
@@ -73,6 +88,65 @@ static NimBLEClient* bleClient = NULL;
 static NimBLERemoteCharacteristic* toRadioChar = NULL;
 static NimBLERemoteCharacteristic* fromRadioChar = NULL;
 static NimBLERemoteCharacteristic* fromNumChar = NULL;
+
+void bridge_http_phoneapi_mark_active() {
+    const uint32_t now = millis();
+    const uint32_t previous = s_http_last_activity_ms.exchange(now, std::memory_order_relaxed);
+
+    // A new browser session must never inherit protobufs from an abandoned
+    // configuration handshake. xQueueReset is safe from task context and the
+    // HTTP callback runs in AsyncTCP's task, not in an ISR.
+    if (ble_to_http_queue &&
+        (previous == 0 || static_cast<uint32_t>(now - previous) > HTTP_PHONEAPI_ACTIVE_TIMEOUT_MS)) {
+        xQueueReset(ble_to_http_queue);
+    }
+}
+
+bool bridge_http_phoneapi_is_active() {
+    const uint32_t last = s_http_last_activity_ms.load(std::memory_order_relaxed);
+    return last != 0 &&
+           static_cast<uint32_t>(millis() - last) <= HTTP_PHONEAPI_ACTIVE_TIMEOUT_MS;
+}
+
+bool bridge_enqueue_http_to_ble(const uint8_t* data, size_t len) {
+    if (!tcp_to_ble_queue || !data || len == 0 || len > sizeof(BridgePacket::data)) {
+        s_http_invalid_count.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    BridgePacket packet = {};
+    packet.len = len;
+    memcpy(packet.data, data, len);
+    if (xQueueSend(tcp_to_ble_queue, &packet, pdMS_TO_TICKS(100)) != pdTRUE) {
+        s_tcp_to_ble_dropped.fetch_add(1, std::memory_order_relaxed);
+        s_http_invalid_count.fetch_add(1, std::memory_order_relaxed);
+        log_w("[Bridge-HTTP] App-to-BLE queue full, dropped %zu-byte ToRadio packet", len);
+        return false;
+    }
+
+    s_http_rx_count.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+size_t bridge_dequeue_http_from_ble(uint8_t* data, size_t capacity) {
+    if (!ble_to_http_queue || !data || capacity == 0) {
+        return 0;
+    }
+
+    BridgePacket packet = {};
+    if (xQueueReceive(ble_to_http_queue, &packet, 0) != pdTRUE) {
+        return 0;
+    }
+    if (packet.len > capacity) {
+        s_http_invalid_count.fetch_add(1, std::memory_order_relaxed);
+        log_e("[Bridge-HTTP] FromRadio packet exceeds response buffer (%zu > %zu)", packet.len, capacity);
+        return 0;
+    }
+
+    memcpy(data, packet.data, packet.len);
+    s_http_tx_count.fetch_add(1, std::memory_order_relaxed);
+    return packet.len;
+}
 
 // TCP callbacks
 static void onClientConnected(void* arg, AsyncClient* client) {
@@ -511,7 +585,20 @@ static void bridgeBleTask(void* parameter) {
              * If we have a connected client, we should push messages as they come in to them.
              * If we are running a mqtt broker proxy, we need to process messages for it.
              */
-            if (fromRadioChar && (connectedClientsCount.load() > 0 || mqtt_net_is_enabled())) {
+            const bool tcpConsumerActive = connectedClientsCount.load() > 0;
+            const bool httpConsumerActive = bridge_http_phoneapi_is_active();
+            const bool httpQueueHasSpace = ble_to_http_queue && uxQueueSpacesAvailable(ble_to_http_queue) > 0;
+            const bool otherConsumerActive = tcpConsumerActive || mqtt_net_is_enabled();
+
+            // An active HTTP PhoneAPI session owns a complete logical config
+            // stream. Stop draining the radio whenever its polling queue is
+            // full, even if TCP or MQTT is also enabled; otherwise a fast BLE
+            // configuration burst outruns HTTP round trips and silently loses
+            // FromRadio envelopes. The radio retains the unread packets until
+            // the browser creates space again.
+            const bool consumerReady = (otherConsumerActive || httpConsumerActive) &&
+                                       (!httpConsumerActive || httpQueueHasSpace);
+            if (fromRadioChar && consumerReady) {
                 // Read if notified, or if it's been 250ms since last check (failsafe)
                 bool doRead = pendingRadioRead || (millis() - lastFailsafe > 250);
 
@@ -549,15 +636,23 @@ static void bridgeBleTask(void* parameter) {
                          *  - It was NOT an internal MQTT proxy message (prevents echoing raw MQTT packets to apps over the tcp socket).
                          *  - There is at least one active TCP client connected (prevents filling the queue).
                          */
-                        if (!consumedByMqtt && connectedClientsCount.load() > 0) {
+                        if (!consumedByMqtt && (tcpConsumerActive || httpConsumerActive)) {
                             BridgePacket rx_packet;
                             rx_packet.len = currentVal.length();
                             if (rx_packet.len <= sizeof(rx_packet.data)) {
                                 memcpy(rx_packet.data, currentVal.data(), rx_packet.len);
-                                // Apply backpressure: Wait up to 50ms if the queue is full so we don't drop packets!
-                                if (xQueueSend(ble_to_tcp_queue, &rx_packet, pdMS_TO_TICKS(50)) != pdTRUE) {
-                                    log_e("[Bridge-BLE] CRITICAL: ble_to_tcp_queue FULL! Dropped %zu bytes", rx_packet.len);
-                                    s_ble_to_tcp_dropped.fetch_add(1, std::memory_order_relaxed);
+                                if (tcpConsumerActive) {
+                                    // Apply backpressure: Wait up to 50ms if the queue is full so we don't drop packets!
+                                    if (xQueueSend(ble_to_tcp_queue, &rx_packet, pdMS_TO_TICKS(50)) != pdTRUE) {
+                                        log_e("[Bridge-BLE] CRITICAL: ble_to_tcp_queue FULL! Dropped %zu bytes", rx_packet.len);
+                                        s_ble_to_tcp_dropped.fetch_add(1, std::memory_order_relaxed);
+                                    }
+                                }
+                                if (httpConsumerActive) {
+                                    if (xQueueSend(ble_to_http_queue, &rx_packet, 0) != pdTRUE) {
+                                        log_w("[Bridge-HTTP] FromRadio queue full, dropped %zu-byte packet", rx_packet.len);
+                                        s_ble_to_http_dropped.fetch_add(1, std::memory_order_relaxed);
+                                    }
                                 }
                             } else {
                                 log_e("[Bridge-BLE] ERROR: Radio Payload too large (%zu bytes)", rx_packet.len);
@@ -703,6 +798,12 @@ void bridge_init(const String& ble_name, const String& ble_mac, uint32_t ble_pin
         mqtt_to_ble_queue_storage,
         &mqtt_to_ble_queue_struct
     );
+    ble_to_http_queue = xQueueCreateStatic(
+        HTTP_PHONEAPI_QUEUE_SIZE,
+        sizeof(BridgePacket),
+        ble_to_http_queue_storage,
+        &ble_to_http_queue_struct
+    );
 
     // Register MQTT Downlink Callback to enqueue ToRadio packets for BLE transmission
     mqtt_net_set_downlink_callback([](const uint8_t* to_radio_buf, size_t len) {
@@ -758,6 +859,9 @@ BridgeDiagStats bridge_get_diag_stats() {
     stats.mqtt_to_ble_waiting = mqtt_to_ble_queue ? uxQueueMessagesWaiting(mqtt_to_ble_queue) : 0;
     stats.mqtt_to_ble_capacity = MQTT_QUEUE_SIZE;
     stats.mqtt_to_ble_dropped = s_mqtt_to_ble_dropped.load(std::memory_order_relaxed);
+    stats.ble_to_http_waiting = ble_to_http_queue ? uxQueueMessagesWaiting(ble_to_http_queue) : 0;
+    stats.ble_to_http_capacity = HTTP_PHONEAPI_QUEUE_SIZE;
+    stats.ble_to_http_dropped = s_ble_to_http_dropped.load(std::memory_order_relaxed);
     stats.connected_tcp_clients = connectedClientsCount.load();
     stats.ble_task_stack_free_bytes = bridgeBleTaskHandle ? (uxTaskGetStackHighWaterMark(bridgeBleTaskHandle) * sizeof(StackType_t)) : 0;
     stats.net_task_stack_free_bytes = bridgeNetTaskHandle ? (uxTaskGetStackHighWaterMark(bridgeNetTaskHandle) * sizeof(StackType_t)) : 0;
@@ -768,5 +872,9 @@ BridgeDiagStats bridge_get_diag_stats() {
     stats.tcp_rx_count = s_tcp_rx_count.load(std::memory_order_relaxed);
     stats.tcp_tx_count = s_tcp_tx_count.load(std::memory_order_relaxed);
     stats.tcp_invalid_count = s_tcp_invalid_count.load(std::memory_order_relaxed);
+    stats.http_phoneapi_active = bridge_http_phoneapi_is_active();
+    stats.http_rx_count = s_http_rx_count.load(std::memory_order_relaxed);
+    stats.http_tx_count = s_http_tx_count.load(std::memory_order_relaxed);
+    stats.http_invalid_count = s_http_invalid_count.load(std::memory_order_relaxed);
     return stats;
 }

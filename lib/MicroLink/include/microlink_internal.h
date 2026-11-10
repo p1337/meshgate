@@ -420,6 +420,12 @@ struct microlink_s {
     int64_t key_expiry_epoch;       /* Unix epoch seconds, 0 = no expiry */
     bool key_expired;               /* true if Node.Expired == true */
 
+    /* Interactive enrollment. The control plane returns AuthURL when the
+     * machine needs browser approval; subsequent RegisterRequests send the
+     * same value as Followup until authorization completes. RAM-only. */
+    char auth_url[256];
+    portMUX_TYPE auth_url_mux;
+
     /* Resolved timing (set during init from config, 0 = default) */
     uint32_t t_disco_heartbeat_ms;
     uint32_t t_stun_interval_ms;

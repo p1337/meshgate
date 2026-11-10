@@ -23,7 +23,20 @@ The ESP32 will act as a BLE Client and connect to the target Meshtastic Node (BL
 - **FromNum (Notify)**: `ed9da18c-a800-4f66-a670-aa7547e34453`
   - Triggers when a new packet is available to be read from `FromRadio`.
 
-### 3. BLE Addressing & Auto-Detection
+### 3. HTTP Protocol (browser client side)
+- **Write:** `PUT /api/v1/toradio` carries exactly one raw `ToRadio` protobuf.
+- **Read:** `GET /api/v1/fromradio?all=false` returns one raw `FromRadio`
+  protobuf or an empty body. `all=true` drains all currently queued packets.
+- **Framing:** no TCP `0x94 0xC3` header is used.
+- **Browser access:** both endpoints answer `OPTIONS`, CORS, and Chromium
+  Private Network Access preflights. The API is HTTP on port 80; Tailscale
+  supplies transport encryption for remote access.
+- **Buffering:** a dedicated static `ble_to_http_queue` absorbs HTTP round-trip
+  latency. If it fills during an active HTTP session, BLE draining pauses for
+  every consumer so the radio's queue supplies lossless backpressure. A stale HTTP session is expired and
+  cleared after 15 seconds without a request.
+
+### 4. BLE Addressing & Auto-Detection
 Meshtastic devices utilize different BLE address types depending on the manufacturer:
 - **ESP32 Nodes** (e.g., T-Beam, Heltec) typically use **Public Addresses**.
 - **nRF52 Nodes** (e.g., SenseCAP, RAK) typically use **Random Static Addresses** (mathematically required to start with `C`, `D`, `E`, or `F` hex characters).
@@ -66,7 +79,7 @@ Because BLE operations (connecting, reading characteristics) can block, and we a
 - **MTU Negotiation**: We request an MTU of at least 512 bytes during the BLE connection phase to support maximum Meshtastic protobuf payloads.
 
 ### 4. Memory Management (100% Static `.bss` Queues)
-- **Zero Heap Fragmentation**: All FreeRTOS queues (`tcp_to_ble_queue`, `ble_to_tcp_queue`, `mqtt_to_ble_queue`) are allocated statically in `.bss` via `xQueueCreateStatic`.
+- **Zero Heap Fragmentation**: All FreeRTOS queues (`tcp_to_ble_queue`, `ble_to_tcp_queue`, `ble_to_http_queue`, `mqtt_to_ble_queue`) are allocated statically in `.bss` via `xQueueCreateStatic`.
 - **Packet Sizing (`MESHTASTIC_MAX_PACKET_SIZE = 576`)**: `BridgePacket` uses a fixed `uint8_t data[576]` array (584 bytes per slot aligned), accounting for max 512-byte payload + 32-byte topic + headers. TCP frames use stack memory (`uint8_t frame[580]`), ensuring zero dynamic `malloc`/`free` calls in fast-path routing.
 - **Unified Sane Queue Sizing Across All Targets**:
   - `BRIDGE_QUEUE_SIZE = 32` (18.7 KB per queue)

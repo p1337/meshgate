@@ -45,6 +45,11 @@ jobs:
       - name: Inject Version into Firmware
         run: |
           VERSION="${GITHUB_REF_NAME}"
+          SOURCE_VERSION=$(sed -n 's/^#define FIRMWARE_VERSION "\([^"]*\)"/\1/p' include/build_options.h)
+          if [ "$SOURCE_VERSION" != "$VERSION" ]; then
+            echo "FIRMWARE_VERSION ($SOURCE_VERSION) must match release tag ($VERSION)."
+            exit 1
+          fi
           echo "Injecting version: $VERSION"
           # Find and replace the FIRMWARE_VERSION string inside build_options.h
           sed -i "s/#define FIRMWARE_VERSION .*/#define FIRMWARE_VERSION \"$VERSION\"/g" include/build_options.h

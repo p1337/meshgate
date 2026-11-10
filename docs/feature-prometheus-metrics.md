@@ -91,7 +91,7 @@ Prometheus scrapers natively differentiate individual devices via target labels 
 ```text
 # HELP meshbridge_info Metadata and identity of the bridge
 # TYPE meshbridge_info gauge
-meshbridge_info{version="v1.0.0-dev",mdns="dsc-ae28.local",radio_mac="AA:BB:CC:DD:EE:FF",board="seeed_xiao_esp32s3"} 1
+meshbridge_info{version="v0.7.0",mdns="dsc-ae28.local",radio_mac="AA:BB:CC:DD:EE:FF",board="seeed_xiao_esp32s3"} 1
 ```
 
 ### Symmetric Channel Traffic Matrix

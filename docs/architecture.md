@@ -8,6 +8,7 @@ This project is an ESP32-based transparent bridge that connects to a Meshtastic 
 *   **Bluetooth Connection:** Act as a BLE Central device, connecting to the Meshtastic radio (BLE Peripheral). Must support secure pairing with a PIN code.
 *   **WiFi Connection:** Connect to a local WiFi network.
 *   **TCP Server:** Expose a TCP port (default Meshtastic port is 4403) that accepts incoming connections.
+*   **HTTP PhoneAPI:** Expose the standard naked-protobuf `/api/v1/toradio` and `/api/v1/fromradio` endpoints for browser clients.
 *   **Transparent Bridging:** Seamlessly forward data back and forth between the TCP socket and the BLE connection.
 *   **Configuration:** Provide a user-friendly mechanism to configure WiFi credentials, the target Meshtastic radio, and the BLE PIN code.
 
@@ -37,14 +38,19 @@ at configuration time. MicroLink's Noise handshake uses the bundled reference
 ChaCha20-Poly1305 adapter because the precompiled Arduino mbedTLS package does
 not expose the required ChaChaPoly symbols.
 
-Tailscale configuration and its write-only auth key are stored in both
-`bridge_cfg` and `bridge_backup`. The Web API exposes only key presence. The
-runtime status is available at `/tailscale_status`. `connected` reports
+Tailscale configuration is stored in both `bridge_cfg` and `bridge_backup`.
+Legacy write-only auth keys remain preserved during migration but interactive
+enrollment deliberately ignores them. A new node registers without credentials,
+receives `AuthURL` from the control plane, exposes it through
+`/tailscale_status`, and repeats registration with that URL in `Followup` until
+the user approves it. The URL is RAM-only and is cleared after approval;
+MicroLink's persistent machine, node/WireGuard and DISCO keys make subsequent
+boots keyless. `connected` reports
 control-plane registration, while `derp_connected` proves that the DERP TLS and
 protocol handshakes completed and the relay data channel is usable. The same
 response lists the known peer VPN IPs and whether each peer uses a direct or
-relayed path. Joining a tailnet requires an auth key issued by that tailnet;
-the firmware cannot derive authorization from an account email address.
+relayed path. Joining a tailnet still requires explicit browser approval by an
+authenticated user; the firmware cannot derive authorization from an email.
 
 The Nano's local variant disables Arduino's stock double-tap recovery path.
 That path expects a factory partition, while this project's 16 MB layout uses
@@ -167,6 +173,9 @@ To provide the best user experience, configuration is handled via a web-based ca
 4.  **Bridging Loop:**
     *   **TCP -> BLE:** When bytes arrive from a connected TCP client, read them into a buffer and write them to the Meshtastic `ToRadio` BLE characteristic. (Note: must respect BLE MTU limits and chunk the data if necessary).
     *   **BLE -> TCP:** When a notification is received from the `FromRadio` characteristic, immediately write those bytes out to the connected TCP client socket.
+    *   **HTTP:** Forward the same raw protobuf without TCP framing. A bounded
+        polling queue retains `FromRadio` packets and applies BLE backpressure
+        while the browser has not drained it yet.
     *   **Keep-alives:** Handle reconnections if the TCP client drops or the BLE radio goes out of range.
 
 ## Project Structure

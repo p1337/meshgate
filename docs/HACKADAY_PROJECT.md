@@ -100,8 +100,9 @@ pio run -e arduino_nano_esp32_idf5
 
 Flash with the Web Flasher or PlatformIO. Join the temporary
 `Meshtastic-Bridge-Setup` access point, configure Wi-Fi and BLE, test the radio,
-then enable Tailscale with a one-time auth key. After reboot, use the displayed
-`100.x` address for the control UI and TCP port 4403.
+then enable Tailscale and reboot. MeshGate displays a one-time Tailscale browser
+login URL; approve it without creating or copying an auth/API key. Then use the
+displayed `100.x` address for the control UI and TCP port 4403.
 
 ## MQTT and the public map
 
@@ -113,10 +114,11 @@ uplink and position reporting remain explicit radio settings.
 
 ## Security model
 
-The Tailscale auth key, BLE PIN, Wi-Fi password, WireGuard private keys and OTA
-token are never returned by the configuration API. TCP 4403 and OTA are meant
-for a private LAN or authenticated VPN, never direct public-internet exposure.
-No deployment credentials belong in the repository.
+The temporary Tailscale browser URL is RAM-only. BLE PIN, Wi-Fi password,
+WireGuard private keys and OTA token are never returned by the configuration
+API. TCP 4403 and OTA are meant for a private LAN or authenticated VPN, never
+direct public-internet exposure. No deployment credentials belong in the
+repository.
 
 ## Current result
 

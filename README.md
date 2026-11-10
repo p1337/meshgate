@@ -3,8 +3,9 @@
 **Remote administration for Bluetooth-only Meshtastic radios, built on ESP32.**
 
 MeshGate connects to a Meshtastic radio over BLE and exposes the native
-Meshtastic PhoneAPI on TCP port `4403`. On the local network it behaves like a
-Wi-Fi-capable Meshtastic node. On the ESP-IDF 5 production build it can also
+Meshtastic PhoneAPI on TCP port `4403` and through the standard HTTP endpoints
+used by browser clients. On the local network it behaves like a Wi-Fi-capable
+Meshtastic node. On the ESP-IDF 5 production build it can also
 join Tailscale directly, so the same node remains reachable through carrier
 NAT, changing public IP addresses and networks without port forwarding or a
 Raspberry Pi.
@@ -57,7 +58,8 @@ Meshtastic radio
       ▼
 MeshGate on ESP32 ───── Wi-Fi LAN ───── TCP 4403 ───── Meshtastic app
       │
-      ├── Tailscale / DERP ──────────── remote TCP 4403 + Web UI + OTA
+      ├── HTTP /api/v1/{to,from}radio ─ browser-based Meshtastic client
+      ├── Tailscale / DERP ──────────── remote TCP 4403 + HTTP + Web UI + OTA
       ├── optional classic WireGuard
       └── optional MQTT proxy ───────── radio-selected MQTT broker
 ```
@@ -133,16 +135,26 @@ The IDF 5 build uses the `platform-espressif32` release pinned in
 5. Test BLE, save it, then select **Reboot & Start Bridge**.
 6. Connect a Meshtastic client to the bridge's LAN address on TCP port `4403`.
 
-The BLE PIN, Wi-Fi password, VPN private keys, Tailscale auth key and OTA token
+For a browser client, choose **HTTP**, enter only the LAN or Tailscale IP
+(port `80` is implicit), and leave HTTPS disabled. The client uses
+`PUT /api/v1/toradio` and `GET /api/v1/fromradio`; it must itself be opened over
+HTTP when the target is HTTP, because browsers block HTTPS-to-HTTP mixed
+content. Tailscale encrypts the network path even though this local API is HTTP.
+
+The BLE PIN, Wi-Fi password, VPN private keys, legacy Tailscale auth key and OTA token
 are write-only. HTTP configuration responses expose only `has_*` flags, not
 the secret values.
 
 ## Tailscale remote access
 
 The IDF 5 Nano build embeds a Tailscale-compatible client through MicroLink.
-Enable it in the Web UI, choose a device name, provide an auth key once, save
-and reboot. The Tailscale card reports the assigned `100.x` address, control
-state, DERP readiness and known peers.
+Enable it in the Web UI, choose a device name, save and reboot. MeshGate then
+shows the one-time login URL returned by the Tailscale control plane. Open that
+URL, sign in and approve the device; MeshGate follows the authorization in the
+background and connects without a copied auth/API key. The four-step wizard
+also explains why the remote phone or computer needs Tailscale. The Tailscale
+card reports the assigned `100.x` address, control state, DERP readiness and
+known peers.
 
 From another tailnet device:
 
@@ -150,11 +162,11 @@ From another tailnet device:
 - connect the Meshtastic app manually to `<tailscale-ip>:4403`;
 - use the same address for authenticated OTA.
 
-Tailscale auth keys are enrollment credentials and can expire after 1–90
-days. The joined device remains authorized independently until its node key
-expires. For a trusted unattended gateway, disable key expiry for that machine
-after enrollment. See Tailscale's documentation for
-[auth keys](https://tailscale.com/docs/features/access-control/auth-keys) and
+The browser login URL is held in RAM only and is cleared after authorization.
+Machine, node and WireGuard identity keys remain in MicroLink's NVS namespace,
+so ordinary reboots and OTA updates do not require another login. For a trusted
+unattended gateway, disable key expiry for that machine after enrollment. See
+Tailscale's documentation for
 [device key expiry](https://tailscale.com/docs/features/access-control/key-expiry).
 
 Tailscale and classic WireGuard are mutually exclusive in the IDF 5 build
@@ -190,6 +202,7 @@ the current broker instructions published by [MeshRadar](https://meshradar.pl/).
 ## Operations and recovery
 
 - `GET /status` — structured runtime, queue, BLE, TCP, VPN and MQTT state
+- `PUT /api/v1/toradio` / `GET /api/v1/fromradio` — Meshtastic HTTP PhoneAPI
 - `GET /api/logs` — bounded in-memory runtime log
 - `GET /metrics` — Prometheus/OpenMetrics endpoint
 - `POST /api/reboot` — controlled restart

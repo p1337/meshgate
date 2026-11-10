@@ -91,6 +91,34 @@ static bool scheduleRestart() {
     return xTaskCreate(restartTask, "api-restart", 2048, nullptr, 1, nullptr) == pdPASS;
 }
 
+struct HttpPhoneApiBody {
+    size_t expected = 0;
+    size_t received = 0;
+    bool invalid = false;
+    uint8_t data[MESHTASTIC_MAX_PACKET_SIZE] = {};
+};
+
+static void addHttpPhoneApiHeaders(AsyncWebServerResponse* response, const char* methods) {
+    response->addHeader("Access-Control-Allow-Origin", "*");
+    response->addHeader("Access-Control-Allow-Methods", methods);
+    response->addHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
+    // Chromium's Private Network Access preflight requires this when a local
+    // browser application reaches a LAN or Tailscale address.
+    response->addHeader("Access-Control-Allow-Private-Network", "true");
+    response->addHeader("Access-Control-Max-Age", "600");
+    response->addHeader("Cache-Control", "no-store");
+    response->addHeader(
+        "X-Protobuf-Schema",
+        "https://raw.githubusercontent.com/meshtastic/protobufs/master/meshtastic/mesh.proto"
+    );
+}
+
+static void sendHttpPhoneApiError(AsyncWebServerRequest* request, int status, const char* message) {
+    AsyncWebServerResponse* response = request->beginResponse(status, "text/plain; charset=utf-8", message);
+    addHttpPhoneApiHeaders(response, "PUT, GET, OPTIONS");
+    request->send(response);
+}
+
 static void writeStoredConfiguration(Preferences& target, const BridgeConfig& cfg) {
     target.putString("wifi_ssid", cfg.wifi_ssid);
     target.putString("wifi_pass", cfg.wifi_pass);
@@ -174,6 +202,16 @@ const char index_html[] PROGMEM = R"rawliteral(
   .queue-header { display:flex; justify-content:space-between; font-size:13px; font-weight:500; color:var(--text); }
   .queue-stats { font-family:var(--mono); font-size:12px; color:var(--accent); }
   .section-divider { border-top:1px solid var(--border); margin:14px 0 10px; padding-top:10px; font-weight:bold; font-size:14px; color:var(--text); }
+  .wizard { display:grid; gap:10px; margin:10px 0 14px; }
+  .wizard-step { display:grid; grid-template-columns:30px 1fr; gap:10px; padding:11px; border:1px solid var(--border); background:rgba(10,12,16,.45); border-radius:3px; }
+  .wizard-number { width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:1px solid var(--accent); border-radius:50%; color:var(--accent); font:700 13px var(--mono); }
+  .wizard-title { color:var(--text); font:700 13px var(--mono); margin:1px 0 4px; }
+  .wizard-copy { color:var(--dim); font-size:12px; line-height:1.45; }
+  .wizard-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .wizard-actions a,.wizard-actions button { width:auto; margin:0; padding:7px 10px; border:1px solid var(--accent); border-radius:3px; color:var(--accent); background:transparent; text-decoration:none; font:600 12px var(--mono); }
+  .wizard-actions a:hover,.wizard-actions button:hover { background:rgba(94,237,151,.08); opacity:1; }
+  .connection-box { display:none; margin-top:14px; padding:12px; border:1px solid var(--accent); background:rgba(94,237,151,.04); border-radius:3px; }
+  .connection-value { display:block; margin:6px 0; color:var(--accent); font:700 14px var(--mono); word-break:break-all; }
   .card small { color:var(--dim)!important; }
   .footer { text-align:center; font:12px var(--mono); color:var(--muted); margin-top:24px; padding-bottom:20px; }
   .footer a { color:var(--accent); text-decoration:none; font-weight:600; }
@@ -302,7 +340,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class="card" id="card-tailscale">
     <div class="card-header">
       <div class="card-title">Tailscale Remote Access</div>
-      <button class="btn-edit" id="btn-edit-tailscale" onclick="toggleEditTailscale(true)">Edit</button>
+      <button class="btn-edit" id="btn-edit-tailscale" onclick="toggleEditTailscale(true)">Setup</button>
     </div>
     <div id="tailscale-view">
       <div class="info-row">
@@ -311,12 +349,63 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       <div class="info-row"><span class="info-label">Device name:</span><span class="info-val" id="view-tailscale-name">meshgate</span></div>
       <div class="info-row"><span class="info-label">Tailscale IP:</span><span class="info-val" id="view-tailscale-ip">(Not connected)</span></div>
+      <div class="info-row"><span class="info-label">Remote path:</span><span class="info-val" id="view-tailscale-path">(Not connected)</span></div>
       <div class="info-row"><span class="info-label">Known peers:</span><span class="info-val" id="view-tailscale-peers">0</span></div>
-      <div class="info-row"><span class="info-label">Auth key:</span><span class="info-val" id="view-tailscale-auth">(Not set)</span></div>
+      <div class="info-row"><span class="info-label">Enrollment:</span><span class="info-val" id="view-tailscale-enrollment">Browser login</span></div>
+      <button class="btn-secondary" type="button" onclick="toggleEditTailscale(true)">Guided setup / change settings</button>
+      <div id="tailscale-login-box" class="connection-box" style="display:none;">
+        <div class="wizard-title">Approve MeshGate in Tailscale</div>
+        <div class="wizard-copy">Tailscale supplied this one-time login link. Open it in a normal browser, sign in, and approve the device. MeshGate keeps checking automatically.</div>
+        <span class="connection-value" id="view-tailscale-auth-url"></span>
+        <div class="wizard-actions">
+          <a id="link-tailscale-auth" href="#" target="_blank" rel="noopener noreferrer">Connect with Tailscale</a>
+          <button type="button" onclick="copyTailscaleLoginUrl()">Copy login link</button>
+        </div>
+      </div>
+      <div id="tailscale-connection-box" class="connection-box">
+        <div class="wizard-title">Remote access is ready</div>
+        <div class="wizard-copy">On a phone or computer connected to the same tailnet, use:</div>
+        <span class="connection-value" id="view-tailscale-web-address"></span>
+        <span class="connection-value" id="view-tailscale-phoneapi"></span>
+        <div class="wizard-actions">
+          <a id="link-tailscale-web" href="#">Open MeshGate</a>
+          <button type="button" onclick="copyTailscaleAddress()">Copy Meshtastic address</button>
+          <a href="https://login.tailscale.com/admin/machines" target="_blank" rel="noopener noreferrer">Open Machines</a>
+        </div>
+        <div class="wizard-copy" style="margin-top:8px;">For unattended operation, open the device in Machines and disable key expiry after enrollment.</div>
+      </div>
+      <div id="tailscale-use-alert" class="alert"></div>
     </div>
     <div id="tailscale-edit" style="display:none;">
       <div class="alert alert-info" style="display:block; margin-bottom:12px;">
         Native Tailscale creates an outbound connection, so no dynamic DNS or router port forwarding is required. Once connected, this page and Meshtastic TCP port 4403 are reachable through the displayed 100.x address. Tailscale and classic WireGuard are mutually exclusive.
+      </div>
+      <div class="wizard">
+        <div class="wizard-step">
+          <div class="wizard-number">1</div>
+          <div>
+            <div class="wizard-title">Install Tailscale on the remote device</div>
+            <div class="wizard-copy">Your phone or computer needs Tailscale only so it can securely reach MeshGate's private 100.x address. Sign in there with the same account you will use to approve MeshGate.</div>
+            <div class="wizard-actions">
+              <a href="https://login.tailscale.com/admin" target="_blank" rel="noopener noreferrer">Open Admin Console</a>
+              <a href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer">Install Tailscale</a>
+            </div>
+          </div>
+        </div>
+        <div class="wizard-step">
+          <div class="wizard-number">2</div>
+          <div>
+            <div class="wizard-title">Enable MeshGate and choose its name</div>
+            <div class="wizard-copy">No auth key or API key is required. Save and reboot; MeshGate asks Tailscale for a one-time browser login link.</div>
+          </div>
+        </div>
+        <div class="wizard-step">
+          <div class="wizard-number">3</div>
+          <div>
+            <div class="wizard-title">Open the browser login link</div>
+            <div class="wizard-copy">After reboot, reopen this local page. Select <strong>Connect with Tailscale</strong>, sign in, and approve MeshGate. If a captive setup window cannot open it, copy the displayed link into your normal browser.</div>
+          </div>
+        </div>
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <label for="input-tailscale-enabled" style="margin:0;">Enable Tailscale</label>
@@ -324,18 +413,16 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       <label>Tailnet device name:</label>
       <input type="text" id="input-tailscale-name" maxlength="63" placeholder="meshgate">
-      <label>Tailscale auth key:</label>
-      <div class="password-field">
-        <input type="password" id="input-tailscale-auth" maxlength="128" placeholder="Leave empty to keep stored key">
-        <button type="button" class="btn-toggle-pass" onclick="togglePassVisibility('input-tailscale-auth', this)">Show</button>
-      </div>
-      <div style="display:flex; align-items:center; gap:8px; margin:8px 0 12px;">
-        <input type="checkbox" id="input-tailscale-clear-auth" style="width:18px; height:18px; margin:0;">
-        <label for="input-tailscale-clear-auth" style="margin:0;">Remove stored auth key</label>
-      </div>
       <div id="tailscale-alert" class="alert"></div>
+      <div class="wizard-step" style="margin-top:10px;">
+        <div class="wizard-number">4</div>
+        <div>
+          <div class="wizard-title">Approve and verify</div>
+          <div class="wizard-copy">After browser approval, this page changes automatically to <strong>Connected</strong> and shows the <strong>100.x</strong> IP. No key is copied into MeshGate.</div>
+        </div>
+      </div>
       <div class="btn-group">
-        <button class="btn-success" id="btn-save-tailscale" onclick="saveTailscale()">Save Tailscale</button>
+        <button class="btn-success" id="btn-save-tailscale" onclick="saveTailscale(true)">Save &amp; Reboot</button>
         <button class="btn-secondary" onclick="toggleEditTailscale(false)">Cancel</button>
       </div>
     </div>
@@ -685,14 +772,12 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('input-ble-pin').value = '';
           document.getElementById('sys-debug-logs').checked = !!cfg.debug_logs;
 
-          // Tailscale fields. The auth key is write-only.
+          // Tailscale fields. Interactive browser enrollment is keyless.
           document.getElementById('view-tailscale-name').innerText = cfg.tailscale_device_name || 'meshgate';
-          document.getElementById('view-tailscale-auth').innerText = cfg.tailscale_has_auth_key ? '•••••••• (stored)' : '(Not set)';
           document.getElementById('input-tailscale-enabled').checked = !!cfg.tailscale_enabled;
           document.getElementById('input-tailscale-name').value = cfg.tailscale_device_name || 'meshgate';
-          document.getElementById('input-tailscale-auth').value = '';
-          document.getElementById('input-tailscale-clear-auth').checked = false;
           document.getElementById('btn-edit-tailscale').disabled = !cfg.tailscale_supported;
+          document.getElementById('btn-edit-tailscale').innerText = cfg.tailscale_enabled ? 'Edit' : 'Setup';
           updateTailscaleStatus();
 
           // WireGuard fields. Secret inputs intentionally remain empty.
@@ -726,11 +811,28 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     function updateTailscaleStatus() {
       const pill = document.getElementById('view-tailscale-status');
+      const connectionBox = document.getElementById('tailscale-connection-box');
+      const loginBox = document.getElementById('tailscale-login-box');
       fetch('/tailscale_status')
         .then(r => r.json())
         .then(status => {
           document.getElementById('view-tailscale-ip').innerText = status.vpn_ip || '(Not connected)';
           document.getElementById('view-tailscale-peers').innerText = status.peer_count || 0;
+          document.getElementById('view-tailscale-path').innerText = status.connected ? (status.derp_connected ? 'Ready (DERP relay)' : 'Connected (path negotiating)') : '(Not connected)';
+          connectionBox.style.display = status.connected && status.vpn_ip ? 'block' : 'none';
+          loginBox.style.display = !status.connected && status.auth_url ? 'block' : 'none';
+          document.getElementById('view-tailscale-enrollment').innerText = status.connected ? 'Approved' : (status.auth_url ? 'Approval required' : 'Browser login');
+          if (status.auth_url) {
+            document.getElementById('view-tailscale-auth-url').innerText = status.auth_url;
+            document.getElementById('link-tailscale-auth').href = status.auth_url;
+          }
+          if (status.connected && status.vpn_ip) {
+            const webAddress = 'http://' + status.vpn_ip + '/';
+            const phoneApi = status.vpn_ip + ':4403';
+            document.getElementById('view-tailscale-web-address').innerText = webAddress;
+            document.getElementById('view-tailscale-phoneapi').innerText = phoneApi;
+            document.getElementById('link-tailscale-web').href = webAddress;
+          }
           if (!currentConfig || !currentConfig.tailscale_supported) {
             pill.className = 'status-pill disabled';
             pill.innerText = 'Requires IDF 5 firmware';
@@ -748,7 +850,40 @@ const char index_html[] PROGMEM = R"rawliteral(
         .catch(() => {
           pill.className = 'status-pill error';
           pill.innerText = 'Status unavailable';
+          connectionBox.style.display = 'none';
+          loginBox.style.display = 'none';
         });
+    }
+
+    function copyTailscaleText(text, label) {
+      const alertId = document.getElementById('tailscale-edit').style.display === 'none' ? 'tailscale-use-alert' : 'tailscale-alert';
+      const copied = () => showAlert(alertId, 'success', label + ' copied.');
+      const failed = () => showAlert(alertId, 'error', 'Could not copy automatically. Select and copy it manually: ' + text);
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(copied).catch(failed);
+        return;
+      }
+      const field = document.createElement('textarea');
+      field.value = text;
+      field.setAttribute('readonly', '');
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(field);
+      if (ok) copied(); else failed();
+    }
+
+    function copyTailscaleAddress() {
+      const value = document.getElementById('view-tailscale-phoneapi').innerText;
+      copyTailscaleText(value, 'Meshtastic TCP address');
+    }
+
+    function copyTailscaleLoginUrl() {
+      const value = document.getElementById('view-tailscale-auth-url').innerText;
+      copyTailscaleText(value, 'Tailscale login link');
     }
 
     function toggleEditTailscale(edit) {
@@ -758,8 +893,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (edit && currentConfig) {
         document.getElementById('input-tailscale-enabled').checked = !!currentConfig.tailscale_enabled;
         document.getElementById('input-tailscale-name').value = currentConfig.tailscale_device_name || 'meshgate';
-        document.getElementById('input-tailscale-auth').value = '';
-        document.getElementById('input-tailscale-clear-auth').checked = false;
       }
       document.getElementById('tailscale-view').style.display = edit ? 'none' : 'block';
       document.getElementById('tailscale-edit').style.display = edit ? 'block' : 'none';
@@ -767,14 +900,12 @@ const char index_html[] PROGMEM = R"rawliteral(
       hideAlert('tailscale-alert');
     }
 
-    function saveTailscale() {
+    function saveTailscale(rebootAfterSave) {
       const enabled = document.getElementById('input-tailscale-enabled').checked;
       const deviceName = document.getElementById('input-tailscale-name').value.trim().toLowerCase();
-      const authKey = document.getElementById('input-tailscale-auth').value.trim();
-      const clearAuthKey = document.getElementById('input-tailscale-clear-auth').checked;
 
-      if (enabled && (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(deviceName) || (!authKey && !currentConfig.tailscale_has_auth_key))) {
-        showAlert('tailscale-alert', 'error', 'Enter a lowercase device name and a Tailscale auth key.');
+      if (enabled && !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(deviceName)) {
+        showAlert('tailscale-alert', 'error', 'Enter a valid lowercase device name.');
         return;
       }
 
@@ -784,9 +915,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'enabled=' + (enabled ? 'true' : 'false') +
-              '&device_name=' + encodeURIComponent(deviceName) +
-              '&auth_key=' + encodeURIComponent(authKey) +
-              '&clear_auth_key=' + (clearAuthKey ? 'true' : 'false')
+              '&device_name=' + encodeURIComponent(deviceName)
       })
       .then(async r => {
         const result = await r.json();
@@ -794,9 +923,16 @@ const char index_html[] PROGMEM = R"rawliteral(
         return result;
       })
       .then(() => {
-        button.disabled = false;
-        showAlert('tailscale-alert', 'success', 'Tailscale saved redundantly. Reboot to connect.');
-        setTimeout(() => { toggleEditTailscale(false); loadConfig(); }, 900);
+        if (!rebootAfterSave) {
+          button.disabled = false;
+          showAlert('tailscale-alert', 'success', 'Tailscale saved redundantly. Reboot to connect.');
+          setTimeout(() => { toggleEditTailscale(false); loadConfig(); }, 900);
+          return;
+        }
+        showAlert('tailscale-alert', 'success', 'Tailscale saved. MeshGate is rebooting now. Reopen this page on the local address in 30–90 seconds.');
+        return fetch('/reboot', { method: 'POST' }).then(r => {
+          if (!r.ok && r.status !== 202) throw new Error('Settings were saved, but reboot could not be scheduled. Use Reboot & Start Bridge below.');
+        });
       })
       .catch(err => {
         button.disabled = false;
@@ -1113,6 +1249,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         .catch(() => {})
         .finally(() => {
           statusFetchInFlight = false;
+          updateTailscaleStatus();
           updateWireguardStatus();
           scheduleNextStatusPoll();
         });
@@ -1764,6 +1901,103 @@ static void backupCurrentConfiguration() {
  * Start the UI Captive Portal Server.
  */
 void config_ui_start_server() {
+    // Meshtastic's browser transport uses naked protobuf messages over HTTP.
+    // It intentionally shares the BLE PhoneAPI session with TCP 4403 without
+    // applying the TCP stream header (0x94 0xC3 + length).
+    server.on("/api/v1/toradio", HTTP_OPTIONS, [](AsyncWebServerRequest* request) {
+        bridge_http_phoneapi_mark_active();
+        AsyncWebServerResponse* response = request->beginResponse(204);
+        addHttpPhoneApiHeaders(response, "PUT, OPTIONS");
+        request->send(response);
+    });
+
+    server.on(
+        "/api/v1/toradio",
+        HTTP_PUT,
+        [](AsyncWebServerRequest* request) {
+            bridge_http_phoneapi_mark_active();
+            HttpPhoneApiBody* body = static_cast<HttpPhoneApiBody*>(request->_tempObject);
+            request->_tempObject = nullptr;
+            if (!body) {
+                sendHttpPhoneApiError(
+                    request,
+                    request->contentLength() == 0 ? 400 : 500,
+                    request->contentLength() == 0 ? "Empty ToRadio protobuf" : "Could not buffer ToRadio protobuf"
+                );
+                return;
+            }
+            if (body->invalid || body->expected == 0 || body->received != body->expected) {
+                const bool tooLarge = body->expected > MESHTASTIC_MAX_PACKET_SIZE;
+                free(body);
+                sendHttpPhoneApiError(
+                    request,
+                    tooLarge ? 413 : 400,
+                    tooLarge ? "ToRadio protobuf is too large" : "Incomplete ToRadio protobuf"
+                );
+                return;
+            }
+            if (!bridge_enqueue_http_to_ble(body->data, body->received)) {
+                free(body);
+                sendHttpPhoneApiError(request, 503, "Meshtastic radio queue is unavailable or full");
+                return;
+            }
+            free(body);
+
+            AsyncWebServerResponse* response = request->beginResponse(204);
+            addHttpPhoneApiHeaders(response, "PUT, OPTIONS");
+            request->send(response);
+        },
+        nullptr,
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (index == 0) {
+                HttpPhoneApiBody* body = static_cast<HttpPhoneApiBody*>(calloc(1, sizeof(HttpPhoneApiBody)));
+                request->_tempObject = body;
+                if (!body) {
+                    return;
+                }
+                body->expected = total;
+                body->invalid = total == 0 || total > MESHTASTIC_MAX_PACKET_SIZE;
+            }
+
+            HttpPhoneApiBody* body = static_cast<HttpPhoneApiBody*>(request->_tempObject);
+            if (!body || body->invalid) {
+                return;
+            }
+            if (index != body->received || index + len > body->expected || index + len > sizeof(body->data)) {
+                body->invalid = true;
+                return;
+            }
+            memcpy(body->data + index, data, len);
+            body->received += len;
+        }
+    );
+
+    server.on("/api/v1/fromradio", HTTP_OPTIONS, [](AsyncWebServerRequest* request) {
+        bridge_http_phoneapi_mark_active();
+        AsyncWebServerResponse* response = request->beginResponse(204);
+        addHttpPhoneApiHeaders(response, "GET, OPTIONS");
+        request->send(response);
+    });
+
+    server.on("/api/v1/fromradio", HTTP_GET, [](AsyncWebServerRequest* request) {
+        bridge_http_phoneapi_mark_active();
+        const bool drainAll = request->hasParam("all") &&
+                              request->getParam("all")->value().equalsIgnoreCase("true");
+        AsyncResponseStream* response = request->beginResponseStream("application/x-protobuf");
+        addHttpPhoneApiHeaders(response, "GET, OPTIONS");
+
+        uint8_t packet[MESHTASTIC_MAX_PACKET_SIZE];
+        do {
+            const size_t len = bridge_dequeue_http_from_ble(packet, sizeof(packet));
+            if (len == 0) {
+                break;
+            }
+            response->write(packet, len);
+        } while (drainAll);
+
+        request->send(response);
+    });
+
     // A fresh public image cannot contain a shared OTA secret. Permit one-time
     // or replacement key provisioning only from a client connected directly
     // to the local setup AP. The secret is write-only and mirrored in NVS.
@@ -1917,6 +2151,8 @@ void config_ui_start_server() {
         response->print(tailscale_net_is_derp_connected() ? "true" : "false");
         response->print(",\"state\":\"");
         utils_escape_json_print(*response, tailscale_net_state_name());
+        response->print("\",\"auth_url\":\"");
+        utils_escape_json_print(*response, tailscale_net_auth_url());
         response->print("\",\"vpn_ip\":\"");
         utils_escape_json_print(*response, tailscale_net_vpn_ip());
         response->print("\",\"peer_count\":");
@@ -2024,19 +2260,13 @@ void config_ui_start_server() {
         request->send(200, "application/json", "{\"success\":true,\"restart_required\":true}");
     });
 
-    // Save native Tailscale configuration. The auth key is write-only; an
-    // empty value keeps the existing key unless clear_auth_key is requested.
+    // Save native Tailscale configuration. Interactive enrollment obtains a
+    // one-time browser URL from the control plane; no auth/API key is needed.
+    // A legacy stored auth key is preserved but no longer transmitted.
     server.on("/save_tailscale", HTTP_POST, [](AsyncWebServerRequest *request){
         const bool enabled = request->hasParam("enabled", true) && request->getParam("enabled", true)->value() == "true";
         String deviceName = request->hasParam("device_name", true) ? request->getParam("device_name", true)->value() : "";
-        String authKey = request->hasParam("auth_key", true) ? request->getParam("auth_key", true)->value() : "";
-        const bool clearAuthKey = request->hasParam("clear_auth_key", true) && request->getParam("clear_auth_key", true)->value() == "true";
         deviceName.trim();
-        authKey.trim();
-
-        BridgeConfig oldCfg = config_ui_load();
-        if (authKey.isEmpty() && !clearAuthKey) authKey = oldCfg.tailscale_auth_key;
-        if (clearAuthKey) authKey = "";
 
         bool validName = !deviceName.isEmpty() && deviceName.length() <= 63;
         for (size_t i = 0; validName && i < deviceName.length(); ++i) {
@@ -2046,15 +2276,13 @@ void config_ui_start_server() {
         if (validName) {
             validName = deviceName[0] != '-' && deviceName[deviceName.length() - 1] != '-';
         }
-        const bool validAuthKey = !authKey.isEmpty() && authKey.length() <= 128 && authKey.startsWith("tskey-auth-");
-        if (enabled && (!validName || !validAuthKey)) {
-            request->send(400, "application/json", "{\"success\":false,\"error\":\"Tailscale requires a lowercase hostname and a valid tskey-auth key.\"}");
+        if (enabled && !validName) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"Tailscale requires a valid lowercase hostname.\"}");
             return;
         }
 
         preferences.putBool("ts_enabled", enabled);
         preferences.putString("ts_name", deviceName);
-        preferences.putString("ts_auth", authKey);
         if (enabled) preferences.putBool("wg_enabled", false);
         backupCurrentConfiguration();
         request->send(200, "application/json", "{\"success\":true,\"restart_required\":true}");

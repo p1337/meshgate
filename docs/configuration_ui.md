@@ -34,8 +34,15 @@ rebooting into normal bridge mode.
     * **Custom CA Root Certificate** textarea for uploading private PEM certificates.
   * Independent **Save MQTT Settings** button persists settings to NVS and applies them immediately.
 * **Tailscale Card (IDF-5 Nano build):**
-  * Displays enablement, live connection state, device name, assigned VPN IPv4 address, known peer count, and whether an auth key is stored.
-  * Accepts a lowercase device name and write-only `tskey-auth-...` enrollment key. Saving an empty key preserves the stored value; an explicit checkbox removes it.
+  * Displays enablement, live connection state, device name, assigned VPN IPv4 address, known peer count, and enrollment state.
+  * Includes a self-contained four-step setup wizard. No auth/API key is
+    copied: after save/reboot, the card displays the one-time control-plane
+    browser URL and polls automatically while the user approves the device.
+  * After enrollment, displays copyable Web UI and Meshtastic PhoneAPI
+    addresses (`http://100.x/` and `100.x:4403`) plus a direct Machines link
+    for disabling device key expiry on unattended gateways.
+  * Accepts a lowercase device name. Existing legacy auth-key values remain
+    write-only and preserved but are ignored by interactive enrollment.
   * Tailscale and classic WireGuard are mutually exclusive because both share the same embedded WireGuard engine.
 * **System Actions Card:**
   * Displays formatted **System Uptime** (e.g. `1h 24m 12s`).
@@ -81,6 +88,8 @@ rebooting into normal bridge mode.
    * **`GET /config`**: Returns current settings as JSON, including WiFi/BLE/MQTT/WireGuard values plus `tailscale_enabled`, `tailscale_supported`, `tailscale_device_name`, and `tailscale_has_auth_key`. Secret WiFi, BLE PIN, WireGuard, OTA, and Tailscale values are never returned. `ble_has_pin` reports only whether a PIN is stored.
    * **`GET /status`**: Returns unified live diagnostic and telemetry JSON polled every 7 seconds by the client: contains `uptime_seconds`, `heap` (free, min_free, max_alloc), `wifi` (connected, is_ap_mode, ip, rssi, mdns_host), `ble` (connected, rx_count, tx_count, invalid_count), `tcp` (connected_clients, max_clients, rx_count, tx_count, invalid_count), `traffic` (ble, tcp, mqtt rx/tx/invalid), `queues` (waiting, capacity, dropped for `tcp_to_ble`, `ble_to_tcp`, `mqtt_to_ble`), `stacks` (ble_task, net_task free bytes), and `mqtt` (gateway_enabled, state, radio_proxy_enabled, broker, root, published, received, dropped, invalid).
    * **`GET /metrics`**: Standards-compliant Prometheus / OpenMetrics scraping endpoint (`text/plain; version=0.0.4; charset=utf-8`). Streams line-by-line metrics (`meshbridge_*`) directly into lwIP network output buffers via `AsyncResponseStream` with zero large heap allocations. Suitable for scraping by Prometheus, VictoriaMetrics, Grafana Agent, and Home Assistant.
+   * **`OPTIONS|PUT /api/v1/toradio`**: Standard Meshtastic HTTP PhoneAPI write endpoint. The PUT body is one bounded raw `ToRadio` protobuf and returns `204` after it is queued for BLE.
+   * **`OPTIONS|GET /api/v1/fromradio`**: Standard Meshtastic HTTP PhoneAPI polling endpoint. Returns one raw `FromRadio` protobuf, an empty body, or all queued packets when `all=true`. Responses include CORS and Private Network Access headers for local browser clients.
    * **`GET /start_scan_wifi`**: Initiates an asynchronous WiFi network scan.
    * **`GET /scan_wifi_results`**: Polls WiFi scan progress and returns JSON array of discovered networks: `[{"ssid":"MyWiFi","rssi":-58,"is_open":false}]`.
    * **`GET /start_scan`**: Initiates an asynchronous 4-second BLE scan.
@@ -90,8 +99,8 @@ rebooting into normal bridge mode.
    * **`POST /save_wifi`**: Saves `wifi_ssid` and `wifi_pass` to NVS.
    * **`POST /save_ble`**: Saves `ble_name`, `ble_mac`, and a validated six-digit `ble_pin` to NVS. An empty PIN preserves the stored value.
    * **`POST /save_mqtt`**: Saves `mqtt_enabled`, `mqtt_tls_insec`, and `mqtt_custom_ca` to NVS and applies changes live if in Normal mode.
-   * **`POST /save_tailscale`**: Saves `enabled`, `device_name`, `auth_key`, and `clear_auth_key` redundantly. A reboot starts the selected tunnel.
-   * **`GET /tailscale_status`**: Reports `enabled`, `connected`, state name, assigned VPN IP, and peer count without returning credentials.
+   * **`POST /save_tailscale`**: Saves `enabled` and `device_name` redundantly. A reboot starts browser enrollment or reconnects the persistent identity.
+   * **`GET /tailscale_status`**: Reports `enabled`, `connected`, state name, assigned VPN IP, peer count and a pending RAM-only `auth_url` while browser approval is required.
    * **`POST /save_system`**: Saves `debug_logs` boolean flag to NVS.
    * **`POST /reboot`**: Restarts the ESP32 into normal bridge mode.
    * **`POST /reset`**: Erases all stored NVS configurations and reboots the ESP32 into Setup Mode.
@@ -134,6 +143,9 @@ The following keys are stored in the `Preferences` namespace (`bridge_cfg`):
   * **No Native `window.alert()` / `window.confirm()` / `window.prompt()`:** Many OS captive browser engines completely suppress, ignore, or hang on native browser dialogs. All notifications, alerts, and confirmation dialogs must use **custom in-DOM HTML/CSS modals** (e.g., `#modal-overlay`, `.alert-box`) rather than native JavaScript dialogs.
   * **Self-Contained Offline Assets:** In AP Setup mode, the client device has no upstream internet access. The UI must never reference external CDN scripts, CSS files, or web fonts; all CSS, SVGs, HTML, and JavaScript must be entirely self-contained within `PROGMEM` flash memory.
   * **No External Navigation / New Tabs:** Popups or links targeting `_blank` may be blocked or forcibly close the CNA window.
+  The Tailscale wizard therefore shows copyable destination URLs as a fallback;
+  users can open them in a normal internet-connected browser when the captive
+  setup popup cannot launch an external tab.
   * **Stateless Client Session:** OS captive popups often discard cookies and `localStorage` when closed; all state must reside in ESP32 NVS or be queried dynamically from `/config` and `/status`.
 * **Zero-Heap PROGMEM Serving:** The main web UI HTML payload is streamed directly out of flash memory via `AsyncProgmemResponse`, eliminating the ~35 KB temporary heap spike when serving web clients.
 * **Client-Side Polling:** The unified `/status` endpoint is polled periodically (defaulting to 7s, dynamically adjustable to 3s or 1s via the <kbd>P</kbd> key) using chained asynchronous requests to maintain real-time telemetry while completely avoiding request stacking and minimizing CPU/network overhead.
