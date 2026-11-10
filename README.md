@@ -21,6 +21,17 @@ redundant configuration storage, remote logs, watchdog recovery, scheduled
 maintenance restarts, a persistent offline message mailbox, MQTT proxying,
 classic WireGuard, Prometheus metrics and an RGB IP-address indicator.
 
+> [!IMPORTANT]
+> MeshGate is a source fork of
+> [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
+> This repository was created independently rather than with GitHub's Fork
+> button, so GitHub may not display the usual fork-network banner. Upstream's
+> MIT license and authorship are preserved.
+>
+> MeshGate is built on the valuable groundwork of
+> [Crim](https://github.com/Crim), who deserves explicit credit for the
+> original idea and upstream implementation that made this project possible.
+
 ## Contents
 
 - [Why this fork exists](#why-this-fork-exists)
@@ -45,13 +56,6 @@ classic WireGuard, Prometheus metrics and an RGB IP-address indicator.
 **Arduino Nano ESP32 (ESP32-S3, without headers)** is the recommended board and the production firmware, native Tailscale and one-click OTA path are tested on it.
 
 **[Buy the tested board on Amazon](https://link.amazon/B0bHRPLPo)** · **[Install MeshGate in the Web Flasher](https://p1337.github.io/meshgate/)**
-
-> [!IMPORTANT]
-> MeshGate is a source fork of
-> [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
-> This repository was created independently rather than with GitHub's Fork
-> button, so GitHub may not display the usual fork-network banner. Upstream's
-> MIT license and authorship are preserved.
 
 ## Why this fork exists
 
