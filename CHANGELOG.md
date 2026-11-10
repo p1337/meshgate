@@ -4,6 +4,13 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.8] - 2026-11-10
+
+- Replaced the embedded raster logo with a native 1.7 KB SVG composed only of
+  the MeshGate symbol and wordmark paths.
+- Marked the main control-page response as non-cacheable so a browser always
+  receives the asset references belonging to the running firmware after OTA.
+
 ## [v0.7.7] - 2026-11-10
 
 - Reduced the embedded logo payload from 346 KB to 75 KB while preserving its

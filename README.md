@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/assets/meshgate-logo.png" alt="MeshGate" width="760">
+  <img src="web/assets/meshgate-logo.svg" alt="MeshGate" width="760">
 </p>
 
 # MeshGate

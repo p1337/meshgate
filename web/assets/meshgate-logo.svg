@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 296" role="img" aria-labelledby="title">
+  <title id="title">MeshGate</title>
+  <g>
+    <path fill="#fa5300" transform="translate(142 80)" d="M0 0 4 2l8 9 5 5 46 46 15 1 2-5 7-6 8-3h9l8 3 5 4 5 8 1 3v12l-4 8-8 7-5 2H93l-8-4-5-5-2-5-16 1-61 61-4-1-11-12-48-48-16-1-2 5-8 7-5 2h-13l-8-4-7-8-2-5V66l3-6 5-6 10-5h11l10 5 6 7v2l16-1Zm0 26-12 12-5 5-9 10-20 20 6 7 38 38 4-1 14-15 7-8 5-5 17-17-6-7-12-12-7-8L5 30l-3-4Z"/>
+    <path fill="#03f082" transform="translate(142 80)" d="m0 0 2 1-1 26-11 11-5 5-10 10-20 20 6 7 37 37 2 1v26l-4-2-9-10-49-49-16-1-2 5-8 7-5 2h-13l-8-4-7-8-2-5V66l3-6 5-6 10-5h11l10 5 6 7v2l16-1Z"/>
+    <path fill="#02dd6d" transform="translate(287 114)" d="M0 0h21l15 24 6 9 2-2 3 1 4-4 10-16 8-12h20l1 1v75H68l-1-36-13 20H36l-7-10-7-11-1 37-20 1-2 1Zm46 34Zm-3 1Zm2 1Zm-1 1Z"/>
+    <path fill="#02d969" d="M382 114h62v18h-41v11h33v18h-33v11h41v18h-62Z"/>
+    <path fill="#fa5001" transform="translate(610 114)" d="M0 0h55v18l-7 1H10l-3 4v31l3 3h23l2-2 1-8H20V29h35l1 1v33L43 76H0l-11-11-3-2-1-6V34l1-21 8-7Z"/>
+    <path fill="#04d363" transform="translate(518 114)" d="M0 0h21v29l29-1-1-28h23v75l-1 1H50V61l1-14H21v29l-22 1Z"/>
+    <path fill="#fa4f00" transform="translate(809 114)" d="M0 0h62v18H21v11h33l-1 18H21v11h41v18H1l-1 2-2-1v-5l1 0Z"/>
+    <path fill="#02d768" transform="translate(459 114)" d="M0 0h51v18l-41 1-2 2v5l2 2 31 1 13 13v21l-10 9-4 4h-51V58l41-1 2-2v-6l-2-1-31-1-12-12-2-22 5-3Z"/>
+    <path fill="#fb4f00" transform="translate(696 114)" d="M0 0h24l6 12 16 39 9 22v3H33l-5-10v-2H-4l-3 10-1 2h-22l1-6 18-44Zm11 25L3 46h18l-6-16-2-5Z"/>
+    <path fill="#fb5000" transform="translate(738 114)" d="M0 0h67v18H44v58H23V18H0Z"/>
+  </g>
+</svg>

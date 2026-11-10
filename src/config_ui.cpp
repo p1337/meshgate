@@ -27,10 +27,10 @@ Preferences backupPreferences;
  */
 AsyncWebServer server(80);
 
-// Official MeshGate logo. PlatformIO embeds the exact shared PNG used by the
+// Official MeshGate logo. PlatformIO embeds the exact shared SVG used by the
 // repository and Web Flasher, so the captive portal never needs the internet.
-extern const uint8_t meshgate_logo_png_start[] asm("_binary_web_assets_meshgate_logo_png_start");
-extern const uint8_t meshgate_logo_png_end[] asm("_binary_web_assets_meshgate_logo_png_end");
+extern const uint8_t meshgate_logo_svg_start[] asm("_binary_web_assets_meshgate_logo_svg_start");
+extern const uint8_t meshgate_logo_svg_end[] asm("_binary_web_assets_meshgate_logo_svg_end");
 
 /**
  * Defines the namespace which preferences are stored to NVS under.
@@ -186,7 +186,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MeshGate Control</title>
-<link rel="icon" type="image/png" href="/assets/meshgate-logo.png?v=)rawliteral" FIRMWARE_VERSION R"rawliteral(">
+<link rel="icon" type="image/svg+xml" href="/assets/meshgate-logo.svg?v=)rawliteral" FIRMWARE_VERSION R"rawliteral(">
 <style>
   :root { --bg:#0a0c10; --panel:#0f1318; --panel2:#111a24; --border:#1e2a38; --accent:#5eed97; --accent2:#ff6b35; --green:#39ff14; --yellow:#ffd60a; --red:#ff3860; --muted:#7d8daa; --text:#c8d6e5; --dim:#8ea2bb; --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace; --sans:"Segoe UI","Exo 2",sans-serif; }
   * { box-sizing: border-box; }
@@ -296,7 +296,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 </style>
 </head>
 <body>
-  <img class="brand-logo" src="/assets/meshgate-logo.png?v=)rawliteral" FIRMWARE_VERSION R"rawliteral(" width="900" height="296" decoding="sync" alt="MeshGate">
+  <img class="brand-logo" src="/assets/meshgate-logo.svg?v=)rawliteral" FIRMWARE_VERSION R"rawliteral(" width="900" height="296" decoding="sync" alt="MeshGate">
   <p class="brand-subtitle">Meshtastic remote access gateway</p>
 
   <nav class="tab-nav" role="tablist" aria-label="MeshGate settings">
@@ -2457,12 +2457,12 @@ void config_ui_start_server() {
 
     // Serve the official logo from the same flash bytes used by the repository
     // and Web Flasher. No external request is made in setup AP mode.
-    server.on("/assets/meshgate-logo.png", HTTP_GET, [](AsyncWebServerRequest *request){
-        const size_t logoSize = static_cast<size_t>(meshgate_logo_png_end - meshgate_logo_png_start);
+    server.on("/assets/meshgate-logo.svg", HTTP_GET, [](AsyncWebServerRequest *request){
+        const size_t logoSize = static_cast<size_t>(meshgate_logo_svg_end - meshgate_logo_svg_start);
         AsyncWebServerResponse* response = request->beginResponse(
             200,
-            "image/png",
-            meshgate_logo_png_start,
+            "image/svg+xml; charset=utf-8",
+            meshgate_logo_svg_start,
             logoSize
         );
         response->addHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -2472,7 +2472,14 @@ void config_ui_start_server() {
     // Serve the main HTML page directly from PROGMEM flash avoiding heap copy.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         log_d("[WebUI] GET / requested (Client: %s)", request->client()->remoteIP().toString().c_str());
-        request->send(200, "text/html; charset=utf-8", (const uint8_t*)index_html, sizeof(index_html) - 1);
+        AsyncWebServerResponse* response = request->beginResponse(
+            200,
+            "text/html; charset=utf-8",
+            (const uint8_t*)index_html,
+            sizeof(index_html) - 1
+        );
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
     });
 
     // Fetch current configuration JSON

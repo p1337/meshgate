@@ -265,7 +265,7 @@ To support secure MQTTS connections to any public broker (such as `mqtt.meshtast
    ```ini
    board_build.embed_files =
        data/cert/x509_crt_bundle.bin
-       web/assets/meshgate-logo.png
+       web/assets/meshgate-logo.svg
    ```
    During compilation, the linker exposes the binary start symbol `_binary_data_cert_x509_crt_bundle_bin_start`.
 3. **Runtime Initialization:** On boot, `mqtt_net_init()` invokes:
@@ -300,13 +300,13 @@ rm -rf /tmp/ca_env /tmp/gen_crt_bundle.py /tmp/cacert.pem
 
 ### Shared MeshGate brand asset
 
-`web/assets/meshgate-logo.png` is the canonical transparent logo. The README,
+`web/assets/meshgate-logo.svg` is the canonical transparent vector logo. The README,
 GitHub Pages Web Flasher and embedded device UI must reference that same file;
 do not create divergent copies or redraw it. The linker exposes the embedded
-asset as `_binary_web_assets_meshgate_logo_png_start` and `_end`, and the
-device serves it at `/assets/meshgate-logo.png`. Keep this route local so the
-captive portal remains usable without internet access. Keep the committed PNG
-at or below 100 KiB and include its exact width and height in both HTML views.
+asset as `_binary_web_assets_meshgate_logo_svg_start` and `_end`, and the
+device serves it at `/assets/meshgate-logo.svg`. Keep this route local so the
+captive portal remains usable without internet access. Keep the committed SVG
+at or below 10 KiB and include its intrinsic width and height in both HTML views.
 Large image responses can occupy the constrained AsyncTCP/Tailscale send path
 long enough to delay `/status` and Meshtastic clients after an interrupted
 mobile download. Change the firmware-version query string whenever the asset

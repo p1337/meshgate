@@ -23,11 +23,11 @@ and reset controls. Changing tabs never reloads the page or discards an open
 edit form; the selected tab is reflected in the URL fragment.
 
 The header and browser icon use the official transparent MeshGate logo from
-`web/assets/meshgate-logo.png`. PlatformIO embeds those exact PNG bytes in the
-firmware, and `GET /assets/meshgate-logo.png` serves them locally. The setup AP
+`web/assets/meshgate-logo.svg`. PlatformIO embeds those exact SVG bytes in the
+firmware, and `GET /assets/meshgate-logo.svg` serves them locally. The setup AP
 therefore displays the same identity as GitHub and the Web Flasher without an
-internet dependency. The embedded PNG must remain below 100 KiB and declare
-its pixel dimensions in HTML: a larger response can monopolize the constrained
+internet dependency. The embedded SVG must remain below 10 KiB and declare
+its intrinsic dimensions in HTML: a larger response can monopolize the constrained
 AsyncTCP/Tailscale output path after a mobile browser interrupts the download.
 The image URL carries the firmware version as its cache key so an OTA cannot
 reuse a failed response from an older build.
@@ -127,7 +127,7 @@ reuse a failed response from an older build.
 
 2. **Web Server Endpoints (`config_ui.cpp`)**:
    * **`GET /`**: Serves the single-page HTML/CSS/JS application directly from flash (`PROGMEM`) via `AsyncProgmemResponse` with zero heap allocation.
-   * **`GET /assets/meshgate-logo.png`**: Serves the official PNG directly from embedded flash with a bounded cache lifetime; no filesystem mount or external network is required.
+   * **`GET /assets/meshgate-logo.svg`**: Serves the official vector logo directly from embedded flash with a versioned cache key; no filesystem mount or external network is required.
    * **`GET /config`**: Returns current settings as JSON, including WiFi/BLE/MQTT/WireGuard values plus `tailscale_enabled`, `tailscale_supported`, `tailscale_device_name`, and `tailscale_has_auth_key`. Secret WiFi, BLE PIN, WireGuard, OTA, and Tailscale values are never returned. `ble_has_pin` reports only whether a PIN is stored.
    * **`GET /status`**: Returns unified live diagnostic and telemetry JSON polled every 7 seconds by the client: contains `uptime_seconds`, `heap` (free, min_free, max_alloc), `wifi` (connected, is_ap_mode, ip, rssi, mdns_host), `ble` (connected, rx_count, tx_count, invalid_count), `tcp` (connected_clients, max_clients, rx_count, tx_count, invalid_count), `traffic` (ble, tcp, mqtt rx/tx/invalid), `queues` (waiting, capacity, dropped for `tcp_to_ble`, `ble_to_tcp`, `mqtt_to_ble`), `stacks` (ble_task, net_task free bytes), and `mqtt` (gateway_enabled, state, radio_proxy_enabled, broker, root, published, received, dropped, invalid).
    * **`GET /metrics`**: Standards-compliant Prometheus / OpenMetrics scraping endpoint (`text/plain; version=0.0.4; charset=utf-8`). Streams line-by-line metrics (`meshbridge_*`) directly into lwIP network output buffers via `AsyncResponseStream` with zero large heap allocations. Suitable for scraping by Prometheus, VictoriaMetrics, Grafana Agent, and Home Assistant.
