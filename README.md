@@ -34,10 +34,6 @@ an RGB IP-address indicator.
 - [Security](#security)
 - [Credits and license](#credits-and-license)
 
-### Support MeshGate
-
-**[☕ Buy me a coffee — donate €3 via PayPal](https://paypal.me/p1337/3EUR)**
-
 ### Recommended and tested hardware
 
 [![Arduino Nano ESP32 tested with MeshGate](web/assets/arduino-nano-esp32.png)](https://link.amazon/B0bHRPLPo)
@@ -284,3 +280,7 @@ The native Tailscale work uses
 [MicroLink](https://github.com/kaieda/microlink). The design theme is inspired
 by [MeshRadar](https://meshradar.pl/) without copying its logo or proprietary
 assets. Meshtastic is a trademark of its respective owner.
+
+## Support MeshGate
+
+**[☕ Buy me a coffee — donate €3 via PayPal](https://paypal.me/p1337/3EUR)**
