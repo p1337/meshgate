@@ -220,7 +220,9 @@ const char index_html[] PROGMEM = R"rawliteral(
   .platform-link svg { width:20px; height:20px; flex:0 0 20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .remote-summary { display:none; margin-bottom:14px; padding:14px; border:1px solid var(--accent); background:rgba(94,237,151,.05); border-radius:3px; }
   .remote-summary h3 { margin:0 0 7px; color:var(--accent); font:700 15px var(--mono); letter-spacing:.4px; }
-  .remote-primary-address { display:block; margin:5px 0 10px; color:var(--green); font:700 20px var(--mono); word-break:break-all; }
+  .remote-address-row { display:grid; grid-template-columns:145px 1fr; gap:8px; align-items:baseline; margin:10px 0 4px; }
+  .remote-address-label { color:var(--text); font:700 12px var(--mono); }
+  .remote-address-value { color:var(--green); font:700 18px var(--mono); word-break:break-all; }
   .remote-summary p { margin:7px 0; color:var(--text); font-size:13px; line-height:1.5; }
   .remote-summary code { color:var(--accent); font:700 12px var(--mono); word-break:break-all; }
   .enrollment-state { margin-top:9px; padding:10px; border-left:3px solid var(--muted); background:rgba(125,141,170,.06); }
@@ -234,6 +236,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     .tailscale-install { grid-template-columns:1fr; }
     .tailscale-qr { margin:auto; }
     .platform-links { grid-template-columns:1fr 1fr; }
+    .remote-address-row { grid-template-columns:1fr; gap:2px; }
   }
   .card small { color:var(--dim)!important; }
   .footer { text-align:center; font:12px var(--mono); color:var(--muted); margin-top:24px; padding-bottom:20px; }
@@ -367,13 +370,21 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
     <div id="tailscale-view">
       <div id="tailscale-connection-box" class="remote-summary">
-        <h3>Tailscale IP: <span class="remote-primary-address" id="view-tailscale-phoneapi"></span></h3>
-        <p>To connect to your Meshtastic node through Tailscale, add a <strong>Network / TCP</strong> device in the Meshtastic app and enter <code id="view-tailscale-phoneapi-inline"></code>.</p>
-        <p>For configuration, logs and future updates, open <a id="link-tailscale-web" href="#"><code id="view-tailscale-web-address"></code></a>.</p>
+        <h3>Tailscale IP</h3>
+        <div class="remote-address-row">
+          <span class="remote-address-label">Meshtastic App:</span>
+          <span class="remote-address-value" id="view-tailscale-app-address"></span>
+        </div>
+        <p>In the Meshtastic app, add a <strong>Network / TCP</strong> device and enter the address above including port <strong>4403</strong>.</p>
+        <div class="remote-address-row">
+          <span class="remote-address-label">Meshtastic Client:</span>
+          <span class="remote-address-value" id="view-tailscale-client-address"></span>
+        </div>
+        <p>In the browser-based Meshtastic Client, select <strong>HTTP</strong>, enter only the IP above without a port, and leave <strong>HTTPS disabled</strong>.</p>
         <div class="wizard-actions">
           <a id="link-tailscale-web-button" href="#">Open MeshGate</a>
-          <button type="button" onclick="copyTailscaleAddress()">Copy Meshtastic address</button>
-          <a href="https://login.tailscale.com/admin/machines" target="_blank" rel="noopener noreferrer">Manage key expiry (optional)</a>
+          <button type="button" onclick="copyTailscaleAppAddress()">Copy App address</button>
+          <button type="button" onclick="copyTailscaleClientAddress()">Copy Client IP</button>
         </div>
       </div>
       <div class="info-row">
@@ -381,7 +392,6 @@ const char index_html[] PROGMEM = R"rawliteral(
         <span class="info-val"><span id="view-tailscale-status" class="status-pill disabled">Disabled</span></span>
       </div>
       <div class="info-row"><span class="info-label">Device name:</span><span class="info-val" id="view-tailscale-name">meshgate</span></div>
-      <div class="info-row"><span class="info-label">Tailscale IP:</span><span class="info-val" id="view-tailscale-ip">(Not connected)</span></div>
       <div class="info-row"><span class="info-label">Remote path:</span><span class="info-val" id="view-tailscale-path">(Not connected)</span></div>
       <div class="info-row"><span class="info-label">Known peers:</span><span class="info-val" id="view-tailscale-peers">0</span></div>
       <div class="info-row"><span class="info-label">Enrollment:</span><span class="info-val" id="view-tailscale-enrollment">Browser login</span></div>
@@ -852,7 +862,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       return fetch('/tailscale_status')
         .then(r => r.json())
         .then(status => {
-          document.getElementById('view-tailscale-ip').innerText = status.vpn_ip || '(Not connected)';
           document.getElementById('view-tailscale-peers').innerText = status.peer_count || 0;
           document.getElementById('view-tailscale-path').innerText = status.connected ? (status.derp_connected ? 'Ready (DERP relay)' : 'Connected (path negotiating)') : '(Not connected)';
           connectionBox.style.display = status.connected && status.vpn_ip ? 'block' : 'none';
@@ -873,11 +882,9 @@ const char index_html[] PROGMEM = R"rawliteral(
           }
           if (status.connected && status.vpn_ip) {
             const webAddress = 'http://' + status.vpn_ip + '/';
-            const phoneApi = status.vpn_ip + ':4403';
-            document.getElementById('view-tailscale-web-address').innerText = webAddress;
-            document.getElementById('view-tailscale-phoneapi').innerText = phoneApi;
-            document.getElementById('view-tailscale-phoneapi-inline').innerText = phoneApi;
-            document.getElementById('link-tailscale-web').href = webAddress;
+            const appAddress = status.vpn_ip + ':4403';
+            document.getElementById('view-tailscale-app-address').innerText = appAddress;
+            document.getElementById('view-tailscale-client-address').innerText = status.vpn_ip;
             document.getElementById('link-tailscale-web-button').href = webAddress;
             if (tailscaleEnrollmentActive) {
               tailscaleEnrollmentActive = false;
@@ -885,7 +892,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                 clearInterval(tailscaleEnrollmentTimer);
                 tailscaleEnrollmentTimer = null;
               }
-              setTailscaleEnrollmentState('success', 'Your device has been added', 'Remote access is connected. The Meshtastic address is ' + phoneApi + '.');
+              setTailscaleEnrollmentState('success', 'Your device has been added', 'Remote access is connected. Your connection addresses are ready.');
               const button = document.getElementById('btn-save-tailscale');
               if (button) button.disabled = false;
               if (currentConfig) currentConfig.tailscale_enabled = true;
@@ -938,9 +945,14 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (ok) copied(); else failed();
     }
 
-    function copyTailscaleAddress() {
-      const value = document.getElementById('view-tailscale-phoneapi').innerText;
-      copyTailscaleText(value, 'Meshtastic TCP address');
+    function copyTailscaleAppAddress() {
+      const value = document.getElementById('view-tailscale-app-address').innerText;
+      copyTailscaleText(value, 'Meshtastic App address');
+    }
+
+    function copyTailscaleClientAddress() {
+      const value = document.getElementById('view-tailscale-client-address').innerText;
+      copyTailscaleText(value, 'Meshtastic Client IP');
     }
 
     function copyTailscaleLoginUrl() {

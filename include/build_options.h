@@ -144,7 +144,7 @@
 // Keep main on the next real release version. The release workflow injects
 // the matching Git tag during its clean build. MeshGate does not distribute
 // versionless/dev OTA images to end users.
-#define FIRMWARE_VERSION "v0.7.1"
+#define FIRMWARE_VERSION "v0.7.2"
 #endif
 
 #ifndef HARDWARE_BOARD_NAME
@@ -152,5 +152,5 @@
 #endif
 
 #ifndef PROJECT_GITHUB_URL
-#define PROJECT_GITHUB_URL "https://www.github.com/sourcelaborg/meshtastic-esp32-bt-bridge"
+#define PROJECT_GITHUB_URL "https://github.com/p1337/meshgate"
 #endif

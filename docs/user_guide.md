@@ -56,13 +56,15 @@ The Web UI contains a three-step keyless wizard:
    console or command line is required.
 3. Sign in and approve MeshGate. The original page checks authorization and
    changes to **Your device has been added**, then prominently displays
-   `<tailscale-ip>:4403` for Meshtastic and `http://<tailscale-ip>/` for later
-   configuration.
+   `<tailscale-ip>:4403` for the Meshtastic app and `<tailscale-ip>` without a
+   port for the browser-based Meshtastic Client.
 
-The connected **Tailscale (Remote VPN)** card displays and copies both addresses needed remotely:
-`http://<tailscale-ip>/` for MeshGate and `<tailscale-ip>:4403` for the
-Meshtastic app. On the remote phone or computer, Tailscale must be active and
-signed into the same tailnet.
+The connected **Tailscale (Remote VPN)** card displays exactly two connection
+values: **Meshtastic App** uses `<tailscale-ip>:4403`; **Meshtastic Client**
+uses only `<tailscale-ip>` with HTTP selected and HTTPS disabled. The lower
+status list deliberately does not repeat the IP. **Open MeshGate** opens the
+control page without printing a third address. On the remote phone or computer,
+Tailscale must be active and signed into the same tailnet.
 
 mDNS is link-local and normally does not cross a VPN. Manual IP entry is
 therefore expected. A machine appearing in the Tailscale console proves only

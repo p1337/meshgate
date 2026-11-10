@@ -169,6 +169,13 @@ three-client TCP stress test.
 `derp_connected: true`. The first value alone only proves Tailscale control-plane
 registration and does not prove that HTTP or TCP 4403 can traverse the tailnet.
 
+The connected-device UI deliberately exposes two distinct values: the native
+Meshtastic app uses `<tailscale-ip>:4403`, while the browser-based Meshtastic
+Client uses the bare `<tailscale-ip>` with HTTP selected and HTTPS disabled.
+Do not repeat the address in the lower status list. The firmware footer must
+resolve `PROJECT_GITHUB_URL` to the MeshGate repository; upstream attribution
+belongs in repository documentation rather than the product navigation.
+
 Interactive enrollment follows the native Tailscale registration protocol.
 An unauthenticated RegisterResponse supplies `AuthURL`; MicroLink holds it in
 RAM, exposes it through `microlink_get_auth_url()`, and sends it in the next

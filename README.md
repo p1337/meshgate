@@ -159,8 +159,10 @@ auth key or API key is required.
 
 From another tailnet device:
 
-- open `http://<tailscale-ip>/` for control and diagnostics;
-- connect the Meshtastic app manually to `<tailscale-ip>:4403`;
+- connect the Meshtastic mobile/desktop app to `<tailscale-ip>:4403`;
+- in the browser-based Meshtastic Client select HTTP and enter only
+  `<tailscale-ip>` without a port, with HTTPS disabled;
+- open `http://<tailscale-ip>/` for MeshGate control and diagnostics;
 - use the same address for authenticated OTA.
 
 The browser login URL is held in RAM only and is cleared after authorization.

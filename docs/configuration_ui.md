@@ -44,9 +44,11 @@ rebooting into normal bridge mode.
     The original page remains open and reports approval automatically. A
     visible login link remains as the fallback for captive browsers that block
     popups.
-  * After enrollment, displays copyable Web UI and Meshtastic PhoneAPI
-    addresses (`http://100.x/` and `100.x:4403`) with a short Meshtastic
-    connection instruction. Machine/key-expiry management is optional.
+  * After enrollment, displays two copyable connection values without
+    repeating the IP in the lower status list: `100.x:4403` for the Meshtastic
+    app, and bare `100.x` for the browser-based Meshtastic Client using HTTP
+    with HTTPS disabled. The Web UI remains available through a single
+    **Open MeshGate** action without printing a third address.
   * Accepts a lowercase device name. Existing legacy auth-key values remain
     write-only and preserved but are ignored by interactive enrollment.
   * Tailscale and classic WireGuard are mutually exclusive because both share the same embedded WireGuard engine.
@@ -66,7 +68,10 @@ rebooting into normal bridge mode.
   * Downloads only the production ESP32-S3 image named by the official release
     metadata and verifies TLS, board identity, size and SHA-256 before activation.
 * **Footer:**
-  * Dynamically embeds the compiled Firmware Version and links to the project's GitHub repository.
+  * Dynamically embeds the compiled Firmware Version and links only to the
+    MeshGate repository (`https://github.com/p1337/meshgate`). Upstream credits
+    remain in the repository documentation and are not used as the product
+    footer destination.
 
 ### 2. Live WiFi & BLE Scanning
 * **WiFi Scanning:** Runs asynchronously via `WiFi.scanNetworks(true)` in `WIFI_AP_STA` mode without dropping the captive portal AP connection. Discovered networks are deduplicated and ordered by signal strength (RSSI).
