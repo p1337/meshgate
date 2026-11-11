@@ -4,6 +4,14 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.16] - 2026-11-12
+
+- Kept the control page and logo responsive under fragmented internal memory
+  by streaming embedded flash assets through bounded 1 KiB send buffers.
+- Preserved two normal browser-request slots in low-memory mode so the page
+  bootstrap cannot reject its own versioned logo while recovery endpoints
+  retain their independent reserved capacity.
+
 ## [v0.7.15] - 2026-11-11
 
 - Fixed scheduled 00:00/06:00/12:00/18:00 maintenance restarts using UTC
@@ -193,6 +201,7 @@ are intentionally omitted.
 - Initial ESP32 BLE-to-TCP Meshtastic bridge release.
 
 [v0.7.15]: https://github.com/p1337/meshgate/compare/v0.7.14...v0.7.15
+[v0.7.16]: https://github.com/p1337/meshgate/compare/v0.7.15...v0.7.16
 [v0.7.14]: https://github.com/p1337/meshgate/compare/v0.7.13...v0.7.14
 [v0.7.13]: https://github.com/p1337/meshgate/compare/v0.7.12...v0.7.13
 [v0.7.12]: https://github.com/p1337/meshgate/compare/v0.7.11...v0.7.12

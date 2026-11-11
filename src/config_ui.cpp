@@ -40,10 +40,113 @@ extern const uint8_t index_html_gz_end[] asm("_binary_web_generated_index_html_g
 namespace {
 constexpr uint8_t MAX_NORMAL_WEB_REQUESTS = 3;
 constexpr uint8_t MAX_RESERVED_WEB_REQUESTS = 3;
-constexpr uint8_t LOW_MEMORY_NORMAL_WEB_REQUESTS = 1;
+constexpr uint8_t LOW_MEMORY_NORMAL_WEB_REQUESTS = 2;
 constexpr uint8_t LOW_MEMORY_RESERVED_WEB_REQUESTS = 2;
 constexpr uint32_t WEB_LOW_FREE_HEAP_BYTES = 24 * 1024;
 constexpr uint32_t WEB_LOW_LARGEST_BLOCK_BYTES = 8 * 1024;
+constexpr size_t WEB_FLASH_STREAM_CHUNK_BYTES = 1024;
+
+// ESPAsyncWebServer's stock AsyncProgmemResponse sizes each temporary send
+// allocation to the complete currently available TCP window. After TLS, BLE
+// and DERP have fragmented internal RAM, that window can be larger than the
+// biggest allocatable heap block. The allocation then fails on every ACK and
+// a large flash response never emits even its HTTP headers. This response
+// keeps one small bounded buffer in flight, so the control page remains
+// recoverable even when only small contiguous heap blocks remain.
+class BoundedProgmemResponse final : public AsyncWebServerResponse {
+public:
+    BoundedProgmemResponse(
+        int code,
+        const char* contentType,
+        const uint8_t* content,
+        size_t length
+    ) : content_(content) {
+        _code = code;
+        _contentType = contentType;
+        _contentLength = length;
+    }
+
+    bool _sourceValid() const override { return content_ != nullptr; }
+
+    void _respond(AsyncWebServerRequest* request) override {
+        addHeader("Connection", "close", false);
+        _assembleHead(head_, request->version());
+        _state = RESPONSE_HEADERS;
+        _ack(request, 0, 0);
+    }
+
+    size_t _ack(AsyncWebServerRequest* request, size_t len, uint32_t time) override {
+        (void)time;
+        _ackedLength += len;
+        inFlight_ = inFlight_ > len ? inFlight_ - len : 0;
+
+        if (_state == RESPONSE_WAIT_ACK) {
+            if (_ackedLength >= _writtenLength) _state = RESPONSE_END;
+            return 0;
+        }
+        if (_state != RESPONSE_HEADERS && _state != RESPONSE_CONTENT) return 0;
+
+        // Wait for the previous bounded block to be acknowledged. This avoids
+        // both AsyncTCP queue growth and parallel transient heap allocations.
+        if (inFlight_ != 0 || !request->client()->canSend()) return 0;
+        const size_t space = request->client()->space();
+        if (space == 0) return 0;
+
+        if (_state == RESPONSE_HEADERS) {
+            const size_t remaining = head_.length() - headOffset_;
+            const size_t wanted = remaining < space ? remaining : space;
+            const size_t written = request->client()->write(
+                head_.c_str() + headOffset_,
+                wanted
+            );
+            if (written == 0) return 0;
+            headOffset_ += written;
+            _writtenLength += written;
+            inFlight_ += written;
+            if (headOffset_ == head_.length()) _state = RESPONSE_CONTENT;
+            return written;
+        }
+
+        const size_t remaining = _contentLength - _sentLength;
+        if (remaining == 0) {
+            _state = RESPONSE_WAIT_ACK;
+            return 0;
+        }
+
+        size_t wanted = remaining;
+        if (wanted > space) wanted = space;
+        if (wanted > WEB_FLASH_STREAM_CHUNK_BYTES) {
+            wanted = WEB_FLASH_STREAM_CHUNK_BYTES;
+        }
+
+        uint8_t* buffer = nullptr;
+        while (wanted >= 256 && buffer == nullptr) {
+            buffer = static_cast<uint8_t*>(malloc(wanted));
+            if (buffer == nullptr) wanted /= 2;
+        }
+        if (buffer == nullptr) return 0;
+
+        memcpy_P(buffer, content_ + _sentLength, wanted);
+        const size_t written = request->client()->write(
+            reinterpret_cast<const char*>(buffer),
+            wanted
+        );
+        free(buffer);
+        if (written == 0) return 0;
+
+        _sentLength += written;
+        _writtenLength += written;
+        inFlight_ += written;
+        if (_sentLength == _contentLength) _state = RESPONSE_WAIT_ACK;
+        return written;
+    }
+
+private:
+    const uint8_t* content_ = nullptr;
+    String head_;
+    size_t headOffset_ = 0;
+    size_t inFlight_ = 0;
+};
 
 portMUX_TYPE s_webAdmissionMux = portMUX_INITIALIZER_UNLOCKED;
 uint8_t s_activeNormalWebRequests = 0;
@@ -2646,7 +2749,7 @@ void config_ui_start_server() {
     // and Web Flasher. No external request is made in setup AP mode.
     server.on("/assets/meshgate-logo.svg", HTTP_GET, [](AsyncWebServerRequest *request){
         const size_t logoSize = static_cast<size_t>(meshgate_logo_svg_end - meshgate_logo_svg_start);
-        AsyncWebServerResponse* response = request->beginResponse(
+        AsyncWebServerResponse* response = new BoundedProgmemResponse(
             200,
             "image/svg+xml; charset=utf-8",
             meshgate_logo_svg_start,
@@ -2665,7 +2768,7 @@ void config_ui_start_server() {
                                  request->header("Accept-Encoding").indexOf("gzip") >= 0;
         if (acceptsGzip) {
             const size_t gzipSize = static_cast<size_t>(index_html_gz_end - index_html_gz_start);
-            AsyncWebServerResponse* response = request->beginResponse(
+            AsyncWebServerResponse* response = new BoundedProgmemResponse(
                 200,
                 "text/html; charset=utf-8",
                 index_html_gz_start,
@@ -2677,7 +2780,7 @@ void config_ui_start_server() {
             request->send(response);
             return;
         }
-        AsyncWebServerResponse* response = request->beginResponse(
+        AsyncWebServerResponse* response = new BoundedProgmemResponse(
             200,
             "text/html; charset=utf-8",
             (const uint8_t*)index_html,

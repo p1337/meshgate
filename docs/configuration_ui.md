@@ -146,8 +146,11 @@ footer so the two destinations cannot diverge.
 2. **Web Server Endpoints (`config_ui.cpp`)**:
    * **`GET /`**: Serves the single-page HTML/CSS/JS application directly from
      flash. Browsers advertising gzip receive a deterministic pre-compressed
-     build asset; older clients receive the raw `PROGMEM` fallback. Neither
-     path allocates a page-sized runtime buffer.
+     build asset; older clients receive the raw `PROGMEM` fallback. A bounded
+     1 KiB flash streamer deliberately avoids sizing temporary allocations to
+     the complete TCP send window, so the page can still make progress when
+     TLS/BLE/VPN activity has fragmented internal RAM. Neither path allocates
+     a page-sized runtime buffer.
    * **`GET /assets/meshgate-logo.svg`**: Serves the official vector logo directly from embedded flash with a versioned cache key; no filesystem mount or external network is required.
    * **`GET /config`**: Returns current settings as JSON, including WiFi/BLE/MQTT/WireGuard values plus `tailscale_enabled`, `tailscale_supported`, `tailscale_device_name`, and `tailscale_has_auth_key`. Secret WiFi, BLE PIN, WireGuard, OTA, and Tailscale values are never returned. `ble_has_pin` reports only whether a PIN is stored.
    * **`GET /status`**: Returns unified live diagnostic and telemetry JSON polled every 7 seconds by the client: contains `uptime_seconds`, `heap` (free, min_free, max_alloc), `wifi` (connected, is_ap_mode, ip, rssi, mdns_host), `ble` (connected, rx_count, tx_count, invalid_count), `tcp` (connected_clients, max_clients, rx_count, tx_count, invalid_count), `traffic` (ble, tcp, mqtt rx/tx/invalid), `queues` (waiting, capacity, dropped for `tcp_to_ble`, `ble_to_tcp`, `mqtt_to_ble`), `stacks` (ble_task, net_task free bytes), and `mqtt` (gateway_enabled, state, radio_proxy_enabled, broker, root, published, received, dropped, invalid).
@@ -244,7 +247,9 @@ the data partition; the explicit `/reset` factory action clears the ring.
   reserved status, reboot, OTA and Meshtastic PhoneAPI traffic. Under low
   internal heap or a small largest-free block, limits tighten automatically;
   rejected requests receive `503` and `Retry-After` instead of consuming the
-  memory needed for remote recovery.
+  memory needed for remote recovery. Two normal low-memory slots remain
+  available so the page and its versioned logo can complete in parallel; both
+  use bounded flash streaming and cannot consume a full TCP-window allocation.
 * **Client-Side Polling:** The unified `/status` endpoint is polled periodically (defaulting to 7s, dynamically adjustable to 3s or 1s via the <kbd>P</kbd> key) using chained asynchronous requests to maintain real-time telemetry while completely avoiding request stacking and minimizing CPU/network overhead.
 * **Radio Concurrency:** The ESP32 shares a single 2.4GHz radio antenna for WiFi and Bluetooth. Using `ESPAsyncWebServer` combined with asynchronous background tasks for BLE operations prevents HTTP request timeouts and prevents radio collisions while switching between WiFi AP and BLE scanning/testing.
 * **NimBLE Stack:** `NimBLE-Arduino` provides low memory footprint BLE client capabilities, essential for coexisting with `ESPAsyncWebServer` and `WiFi` on resource-constrained ESP32-S3 boards without heap exhaustion.
