@@ -4,6 +4,13 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.12] - 2026-11-11
+
+- Moved the persistent recovery supervisor away from the network core and made
+  Web, API and OTA restart requests allocation-free under low-memory conditions.
+- Added sustained internal-heap fragmentation recovery while explicitly
+  suppressing automatic restarts throughout OTA download and flash validation.
+
 ## [v0.7.11] - 2026-11-11
 
 - Performance and reliability polishing.
@@ -159,6 +166,7 @@ are intentionally omitted.
 
 - Initial ESP32 BLE-to-TCP Meshtastic bridge release.
 
+[v0.7.12]: https://github.com/p1337/meshgate/compare/v0.7.11...v0.7.12
 [v0.7.11]: https://github.com/p1337/meshgate/compare/v0.7.10...v0.7.11
 [v0.7.10]: https://github.com/p1337/meshgate/compare/v0.7.9...v0.7.10
 [v0.7.9]: https://github.com/p1337/meshgate/compare/v0.7.8...v0.7.9

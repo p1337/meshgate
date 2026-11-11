@@ -12,6 +12,7 @@
 
 #include "build_options.h"
 #include "mqtt_net.h"
+#include "reliability_manager.h"
 #include "utils.h"
 #include "web_log.h"
 
@@ -113,14 +114,11 @@ void failUpload(AsyncWebServerRequest* request, const char* reason) {
     setState(request, RequestState::Failed);
 }
 
-void otaRestartTask(void*) {
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    ESP.restart();
-    vTaskDelete(nullptr);
-}
-
 bool scheduleRestart() {
-    return xTaskCreate(otaRestartTask, "ota-restart", 2048, nullptr, 1, nullptr) == pdPASS;
+    // This call is only reached after Update.end() has validated and activated
+    // the complete image. It is the sole restart request allowed while the
+    // official updater still owns the OTA state.
+    return reliability_manager_request_restart(1500, true);
 }
 
 String partitionLabel(const esp_partition_t* partition) {
@@ -400,6 +398,10 @@ void officialUpdateTask(void* parameter) {
 } // namespace
 
 void ota_update_set_token(const String& token) { s_token = token; }
+
+bool ota_update_is_busy() {
+    return s_updateClaimed.load(std::memory_order_acquire) || Update.isRunning();
+}
 
 void ota_update_register(AsyncWebServer& server, const String& token) {
     ota_update_set_token(token);

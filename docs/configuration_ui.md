@@ -166,7 +166,11 @@ footer so the two destinations cannot diverge.
    * **`POST /save_tailscale`**: Saves `enabled` and `device_name` redundantly. A reboot starts browser enrollment or reconnects the persistent identity.
    * **`GET /tailscale_status`**: Reports `enabled`, `connected`, state name, assigned VPN IP, peer count and a pending RAM-only `auth_url` while browser approval is required.
    * **`POST /save_system`**: Saves `debug_logs` boolean flag to NVS.
-   * **`POST /reboot`**: Restarts the ESP32 into normal bridge mode.
+   * **`POST /reboot`** and **`POST /api/reboot`**: Submit an
+     allocation-free restart request to the persistent recovery supervisor.
+     `202` confirms that the request was accepted. `409` means OTA is active
+     and the restart was deliberately blocked; `503` means the supervisor is
+     unavailable. No temporary reboot task or heap allocation is required.
    * **`POST /reset`**: Erases all stored NVS configurations and reboots the ESP32 into Setup Mode.
    * **`POST /save`**: Full-form save endpoint for backward compatibility.
    * **`GET /api/ota`**: Reports OTA readiness, firmware/board identity, active and next application partitions, and maximum image size. It never returns the OTA token.
@@ -182,6 +186,12 @@ footer so the two destinations cannot diverge.
      browser, so it cannot be used to install arbitrary firmware.
      `check_only=true` runs the same fixed-metadata validation but stops at
      `current` or `available` without downloading or installing an image.
+
+All scheduled, link-recovery, low-memory, manual reboot and factory-reset
+paths are suppressed while an OTA operation owns the inactive slot. Only a
+successful OTA completion may request its final restart, after full size and
+SHA-256 validation and successful slot activation. An interruption before that
+point leaves the current application slot selected and bootable.
 
 The `/api/ota/token` and `/api/ota/official` handlers must be registered before `/api/ota`.
 ESPAsyncWebServer considers a route to match slash-delimited child paths, so

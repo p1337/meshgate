@@ -15,6 +15,7 @@
 #include "ota_update.h"
 #include "esp_log.h"
 #include "message_mailbox.h"
+#include "reliability_manager.h"
 
 /**
  * For retrieving configuration properties stored in NVS.
@@ -87,14 +88,8 @@ static void ensureOtaToken() {
     backupPreferences.putString("ota_token", token);
 }
 
-static void restartTask(void*) {
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    ESP.restart();
-    vTaskDelete(nullptr);
-}
-
 static bool scheduleRestart() {
-    return xTaskCreate(restartTask, "api-restart", 2048, nullptr, 1, nullptr) == pdPASS;
+    return reliability_manager_request_restart(1000);
 }
 
 struct HttpPhoneApiBody {
@@ -2888,6 +2883,10 @@ void config_ui_start_server() {
     // Reboot system
     server.on("/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
         log_d("[WebUI] POST /reboot requested (Client: %s)", request->client()->remoteIP().toString().c_str());
+        if (ota_update_is_busy()) {
+            request->send(409, "application/json", "{\"success\":false,\"message\":\"Reboot blocked while OTA update is active\"}");
+            return;
+        }
         if (!scheduleRestart()) {
             request->send(503, "application/json", "{\"success\":false,\"message\":\"Unable to schedule reboot\"}");
             return;
@@ -2897,6 +2896,10 @@ void config_ui_start_server() {
 
     server.on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
         log_i("[API] Remote reboot requested from %s", request->client()->remoteIP().toString().c_str());
+        if (ota_update_is_busy()) {
+            request->send(409, "application/json", "{\"success\":false,\"message\":\"Reboot blocked while OTA update is active\"}");
+            return;
+        }
         if (!scheduleRestart()) {
             request->send(503, "application/json", "{\"success\":false,\"message\":\"Unable to schedule reboot\"}");
             return;
@@ -2907,6 +2910,10 @@ void config_ui_start_server() {
     // Reset all settings and reboot
     server.on("/reset", HTTP_POST, [](AsyncWebServerRequest *request){
         log_d("[WebUI] POST /reset requested (Client: %s)", request->client()->remoteIP().toString().c_str());
+        if (ota_update_is_busy()) {
+            request->send(409, "application/json", "{\"success\":false,\"message\":\"Factory reset blocked while OTA update is active\"}");
+            return;
+        }
         tailscale_net_factory_reset();
         preferences.clear();
         backupPreferences.clear();

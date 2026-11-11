@@ -232,6 +232,12 @@ To prevent high-bandwidth network traffic from starving BLE operations or lockin
 | **`bridgeNetTask`** | Core 0 | **1** | 4096 B | Network broadcast task (drains `ble_to_tcp_queue` to TCP sockets) |
 | **`diag_telemetry`** | Core 0 | **1** | 3072 B | Periodic diagnostic task (15s interval) |
 | **`bridgeBleTask`** | Core 1 | **1** | 8192 B | BLE Engine (polls `FromRadio`, handles `FromNum`, writes to `ToRadio`) |
+| **`reliability_task`** | Core 1 | **2** | 4096 B | Watchdog, link supervision and allocation-free restart requests |
+
+The reliability supervisor suppresses scheduled, link-failure, low-memory and
+manual restart requests while OTA owns the update path. Only the successful OTA
+completion path may request its final reboot, after the complete inactive-slot
+image has passed size and digest validation and `Update.end()` has activated it.
 
 ---
 ## 7. Logging & Debugging
