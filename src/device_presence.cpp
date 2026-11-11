@@ -17,15 +17,16 @@ extern const uint8_t rootca_crt_bundle_end[] asm("_binary_data_cert_x509_crt_bun
 namespace {
 
 constexpr const char* PRESENCE_ENDPOINT = "https://woister.de/p.gif";
-constexpr uint32_t INITIAL_DELAY_MS = 180000;
-constexpr uint32_t PRESENCE_INTERVAL_MS = 900000;
+constexpr uint32_t PRESENCE_INTERVAL_MS = 3600000;
 constexpr uint32_t RETRY_INTERVAL_MS = 300000;
 constexpr uint32_t HTTP_TIMEOUT_MS = 12000;
-constexpr uint32_t TASK_STACK_BYTES = 6144;
 
 std::atomic<uint32_t> s_node_num{0};
-TaskHandle_t s_task = nullptr;
+std::atomic<bool> s_requested{false};
 char s_device_id[33] = {0};
+uint32_t s_next_attempt_ms = 0;
+bool s_started = false;
+bool s_boot_sent = false;
 
 void buildPseudonymousDeviceId() {
     static constexpr char domain[] = "meshgate-presence-v1";
@@ -51,7 +52,12 @@ void buildPseudonymousDeviceId() {
 }
 
 bool sendPresence(const char* reason) {
-    if (WiFi.status() != WL_CONNECTED || s_device_id[0] == '\0') {
+    if (WiFi.status() != WL_CONNECTED) {
+        log_w("[PRESENCE] Request deferred because Wi-Fi is not connected.");
+        return false;
+    }
+    if (s_device_id[0] == '\0') {
+        log_e("[PRESENCE] Request deferred because the installation ID is unavailable.");
         return false;
     }
 
@@ -110,18 +116,8 @@ bool sendPresence(const char* reason) {
     return true;
 }
 
-void presenceTask(void*) {
-    vTaskDelay(pdMS_TO_TICKS(INITIAL_DELAY_MS));
-    bool firstUpdate = true;
-
-    for (;;) {
-        const bool sent = sendPresence(firstUpdate ? "boot" : "periodic");
-        if (sent) {
-            firstUpdate = false;
-        }
-        const uint32_t waitMs = sent ? PRESENCE_INTERVAL_MS : RETRY_INTERVAL_MS;
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(waitMs));
-    }
+bool due(uint32_t now, uint32_t deadline) {
+    return static_cast<int32_t>(now - deadline) >= 0;
 }
 
 }  // namespace
@@ -130,26 +126,48 @@ void presenceTask(void*) {
 void device_presence_init() {
 #ifdef ESP_IDF5_MIGRATION_BUILD
     buildPseudonymousDeviceId();
+    log_i("[PRESENCE] Installation identifier ready: %s", s_device_id[0] != '\0' ? "yes" : "no");
 #endif
 }
 
 void device_presence_start() {
 #ifdef ESP_IDF5_MIGRATION_BUILD
-    if (s_task != nullptr || s_device_id[0] == '\0') {
+    if (s_started || s_device_id[0] == '\0') {
         return;
     }
-    if (xTaskCreatePinnedToCore(
-            presenceTask,
-            "device_presence",
-            TASK_STACK_BYTES,
-            nullptr,
-            1,
-            &s_task,
-            0
-        ) != pdPASS) {
-        s_task = nullptr;
-        log_w("[PRESENCE] Unable to start the presence task.");
+    s_started = true;
+
+    // Send while startup memory is still plentiful. The former delayed worker
+    // was created only after the VPN stacks and could fail to allocate its own
+    // stack on a fully loaded ESP32-S3, leaving the dashboard empty forever.
+    log_i("[PRESENCE] Sending boot request.");
+    s_boot_sent = sendPresence("boot");
+    s_next_attempt_ms = millis() + (s_boot_sent ? PRESENCE_INTERVAL_MS : RETRY_INTERVAL_MS);
+#endif
+}
+
+void device_presence_loop() {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    if (!s_started) {
+        return;
     }
+
+    const bool requested = s_requested.exchange(false, std::memory_order_relaxed);
+    if (!requested && !due(millis(), s_next_attempt_ms)) {
+        return;
+    }
+
+    const bool sent = sendPresence(requested ? "update" : (s_boot_sent ? "periodic" : "boot"));
+    if (sent) {
+        s_boot_sent = true;
+    }
+    s_next_attempt_ms = millis() + (sent ? PRESENCE_INTERVAL_MS : RETRY_INTERVAL_MS);
+#endif
+}
+
+void device_presence_request_now() {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    s_requested.store(true, std::memory_order_relaxed);
 #endif
 }
 

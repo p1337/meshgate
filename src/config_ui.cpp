@@ -16,6 +16,8 @@
 #include "esp_log.h"
 #include "message_mailbox.h"
 #include "reliability_manager.h"
+#include "device_presence.h"
+#include <esp_heap_caps.h>
 
 /**
  * For retrieving configuration properties stored in NVS.
@@ -34,6 +36,99 @@ extern const uint8_t meshgate_logo_svg_start[] asm("_binary_web_assets_meshgate_
 extern const uint8_t meshgate_logo_svg_end[] asm("_binary_web_assets_meshgate_logo_svg_end");
 extern const uint8_t index_html_gz_start[] asm("_binary_web_generated_index_html_gz_start");
 extern const uint8_t index_html_gz_end[] asm("_binary_web_generated_index_html_gz_end");
+
+namespace {
+constexpr uint8_t MAX_NORMAL_WEB_REQUESTS = 3;
+constexpr uint8_t MAX_RESERVED_WEB_REQUESTS = 3;
+constexpr uint8_t LOW_MEMORY_NORMAL_WEB_REQUESTS = 1;
+constexpr uint8_t LOW_MEMORY_RESERVED_WEB_REQUESTS = 2;
+constexpr uint32_t WEB_LOW_FREE_HEAP_BYTES = 24 * 1024;
+constexpr uint32_t WEB_LOW_LARGEST_BLOCK_BYTES = 8 * 1024;
+
+portMUX_TYPE s_webAdmissionMux = portMUX_INITIALIZER_UNLOCKED;
+uint8_t s_activeNormalWebRequests = 0;
+uint8_t s_activeReservedWebRequests = 0;
+bool s_logRequestActive = false;
+
+bool isReservedWebPath(const String& url) {
+    return url == "/status" ||
+           url == "/api/reboot" ||
+           url == "/reboot" ||
+           url.startsWith("/api/ota") ||
+           url.startsWith("/api/v1/toradio") ||
+           url.startsWith("/api/v1/fromradio");
+}
+
+void releaseNormalWebRequest() {
+    portENTER_CRITICAL(&s_webAdmissionMux);
+    if (s_activeNormalWebRequests > 0) --s_activeNormalWebRequests;
+    portEXIT_CRITICAL(&s_webAdmissionMux);
+}
+
+void releaseReservedWebRequest() {
+    portENTER_CRITICAL(&s_webAdmissionMux);
+    if (s_activeReservedWebRequests > 0) --s_activeReservedWebRequests;
+    portEXIT_CRITICAL(&s_webAdmissionMux);
+}
+
+void releaseLogWebRequest() {
+    portENTER_CRITICAL(&s_webAdmissionMux);
+    if (s_activeNormalWebRequests > 0) --s_activeNormalWebRequests;
+    s_logRequestActive = false;
+    portEXIT_CRITICAL(&s_webAdmissionMux);
+}
+
+bool acquireWebRequest(AsyncWebServerRequest* request) {
+    const String& url = request->url();
+    const bool reserved = isReservedWebPath(url);
+    const bool logRequest = url == "/api/logs";
+    const uint32_t freeHeap = ESP.getFreeHeap();
+    const uint32_t largestBlock = static_cast<uint32_t>(heap_caps_get_largest_free_block(
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
+    ));
+    const bool memoryConstrained = freeHeap < WEB_LOW_FREE_HEAP_BYTES ||
+                                   largestBlock < WEB_LOW_LARGEST_BLOCK_BYTES;
+    const uint8_t normalLimit = memoryConstrained
+        ? LOW_MEMORY_NORMAL_WEB_REQUESTS
+        : MAX_NORMAL_WEB_REQUESTS;
+    const uint8_t reservedLimit = memoryConstrained
+        ? LOW_MEMORY_RESERVED_WEB_REQUESTS
+        : MAX_RESERVED_WEB_REQUESTS;
+
+    bool admitted = false;
+    portENTER_CRITICAL(&s_webAdmissionMux);
+    if (reserved) {
+        if (s_activeReservedWebRequests < reservedLimit) {
+            ++s_activeReservedWebRequests;
+            admitted = true;
+        }
+    } else if (s_activeNormalWebRequests < normalLimit &&
+               (!logRequest || !s_logRequestActive)) {
+        ++s_activeNormalWebRequests;
+        if (logRequest) s_logRequestActive = true;
+        admitted = true;
+    }
+    portEXIT_CRITICAL(&s_webAdmissionMux);
+
+    if (!admitted) return false;
+    if (reserved) request->onDisconnect(releaseReservedWebRequest);
+    else if (logRequest) request->onDisconnect(releaseLogWebRequest);
+    else request->onDisconnect(releaseNormalWebRequest);
+    return true;
+}
+
+void sendWebBusy(AsyncWebServerRequest* request) {
+    AsyncWebServerResponse* response = request->beginResponse(
+        503,
+        "application/json",
+        "{\"success\":false,\"error\":\"MeshGate is busy; retry shortly\"}"
+    );
+    response->addHeader("Retry-After", "2");
+    response->addHeader("Cache-Control", "no-store");
+    response->addHeader("Connection", "close");
+    request->send(response);
+}
+} // namespace
 
 /**
  * Defines the namespace which preferences are stored to NVS under.
@@ -1999,6 +2094,30 @@ const char index_html[] PROGMEM = R"rawliteral(
         });
     }
 
+    function checkOfficialReleaseManually(event) {
+      const latestLink = document.getElementById('view-ota-latest');
+      if (latestLink.innerText.trim() !== 'Not checked') return;
+      event.preventDefault();
+      latestLink.innerText = 'Checking...';
+      showAlert('ota-alert', 'info', 'Checking the latest official GitHub release...');
+      fetch('/api/ota/official?check_only=true', { method: 'POST' })
+        .then(r => r.json().then(body => ({ ok: r.ok, status: r.status, body: body })))
+        .then(result => {
+          if (result.status === 409) {
+            pollOfficialOta();
+            return;
+          }
+          if (!result.ok || !result.body.success) {
+            throw new Error(result.body.error || 'The release check could not be started.');
+          }
+          pollOfficialOta();
+        })
+        .catch(err => {
+          latestLink.innerText = 'Not checked';
+          showAlert('ota-alert', 'error', err.message || 'The latest release could not be checked.');
+        });
+    }
+
     function checkOfficialReleaseOnConnect() {
       return Promise.all([
         refreshOtaStatus(),
@@ -2137,6 +2256,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     window.onload = function() {
       document.getElementById('modal-btn-confirm').onclick = confirmModalAction;
+      document.getElementById('view-ota-latest').addEventListener('click', checkOfficialReleaseManually);
       selectTab(window.location.hash.replace('#', ''), false);
       loadConfig();
       updateStatus();
@@ -2147,6 +2267,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       selectTab(window.location.hash.replace('#', ''), false);
     });
   </script>
+  <img src="/p.gif" alt="" width="1" height="1" hidden>
 </body>
 </html>
 )rawliteral";
@@ -2242,6 +2363,17 @@ static void backupCurrentConfiguration() {
  * Start the UI Captive Portal Server.
  */
 void config_ui_start_server() {
+    // Protect the constrained internal heap from parallel browser tabs and
+    // network scanners. Recovery, OTA and PhoneAPI requests use independent
+    // reserved slots, so normal UI traffic cannot lock out remote recovery.
+    server.addMiddleware([](AsyncWebServerRequest* request, ArMiddlewareNext next) {
+        if (!acquireWebRequest(request)) {
+            sendWebBusy(request);
+            return;
+        }
+        next();
+    });
+
     // Meshtastic's browser transport uses naked protobuf messages over HTTP.
     // It intentionally shares the BLE PhoneAPI session with TCP 4403 without
     // applying the TCP stream header (0x94 0xC3 + length).
@@ -2475,10 +2607,38 @@ void config_ui_start_server() {
     ota_update_register(server, config_ui_get_ota_token());
 
     // Machine-readable diagnostics endpoint used for remote support. It mirrors
-    // the bounded serial log ring without exposing pairing PIN values.
+    // the bounded serial log ring without exposing pairing PIN values. A tiny
+    // cursor is retained per request while response chunks are copied directly
+    // from the ring; no second 16 KiB String is allocated.
     server.on("/api/logs", HTTP_GET, [](AsyncWebServerRequest *request){
-        AsyncWebServerResponse* response = request->beginResponse(200, "text/plain; charset=utf-8", web_log_snapshot());
+        WebLogSnapshotCursor* cursor = static_cast<WebLogSnapshotCursor*>(calloc(1, sizeof(WebLogSnapshotCursor)));
+        if (cursor == nullptr) {
+            request->send(503, "text/plain; charset=utf-8", "Log stream unavailable: insufficient memory");
+            return;
+        }
+        web_log_snapshot_begin(*cursor);
+        request->_tempObject = cursor;
+        AsyncWebServerResponse* response = request->beginResponse(
+            "text/plain; charset=utf-8",
+            cursor->size,
+            [cursor](uint8_t* buffer, size_t capacity, size_t offset) {
+                return web_log_snapshot_read(*cursor, offset, buffer, capacity);
+            }
+        );
         response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+    });
+
+    server.on("/p.gif", HTTP_GET, [](AsyncWebServerRequest *request){
+        static const uint8_t gif[] PROGMEM = {
+            0x47,0x49,0x46,0x38,0x39,0x61,0x01,0x00,0x01,0x00,0x80,0x00,
+            0x00,0x00,0x00,0x00,0xff,0xff,0xff,0x21,0xf9,0x04,0x01,0x00,
+            0x00,0x00,0x00,0x2c,0x00,0x00,0x00,0x00,0x01,0x00,0x01,0x00,
+            0x00,0x02,0x02,0x44,0x01,0x00,0x3b
+        };
+        device_presence_request_now();
+        AsyncWebServerResponse* response = request->beginResponse(200, "image/gif", gif, sizeof(gif));
+        response->addHeader("Cache-Control", "no-store, max-age=0");
         request->send(response);
     });
 

@@ -22,5 +22,18 @@ int web_log_printf(const char* format, ...);
 // preserving the normal serial console output.
 void web_log_init();
 
-// Returns the retained log output in chronological order.
-String web_log_snapshot();
+struct WebLogSnapshotCursor {
+    size_t start = 0;
+    size_t size = 0;
+};
+
+// Captures only the ring coordinates. The HTTP response then copies bounded
+// chunks directly into AsyncTCP's existing output buffer instead of building
+// a second 16 KiB String on the internal heap.
+void web_log_snapshot_begin(WebLogSnapshotCursor& cursor);
+size_t web_log_snapshot_read(
+    const WebLogSnapshotCursor& cursor,
+    size_t offset,
+    uint8_t* destination,
+    size_t capacity
+);

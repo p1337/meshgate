@@ -131,6 +131,11 @@ void setup() {
             // Start up the captive portal web server.
             config_ui_start_server();
 
+            // Register this installation before the memory-heavy BLE, VPN and
+            // MQTT services start. Periodic refreshes reuse the Arduino loop
+            // instead of reserving another FreeRTOS task stack.
+            device_presence_start();
+
             // Init and start bridge BLE <--> WIFI
             bridge_init(cfg.ble_name, cfg.ble_mac, cfg.ble_pin.toInt());
             bridge_start();
@@ -146,7 +151,6 @@ void setup() {
                 wireguard_net_start(cfg);
             }
             reliability_manager_start(cfg);
-            device_presence_start();
 
             // MQTT is deliberately applied after remote access startup. Its
             // TLS allocation is deferred until Tailscale DERP is established.
@@ -166,4 +170,5 @@ void setup() {
 void loop() {
     wifi_net_loop();
     mqtt_net_loop();
+    device_presence_loop();
 }

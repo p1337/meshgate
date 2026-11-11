@@ -81,17 +81,32 @@ void web_log_init() {
     s_initialized = true;
 }
 
-String web_log_snapshot() {
-    String snapshot;
+void web_log_snapshot_begin(WebLogSnapshotCursor& cursor) {
+    portENTER_CRITICAL(&s_logMux);
+    cursor.size = s_logSize;
+    cursor.start = (s_writePosition + LOG_CAPACITY - cursor.size) % LOG_CAPACITY;
+    portEXIT_CRITICAL(&s_logMux);
+}
+
+size_t web_log_snapshot_read(
+    const WebLogSnapshotCursor& cursor,
+    size_t offset,
+    uint8_t* destination,
+    size_t capacity
+) {
+    if (destination == nullptr || capacity == 0 || offset >= cursor.size) {
+        return 0;
+    }
+
+    const size_t length = min(capacity, cursor.size - offset);
+    const size_t position = (cursor.start + offset) % LOG_CAPACITY;
+    const size_t firstLength = min(length, LOG_CAPACITY - position);
 
     portENTER_CRITICAL(&s_logMux);
-    const size_t capturedSize = s_logSize;
-    const size_t start = (s_writePosition + LOG_CAPACITY - capturedSize) % LOG_CAPACITY;
-    snapshot.reserve(capturedSize + 1);
-    for (size_t i = 0; i < capturedSize; ++i) {
-        snapshot += s_logBuffer[(start + i) % LOG_CAPACITY];
+    memcpy(destination, s_logBuffer + position, firstLength);
+    if (firstLength < length) {
+        memcpy(destination + firstLength, s_logBuffer, length - firstLength);
     }
     portEXIT_CRITICAL(&s_logMux);
-
-    return snapshot;
+    return length;
 }
