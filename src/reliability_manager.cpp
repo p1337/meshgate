@@ -26,6 +26,7 @@ constexpr uint32_t FALLBACK_REBOOT_SECONDS = 6 * 60 * 60;
 constexpr uint32_t LOW_MEMORY_RESTART_SECONDS = 5 * 60;
 constexpr uint32_t LOW_FREE_HEAP_BYTES = 24 * 1024;
 constexpr uint32_t LOW_LARGEST_BLOCK_BYTES = 8 * 1024;
+constexpr const char* DEPLOYMENT_TIMEZONE = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 bool s_wireguardExpected = false;
 bool s_tailscaleExpected = false;
@@ -40,10 +41,10 @@ void controlledRestart(const char* reason) {
     ESP.restart();
 }
 void reliabilityTask(void*) {
-    // The configured deployment timezone uses EU CET/CEST transition rules.
-    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
-    tzset();
-    configTime(0, 0, "pool.ntp.org", "time.cloudflare.com", "time.google.com");
+    // configTime(0, 0, ...) resets TZ to UTC in Arduino Core. Configure SNTP
+    // and the EU CET/CEST transition rules atomically so the 00/06/12/18
+    // maintenance windows are evaluated in deployment-local time.
+    configTzTime(DEPLOYMENT_TIMEZONE, "pool.ntp.org", "time.cloudflare.com", "time.google.com");
 
 #if ESP_IDF_VERSION_MAJOR >= 5
     const esp_task_wdt_config_t watchdogConfig = {
