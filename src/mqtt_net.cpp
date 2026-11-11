@@ -3,6 +3,7 @@
 #include "bridge.h"
 #include "build_options.h"
 #include "tailscale_net.h"
+#include "device_presence.h"
 #include <mqtt_client.h>
 #include <esp_crt_bundle.h>
 #include <esp_heap_caps.h>
@@ -779,7 +780,12 @@ void mqtt_net_resume_after_ota() {
  * Called when the BLE device is connected.
  */
 void mqtt_net_on_ble_connected() {
-    // Fast wait-free check: do nothing if MQTT Gateway is disabled
+    // The same Meshtastic configuration response supplies the attached node
+    // number used by the installation-presence worker. Request it even
+    // when the optional MQTT gateway itself is disabled.
+    mqtt_net_request_radio_config();
+
+    // Fast wait-free check: no broker work if MQTT Gateway is disabled.
     if (!mqtt_net_is_enabled()) {
         return;
     }
@@ -799,8 +805,6 @@ void mqtt_net_on_ble_connected() {
         mqtt_net_start_or_defer();
     }
 
-    // Always query the radio on connect to ensure any changed settings (swapped radio, updated credentials) are detected
-    mqtt_net_request_radio_config();
 }
 
 /**
@@ -861,6 +865,10 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
     if (!pb_decode(&stream, meshtastic_FromRadio_fields, &radio_msg)) {
         // Not a valid FromRadio packet or decoding failed
         return false;
+    }
+
+    if (radio_msg.which_payload_variant == meshtastic_FromRadio_my_info_tag) {
+        device_presence_set_meshtastic_node(radio_msg.my_info.my_node_num);
     }
 
     // 1. Check for ModuleConfig.mqtt packets (Auto-Sync from Radio)

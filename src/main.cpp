@@ -13,6 +13,7 @@
 #include "web_log.h"
 #include "ip_led.h"
 #include "message_mailbox.h"
+#include "device_presence.h"
 
 /**
  * Main Entry point.
@@ -54,6 +55,7 @@ void setup() {
     config_ui_init();
     message_mailbox_init();
     BridgeConfig cfg = config_ui_load();
+    device_presence_init();
 
     // Set global ESP-IDF log level based on UI setting
     if (cfg.debug_logs) {
@@ -144,6 +146,7 @@ void setup() {
                 wireguard_net_start(cfg);
             }
             reliability_manager_start(cfg);
+            device_presence_start();
 
             // MQTT is deliberately applied after remote access startup. Its
             // TLS allocation is deferred until Tailscale DERP is established.

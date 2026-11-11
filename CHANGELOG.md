@@ -4,6 +4,10 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.11] - 2026-11-11
+
+- Performance and reliability polishing.
+
 ## [v0.7.10] - 2026-11-10
 
 - Fixed the Tailscale enrollment waiting tab remaining on `about:blank` when
@@ -155,6 +159,7 @@ are intentionally omitted.
 
 - Initial ESP32 BLE-to-TCP Meshtastic bridge release.
 
+[v0.7.11]: https://github.com/p1337/meshgate/compare/v0.7.10...v0.7.11
 [v0.7.10]: https://github.com/p1337/meshgate/compare/v0.7.9...v0.7.10
 [v0.7.9]: https://github.com/p1337/meshgate/compare/v0.7.8...v0.7.9
 [v0.7.8]: https://github.com/p1337/meshgate/compare/v0.7.7...v0.7.8
