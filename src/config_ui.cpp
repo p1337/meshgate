@@ -32,6 +32,8 @@ AsyncWebServer server(80);
 // repository and Web Flasher, so the captive portal never needs the internet.
 extern const uint8_t meshgate_logo_svg_start[] asm("_binary_web_assets_meshgate_logo_svg_start");
 extern const uint8_t meshgate_logo_svg_end[] asm("_binary_web_assets_meshgate_logo_svg_end");
+extern const uint8_t index_html_gz_start[] asm("_binary_web_generated_index_html_gz_start");
+extern const uint8_t index_html_gz_end[] asm("_binary_web_generated_index_html_gz_end");
 
 /**
  * Defines the namespace which preferences are stored to NVS under.
@@ -2494,15 +2496,34 @@ void config_ui_start_server() {
         request->send(response);
     });
 
-    // Serve the main HTML page directly from PROGMEM flash avoiding heap copy.
+    // Modern browsers receive a pre-compressed flash image. This cuts the
+    // control page transfer over constrained DERP paths without allocating a
+    // compression buffer at runtime. Non-gzip clients retain the raw fallback.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         log_d("[WebUI] GET / requested (Client: %s)", request->client()->remoteIP().toString().c_str());
+        const bool acceptsGzip = request->hasHeader("Accept-Encoding") &&
+                                 request->header("Accept-Encoding").indexOf("gzip") >= 0;
+        if (acceptsGzip) {
+            const size_t gzipSize = static_cast<size_t>(index_html_gz_end - index_html_gz_start);
+            AsyncWebServerResponse* response = request->beginResponse(
+                200,
+                "text/html; charset=utf-8",
+                index_html_gz_start,
+                gzipSize
+            );
+            response->addHeader("Content-Encoding", "gzip");
+            response->addHeader("Vary", "Accept-Encoding");
+            response->addHeader("Cache-Control", "no-store");
+            request->send(response);
+            return;
+        }
         AsyncWebServerResponse* response = request->beginResponse(
             200,
             "text/html; charset=utf-8",
             (const uint8_t*)index_html,
             sizeof(index_html) - 1
         );
+        response->addHeader("Vary", "Accept-Encoding");
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
     });

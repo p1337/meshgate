@@ -189,6 +189,14 @@ The embedded control page uses four client-side tab panels (`connection`,
 inactive panel is hidden, so live polling, edit state and write-only secret
 placeholders survive tab changes. Deep links use the matching URL fragment.
 
+`generate_web_ui.py` extracts that page during every PlatformIO build,
+resolves its firmware-version and repository placeholders, and writes a
+deterministic gzip asset to `web/generated/index_html.gz`. The firmware embeds
+both forms in flash: modern browsers receive gzip while clients without gzip
+support receive the original `PROGMEM` page. Do not add runtime compression or
+construct a page-sized heap buffer; constrained Tailscale DERP paths depend on
+the pre-compressed response remaining allocation-free.
+
 GitHub Pages and the normal device control page share FlagCounter ID `kOa`.
 The device must assign the external image URL only after `/status` proves that
 station Wi-Fi is connected and setup AP mode is inactive. This preserves the
