@@ -25,10 +25,12 @@ classic WireGuard, Prometheus metrics and an RGB IP-address indicator.
 > MeshGate is a source fork of
 > [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
 > This repository was created independently rather than with GitHub's Fork
-> button, so GitHub may not display the usual fork-network banner. The MIT
-> license and authorship of
+> button, so GitHub may not display the usual fork-network banner. The
+> original MIT license, copyright notice and authorship of
 > [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge)
-> are preserved.
+> remain preserved for the portions derived from that project. The combined
+> MeshGate firmware is distributed under **GPL-3.0-only** because it generates
+> and links code from the GPLv3 Meshtastic Protocol Buffers.
 >
 > MeshGate is built on the valuable groundwork of
 > [Crim](https://github.com/Crim), who deserves explicit credit for the
@@ -305,27 +307,42 @@ UI as access to those retained messages.
 
 ## Credits and license
 
-MeshGate retains the MIT license from
+The combined MeshGate firmware and MeshGate-specific source code are
+distributed under the **GNU General Public License version 3 only**
+(`GPL-3.0-only`). The complete license text is in [LICENSE](LICENSE). Binary
+releases provide equivalent access to the corresponding source, including the
+exact Meshtastic Protocol Buffers revision and the scripts required to build
+and install the firmware.
+
+MeshGate is a source fork of
 [SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge).
-The original SourceLab.org copyright notice remains intact, and the root
-license additionally identifies Robert Stefanowicz as the copyright holder for
-the MeshGate modifications. Both are distributed under the same MIT terms.
-Commercial use, modification and redistribution are permitted. Every copy or
-substantial portion must retain the copyright and permission notice from the
-root [LICENSE](LICENSE), including the attribution of the MeshGate
-modifications to **Robert Stefanowicz**. This attribution does not imply that
-Robert Stefanowicz or MeshGate endorses a third-party product.
-The native Tailscale work uses
-[MicroLink](https://github.com/kaieda/microlink). The design theme is inspired
-by [MeshRadar](https://meshradar.pl/) without copying its logo or proprietary
-assets. MeshGate is an independent community project and is not sponsored or
-endorsed by Meshtastic LLC.
+The SourceLab.org portions retain their original MIT copyright and permission
+notice in
+[LICENSES/SourceLabOrg-MIT.txt](LICENSES/SourceLabOrg-MIT.txt). Native
+Tailscale support uses [MicroLink](https://github.com/kaieda/microlink), whose
+MIT notice is preserved in
+[LICENSES/MicroLink-MIT.txt](LICENSES/MicroLink-MIT.txt). Meshtastic Protocol
+Buffers are GPLv3-licensed and vendored at the exact revision recorded by the
+`proto/meshtastic` submodule. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete provenance.
+
+Commercial use, modification and redistribution are permitted by GPLv3, but
+distributors must preserve the applicable notices, license the combined work
+under GPLv3, identify their modifications, and provide the complete
+corresponding source. Copyright in the MeshGate-specific additions remains
+with **Robert Stefanowicz (p1337)**. That attribution does not imply endorsement
+of a third-party product.
+
+The design theme is inspired by [MeshRadar](https://meshradar.pl/) without
+copying its logo or proprietary assets. MeshGate is an independent community
+project and is not affiliated with, sponsored by, or endorsed by Meshtastic
+LLC.
 
 Meshtastic® is a registered trademark of Meshtastic LLC. Meshtastic software
 components are released under various licenses; see GitHub for details. No
-warranty is provided — use at your own risk. The Meshtastic logo trademark is
-the trademark of Meshtastic LLC and links to
-[meshtastic.org](https://meshtastic.org/).
+warranty is provided — use at your own risk. The official Meshtastic logo is
+not part of MeshGate branding. References to Meshtastic describe compatibility
+and link to [meshtastic.org](https://meshtastic.org/).
 
 ## Contact
 

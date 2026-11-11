@@ -86,6 +86,20 @@ jobs:
           )
 
           test "$(find release_assets -name 'firmware-*.zip' | wc -l)" -eq 1
+
+          # GitHub's automatic source archives do not contain Git submodule
+          # contents. Build a complete corresponding-source archive containing
+          # the exact parent tree and Meshtastic protobuf revision used by CI.
+          source_name="meshgate-${GITHUB_REF_NAME}-source"
+          mkdir -p "temp_source/${source_name}/proto/meshtastic"
+          git archive HEAD | tar -x -C "temp_source/${source_name}"
+          git -C proto/meshtastic archive HEAD | tar -x -C "temp_source/${source_name}/proto/meshtastic"
+          (
+            cd temp_source
+            zip -9 -r "../release_assets/${source_name}.zip" "${source_name}"
+          )
+
+          test -f "release_assets/${source_name}.zip"
           (cd release_assets && sha256sum * > SHA256SUMS.txt)
 
       - name: Prepare technical release notes
@@ -113,6 +127,8 @@ jobs:
           - USB installation or recovery: https://p1337.github.io/meshgate/
           - Full instructions: https://github.com/p1337/meshgate#install
           - Verify downloaded assets with `SHA256SUMS.txt`.
+          - License: GPL-3.0-only. The release assets include a complete
+            corresponding-source archive with the exact protobuf revision.
           """
           logo = f"![MeshGate](https://raw.githubusercontent.com/p1337/meshgate/{version}/web/assets/meshgate-logo.svg)\n\n"
           Path("release_body.md").write_text(logo + section + instructions, encoding="utf-8")

@@ -99,20 +99,10 @@
   </g>
   <path d="M321 486H338" class="line green-stroke" stroke-width="3" marker-end="url(#arrow-green)"/>
 
-  <!-- Official Meshtastic logo: https://github.com/meshtastic/design -->
-  <a href="https://meshtastic.org/" target="_blank" aria-label="Meshtastic website">
-    <svg x="76" y="622" width="124" height="68" viewBox="0 0 100 55" role="img" aria-label="Meshtastic logo">
-      <g transform="matrix(0.802386,0,0,0.460028,-421.748,-122.127)">
-        <g transform="matrix(0.579082,0,0,1.01004,460.975,-39.6867)">
-          <path d="M250.908,330.267L193.126,415.005L180.938,406.694L244.802,313.037C246.174,311.024 248.453,309.819 250.889,309.816C253.326,309.814 255.606,311.015 256.982,313.026L320.994,406.536L308.821,414.869L250.908,330.267Z" fill="#03f082"/>
-        </g>
-        <g transform="matrix(0.582378,0,0,1.01579,485.019,-211.182)">
-          <path d="M87.642,581.398L154.757,482.977L142.638,474.713L75.523,573.134L87.642,581.398Z" fill="#03f082"/>
-        </g>
-      </g>
-    </svg>
-  </a>
-  <text x="138" y="706" text-anchor="middle" class="mono body green">MESHTASTIC®</text>
+  <!-- Descriptive compatibility label; no Meshtastic logo or brand artwork. -->
+  <rect x="68" y="636" width="140" height="58" rx="12" fill="#102a24" stroke="#03f082"/>
+  <text x="138" y="660" text-anchor="middle" class="mono small green">LOW-POWER RADIO</text>
+  <text x="138" y="684" text-anchor="middle" class="mono small">LoRa + BLE</text>
   <text x="365" y="690" text-anchor="middle" class="sans body green">Ultra-low-power operation</text>
   <text x="365" y="716" text-anchor="middle" class="sans small">maximum solar autonomy outdoors</text>
 

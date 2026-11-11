@@ -118,8 +118,9 @@ footer so the two destinations cannot diverge.
     remain in the repository documentation and are not used as the product
     footer destination.
   * Identifies Robert Stefanowicz as the copyright holder for the MeshGate
-    extensions and links the project source and MIT license. The original
-    SourceLab.org copyright remains preserved in the repository license.
+    extensions and links the project source, GPL-3.0-only license and
+    third-party notices. The original SourceLab.org MIT copyright and
+    permission notice remain preserved separately in `LICENSES/`.
 
 ### 2. Live WiFi & BLE Scanning
 * **WiFi Scanning:** Runs asynchronously via `WiFi.scanNetworks(true)` in `WIFI_AP_STA` mode without dropping the captive portal AP connection. Discovered networks are deduplicated and ordered by signal strength (RSSI).

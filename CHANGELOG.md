@@ -8,6 +8,13 @@ are intentionally omitted.
 
 - Fixed scheduled 00:00/06:00/12:00/18:00 maintenance restarts using UTC
   instead of the deployment's CET/CEST local time.
+- Changed the combined firmware distribution to GPL-3.0-only, preserved the
+  SourceLabOrg and MicroLink MIT notices, and added explicit third-party
+  provenance for the linked GPLv3 Meshtastic Protocol Buffers.
+- Added a complete corresponding-source archive to every firmware release,
+  including the exact Protocol Buffer submodule revision used by the build.
+- Removed the official Meshtastic logo from the architecture artwork and added
+  explicit compatibility-only, non-affiliation trademark notices.
 
 ## [v0.7.14] - 2026-11-11
 

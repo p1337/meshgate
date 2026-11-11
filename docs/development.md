@@ -359,3 +359,19 @@ Follow these steps to trigger the CI/CD pipeline:
      byte length and SHA-256 digest. The on-device one-click updater consumes
      only this fixed official channel; publish Pages before testing an OTA.
    * The web flasher will instantly update to show "Firmware Version: v1.2.0".
+
+### License-complete release assets
+
+The combined firmware is distributed under `GPL-3.0-only`. The release job
+must therefore continue to publish `meshgate-<version>-source.zip` next to
+every binary. GitHub's automatic source archives are insufficient on their own
+because they contain only the `proto/meshtastic` Gitlink, not the checked-out
+GPLv3 Protocol Buffer sources used by the build. The workflow creates the
+source archive from `git archive` for both the parent repository and the exact
+submodule revision, then includes that archive in `SHA256SUMS.txt`.
+
+Do not remove the root `LICENSE`, `LICENSE_POLICY.md`,
+`THIRD_PARTY_NOTICES.md`, `LICENSES/`, component license files, build scripts,
+partition data or the protobuf source tree from that archive. Those files are
+part of the corresponding source and provenance required for a redistributable
+binary release.

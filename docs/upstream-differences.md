@@ -13,16 +13,19 @@ that the GitHub network banner therefore cannot show.
 - captive-portal configuration flow
 - Wi-Fi and mDNS integration
 - MQTT proxy architecture
-- MIT license and original authorship
+- MIT-licensed foundation and original authorship
 
 ## License and attribution
 
-Commercial use, modification and redistribution are permitted under the MIT
-license. The original SourceLab.org notice remains intact. The same root
-license identifies Robert Stefanowicz as the copyright holder for the
-MeshGate-specific modifications, and both notices must remain with every copy
-or substantial portion of the software. Attribution does not imply endorsement
-of a third-party product.
+The portions derived from
+[SourceLabOrg/meshtastic-esp32-bt-bridge](https://github.com/SourceLabOrg/meshtastic-esp32-bt-bridge)
+retain the original SourceLab.org MIT copyright and permission notice in
+`LICENSES/SourceLabOrg-MIT.txt`. MeshGate-specific work is copyrighted by
+Robert Stefanowicz. The combined firmware generates and links code from the
+GPLv3 Meshtastic Protocol Buffers and is therefore conveyed under
+`GPL-3.0-only`. The root `LICENSE` contains GPLv3; component notices and exact
+provenance are collected in `THIRD_PARTY_NOTICES.md`. Attribution does not
+imply endorsement of a third-party product.
 
 ## MeshGate additions
 

@@ -877,7 +877,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class="footer">
     Firmware Version: )rawliteral" FIRMWARE_VERSION R"rawliteral(<br>
     MeshGate extensions &copy; 2026 Robert Stefanowicz (p1337)<br>
-    <a href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(" target="_blank">Project, source and MIT license on GitHub</a>
+    <a href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(" target="_blank">Project, source, GPL-3.0-only license and notices on GitHub</a>
   </div>
 
   <!-- Custom In-DOM Modal for Captive Portal compatibility (macOS/iOS CNA) -->
