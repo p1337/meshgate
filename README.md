@@ -127,14 +127,6 @@ Use the [MeshGate Web Flasher](https://p1337.github.io/meshgate/) in Chrome,
 Edge or Opera on a desktop computer, or download a binary from
 [GitHub Releases](https://github.com/p1337/meshgate/releases).
 
-### Recommended and tested hardware
-
-[![Arduino Nano ESP32 tested with MeshGate](web/assets/arduino-nano-esp32.png)](https://link.amazon/B0bHRPLPo)
-
-**Arduino Nano ESP32 (ESP32-S3, without headers)** is the recommended board and the production firmware, native Tailscale and one-click OTA path are tested on it.
-
-**[Buy the tested board on Amazon](https://link.amazon/B0bHRPLPo)** · **[Install MeshGate in the Web Flasher](https://p1337.github.io/meshgate/)**
-
 The USB Web Flasher is the factory-installation and recovery path. For a first
 installation, erase the board. On an already configured device, leave **Erase
 device** unchecked: enabling it permanently deletes every saved Wi-Fi
