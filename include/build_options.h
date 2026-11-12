@@ -114,8 +114,8 @@
 #define MESSAGE_MAILBOX_TEXT_MAX 233
 #endif
 
-// JSON is assembled in an AsyncResponseStream before transmission. Keep each
-// page bounded so DERP, MQTT/TLS and the Web API retain internal-RAM headroom.
+// JSON is assembled into the bounded dynamic response before transmission.
+// Keep each page bounded so DERP, MQTT/TLS and the Web API retain headroom.
 #ifndef MESSAGE_MAILBOX_API_PAGE_MAX
 #define MESSAGE_MAILBOX_API_PAGE_MAX 32
 #endif
@@ -160,7 +160,7 @@
 // Keep main on the next real release version. The release workflow injects
 // the matching Git tag during its clean build. MeshGate does not distribute
 // versionless/dev OTA images to end users.
-#define FIRMWARE_VERSION "v0.7.17"
+#define FIRMWARE_VERSION "v0.7.18"
 #endif
 
 #ifndef HARDWARE_BOARD_NAME

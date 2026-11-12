@@ -11,6 +11,7 @@
 #endif
 
 #include "build_options.h"
+#include "bounded_stream_response.h"
 #include "mqtt_net.h"
 #include "reliability_manager.h"
 #include "utils.h"
@@ -409,7 +410,7 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
     // Child routes must precede /api/ota because ESPAsyncWebServer permits prefix matches.
     server.on("/api/ota/official", HTTP_GET, [](AsyncWebServerRequest* request) {
         const OfficialState state = s_officialState.load(std::memory_order_acquire);
-        AsyncResponseStream* response = request->beginResponseStream("application/json");
+        BoundedStreamResponse* response = new BoundedStreamResponse("application/json");
         response->print("{\"supported\":");
 #ifdef ESP_IDF5_MIGRATION_BUILD
         response->print("true");
@@ -465,7 +466,7 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
     server.on("/api/ota", HTTP_GET, [](AsyncWebServerRequest* request) {
         const esp_partition_t* running = esp_ota_get_running_partition();
         const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
-        AsyncResponseStream* response = request->beginResponseStream("application/json");
+        BoundedStreamResponse* response = new BoundedStreamResponse("application/json");
         response->print("{\"enabled\":"); response->print(!s_token.isEmpty() && next != nullptr ? "true" : "false");
         response->print(",\"firmware_version\":\""); response->print(FIRMWARE_VERSION);
         response->print("\",\"board\":\""); response->print(HARDWARE_BOARD_NAME);

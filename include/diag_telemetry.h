@@ -44,13 +44,13 @@ void diag_telemetry_format_serial(const SystemTelemetrySnapshot& s, char* buf, s
 
 /**
  * Formats diagnostic telemetry into a JSON payload for GET /status.
- * Streams directly into Print& (e.g. AsyncResponseStream) without large heap allocations.
+ * Streams directly into Print& without a second large intermediate payload.
  */
 void diag_telemetry_format_json(const SystemTelemetrySnapshot& s, Print& out);
 
 /**
  * Formats diagnostic telemetry into Prometheus text format 0.0.4.
- * Streams directly into Print& (e.g. AsyncResponseStream) with zero heap allocation.
+ * Streams directly into Print& without a second large intermediate payload.
  */
 void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& out);
 

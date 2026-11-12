@@ -17,6 +17,7 @@
 #include "message_mailbox.h"
 #include "reliability_manager.h"
 #include "device_presence.h"
+#include "bounded_stream_response.h"
 #include <esp_heap_caps.h>
 
 /**
@@ -2559,7 +2560,7 @@ void config_ui_start_server() {
         bridge_http_phoneapi_mark_active();
         const bool drainAll = request->hasParam("all") &&
                               request->getParam("all")->value().equalsIgnoreCase("true");
-        AsyncResponseStream* response = request->beginResponseStream("application/x-protobuf");
+        BoundedStreamResponse* response = new BoundedStreamResponse("application/x-protobuf");
         addHttpPhoneApiHeaders(response, "GET, OPTIONS");
 
         uint8_t packet[MESHTASTIC_MAX_PACKET_SIZE];
@@ -2626,7 +2627,7 @@ void config_ui_start_server() {
             cursor = stats.next_sequence - static_cast<uint32_t>(limit);
         }
 
-        AsyncResponseStream* response = request->beginResponseStream("application/json; charset=utf-8");
+        BoundedStreamResponse* response = new BoundedStreamResponse("application/json; charset=utf-8");
         addApiCorsHeaders(response, "GET, OPTIONS");
         response->print("{\"ready\":");
         response->print(stats.ready ? "true" : "false");
@@ -2797,7 +2798,7 @@ void config_ui_start_server() {
     server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request){
         log_d("[WebUI] GET /config requested (Client: %s)", request->client()->remoteIP().toString().c_str());
         BridgeConfig cfg = config_ui_load();
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        BoundedStreamResponse *response = new BoundedStreamResponse("application/json");
 
         response->print("{\"wifi_ssid\":\"");
         utils_escape_json_print(*response, cfg.wifi_ssid);
@@ -2867,7 +2868,7 @@ void config_ui_start_server() {
         log_d("[WebUI] GET /status requested (Client: %s)", request->client()->remoteIP().toString().c_str());
 
         SystemTelemetrySnapshot snapshot = diag_telemetry_get_snapshot();
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        BoundedStreamResponse *response = new BoundedStreamResponse("application/json");
         diag_telemetry_format_json(snapshot, *response);
         request->send(response);
     });
@@ -2880,7 +2881,7 @@ void config_ui_start_server() {
     });
 
     server.on("/tailscale_status", HTTP_GET, [](AsyncWebServerRequest *request){
-        AsyncResponseStream* response = request->beginResponseStream("application/json");
+        BoundedStreamResponse* response = new BoundedStreamResponse("application/json");
         response->print("{\"enabled\":");
         response->print(tailscale_net_is_enabled() ? "true" : "false");
         response->print(",\"connected\":");
@@ -2916,14 +2917,14 @@ void config_ui_start_server() {
 
     /**
      * Standards-compliant Prometheus / OpenMetrics scraping endpoint.
-     * Uses AsyncResponseStream to stream metrics chunk-by-chunk directly into lwIP
-     * network output buffers with zero large contiguous heap allocations.
+     * Uses the bounded dynamic response writer without a TCP-window-sized
+     * send allocation.
      */
     server.on("/metrics", HTTP_GET, [](AsyncWebServerRequest *request){
         log_d("[WebUI] GET /metrics requested (Client: %s)", request->client()->remoteIP().toString().c_str());
 
         SystemTelemetrySnapshot snapshot = diag_telemetry_get_snapshot();
-        AsyncResponseStream *response = request->beginResponseStream("text/plain; version=0.0.4; charset=utf-8");
+        BoundedStreamResponse *response = new BoundedStreamResponse("text/plain; version=0.0.4; charset=utf-8");
         diag_telemetry_format_prometheus(snapshot, *response);
         request->send(response);
     });

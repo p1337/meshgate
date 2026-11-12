@@ -232,6 +232,21 @@ the mailbox retained the same three records and sequence cursor. This confirms
 correctness under full client-slot pressure, but the latency and minimum-heap
 figures remain a stress boundary rather than a supported throughput target.
 
+The stock ESPAsyncWebServer `AsyncResponseStream` is not safe for production
+dynamic responses on this constrained profile. Its send path allocates the
+complete current AsyncTCP send-window size on every acknowledgement. With
+MQTT TLS, BLE and Tailscale/DERP active, total free heap can still look healthy
+while the largest contiguous internal block is smaller than that window. The
+allocation then fails on every retry and the response never emits even its
+headers. All dynamic production responses therefore use
+`BoundedStreamResponse`: the body retains the familiar `Print` construction
+interface, but the completed body and headers are sent directly in
+acknowledged 512-byte blocks without a send-time allocation. Do not reintroduce
+`beginResponseStream()` on the production HTTP path. Any response-path change
+must be tested with MQTT TLS and Tailscale connected and must repeatedly return
+`/status`, `/config`, `/tailscale_status`, `/metrics`, `/api/mailbox` and both
+PhoneAPI endpoints without an indefinitely pending request.
+
 A subsequent 30-connection TCP churn test exposed a separate ownership leak:
 all connections and 30 concurrent HTTP checks succeeded, but internal free heap
 remained about 7.4 KiB below its pre-test baseline after more than three

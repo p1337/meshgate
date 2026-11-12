@@ -4,6 +4,16 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.18] - 2026-11-12
+
+- Replaced TCP-window-sized send allocations for dynamic HTTP responses with
+  acknowledged 512-byte blocks, preventing `/status`, configuration,
+  Tailscale diagnostics, metrics, mailbox and PhoneAPI responses from stalling
+  when MQTT TLS, BLE and Tailscale fragment internal heap.
+- Kept dynamic-response transmission allocation-free after body construction,
+  preserving the normal control interface as well as the reserved recovery
+  paths under concurrent VPN and broker load.
+
 ## [v0.7.17] - 2026-11-12
 
 - Retained successfully BLE-forwarded outgoing text messages alongside

@@ -21,7 +21,7 @@ void utils_set_debug_logging(bool enableDebugLogs) {
 
 /**
  * Stream an escaped JSON string directly to a Print stream, avoiding any heap allocation.
- * @param out Destination Print stream (e.g. AsyncResponseStream)
+ * @param out Destination Print stream
  * @param input Raw null-terminated C string to escape
  */
 void utils_escape_json_print(Print& out, const char* input) {
