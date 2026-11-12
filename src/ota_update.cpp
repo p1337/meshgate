@@ -190,7 +190,7 @@ int compareVersions(const String& current, const String& candidate) {
 }
 
 #ifdef ESP_IDF5_MIGRATION_BUILD
-bool fetchOfficialMetadata(String& version, String& firmwareUrl, size_t& imageSize, String& sha256) {
+bool fetchOfficialMetadataOnce(String& version, String& firmwareUrl, size_t& imageSize, String& sha256) {
     NetworkClientSecure client;
     client.setCACertBundle(rootca_crt_bundle_start,
                            static_cast<size_t>(rootca_crt_bundle_end - rootca_crt_bundle_start));
@@ -221,6 +221,21 @@ bool fetchOfficialMetadata(String& version, String& firmwareUrl, size_t& imageSi
     int versionParts[3];
     return board == OFFICIAL_BOARD && firmwareUrl == OFFICIAL_FIRMWARE_URL &&
            parseVersion(version, versionParts) && isHexDigest(sha256);
+}
+
+bool fetchOfficialMetadata(String& version, String& firmwareUrl, size_t& imageSize, String& sha256) {
+    constexpr uint8_t MAX_METADATA_ATTEMPTS = 4;
+    for (uint8_t attempt = 0; attempt < MAX_METADATA_ATTEMPTS; ++attempt) {
+        if (fetchOfficialMetadataOnce(version, firmwareUrl, imageSize, sha256)) return true;
+        if (attempt + 1 < MAX_METADATA_ATTEMPTS) {
+            const uint32_t delayMs = 750U * static_cast<uint32_t>(attempt + 1);
+            log_w("[OTA] Metadata fetch failed; retrying in %u ms (%u/%u)",
+                  static_cast<unsigned>(delayMs), static_cast<unsigned>(attempt + 2),
+                  static_cast<unsigned>(MAX_METADATA_ATTEMPTS));
+            vTaskDelay(pdMS_TO_TICKS(delayMs));
+        }
+    }
+    return false;
 }
 
 String digestToHex(const uint8_t digest[32]) {
@@ -305,38 +320,42 @@ void officialUpdateTask(void* parameter) {
     size_t remaining = expectedSize;
     bool fatalStreamFailure = false;
     String fatalStreamError;
-    constexpr uint8_t MAX_DOWNLOAD_CONNECTIONS = 8;
+    constexpr uint32_t MAX_DOWNLOAD_TIME_MS = 20U * 60U * 1000U;
+    constexpr uint32_t MAX_RETRY_DELAY_MS = 5000U;
+    const uint32_t downloadStartedAt = millis();
+    uint16_t connection = 0;
 
-    for (uint8_t connection = 0; remaining > 0 && connection < MAX_DOWNLOAD_CONNECTIONS; ++connection) {
+    while (remaining > 0 && millis() - downloadStartedAt < MAX_DOWNLOAD_TIME_MS) {
+        ++connection;
         const size_t offset = expectedSize - remaining;
         NetworkClientSecure client;
         client.setCACertBundle(rootca_crt_bundle_start,
                                static_cast<size_t>(rootca_crt_bundle_end - rootca_crt_bundle_start));
         HTTPClient http;
         http.setConnectTimeout(12000);
-        http.setTimeout(20000);
+        http.setTimeout(30000);
         if (!http.begin(client, firmwareUrl)) {
-            fatalStreamFailure = true;
-            fatalStreamError = "Could not open the official firmware URL";
-            break;
+            const uint32_t delayMs = min(MAX_RETRY_DELAY_MS, 500U * static_cast<uint32_t>(connection));
+            log_w("[OTA] Could not open firmware URL; retrying in %u ms", static_cast<unsigned>(delayMs));
+            vTaskDelay(pdMS_TO_TICKS(delayMs));
+            continue;
         }
         if (offset > 0) {
             http.addHeader("Range", "bytes=" + String(static_cast<unsigned long>(offset)) + "-");
-            log_w("[OTA] Resuming official download at byte %u (connection %u/%u)",
-                  static_cast<unsigned>(offset), static_cast<unsigned>(connection + 1),
-                  static_cast<unsigned>(MAX_DOWNLOAD_CONNECTIONS));
+            log_w("[OTA] Resuming official download at byte %u (connection %u)",
+                  static_cast<unsigned>(offset), static_cast<unsigned>(connection));
         }
 
         const int status = http.GET();
         const int responseSize = http.getSize();
         const int expectedStatus = offset == 0 ? HTTP_CODE_OK : HTTP_CODE_PARTIAL_CONTENT;
         if (status != expectedStatus || responseSize <= 0 || static_cast<size_t>(responseSize) != remaining) {
+            log_w("[OTA] Firmware request at byte %u returned HTTP %d and size %d; retrying",
+                  static_cast<unsigned>(offset), status, responseSize);
             http.end();
-            fatalStreamFailure = true;
-            fatalStreamError = offset == 0
-                ? "Official firmware download returned an invalid size or status"
-                : "Official server rejected the safe resume request";
-            break;
+            const uint32_t delayMs = min(MAX_RETRY_DELAY_MS, 500U * static_cast<uint32_t>(connection));
+            vTaskDelay(pdMS_TO_TICKS(delayMs));
+            continue;
         }
 
         NetworkClient* stream = http.getStreamPtr();
@@ -344,7 +363,7 @@ void officialUpdateTask(void* parameter) {
         while (remaining > 0) {
             const int available = stream->available();
             if (available <= 0) {
-                if (!stream->connected() || millis() - lastDataAt > 20000) break;
+                if (!stream->connected() || millis() - lastDataAt > 30000) break;
                 vTaskDelay(pdMS_TO_TICKS(10));
                 continue;
             }
@@ -367,14 +386,17 @@ void officialUpdateTask(void* parameter) {
         }
         http.end();
         if (fatalStreamFailure) break;
-        if (remaining > 0) vTaskDelay(pdMS_TO_TICKS(250));
+        if (remaining > 0) {
+            const uint32_t delayMs = min(MAX_RETRY_DELAY_MS, 500U * static_cast<uint32_t>(connection));
+            vTaskDelay(pdMS_TO_TICKS(delayMs));
+        }
     }
 
     uint8_t actualDigest[32];
     const bool digestFinished = mbedtls_sha256_finish(&shaContext, actualDigest) == 0;
     mbedtls_sha256_free(&shaContext);
     if (fatalStreamFailure || remaining != 0) {
-        failOfficial(fatalStreamError.isEmpty() ? "Firmware download was interrupted after all retry attempts" : fatalStreamError);
+        failOfficial(fatalStreamError.isEmpty() ? "Firmware download did not complete within the safe retry window" : fatalStreamError);
         vTaskDelete(nullptr);
         return;
     }

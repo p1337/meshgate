@@ -80,6 +80,15 @@ value before building an end-user image and create the identical SemVer Git
 tag. The release workflow injects the tag again in its clean build, preventing
 the published binary and release name from diverging.
 
+The official updater treats release metadata and firmware transport failures
+as transient on remote links. Metadata receives four bounded attempts. Once
+flash writing starts, the firmware transfer resumes with HTTP Range requests
+from the already hashed and written byte offset for up to twenty minutes.
+Only flash-write, SHA-256, size, board, or slot-validation failures are fatal
+immediately. Do not replace this elapsed-time retry window with a small fixed
+connection count: production hotel and hotspot paths have required more than
+eight resumptions for a single 1.9 MB image.
+
 ## 4. Flashing the ESP32
 1. Plug your ESP32-S3 into your Mac via USB.
 2. In the IntelliJ terminal, run:

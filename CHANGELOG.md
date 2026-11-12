@@ -4,6 +4,16 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.20] - 2026-11-12
+
+- Made official OTA resilient on weak hotel, hotspot and remote Wi-Fi links:
+  release metadata is retried and interrupted firmware transfers resume from
+  the verified byte offset for up to twenty minutes instead of failing after
+  a fixed eight connections.
+- Kept the active application slot selected until the complete image size and
+  SHA-256 digest have been validated, so an exhausted retry window still
+  leaves the previous firmware bootable.
+
 ## [v0.7.19] - 2026-11-12
 
 - Restored two independent browser-response slots during low-memory operation,
