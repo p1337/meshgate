@@ -6,7 +6,7 @@ are intentionally omitted.
 
 ## [v0.7.20] - 2026-11-12
 
-- Made official OTA resilient on weak hotel, hotspot and remote Wi-Fi links:
+- Made official OTA resilient across unstable and interrupted network links:
   release metadata is retried and interrupted firmware transfers resume from
   the verified byte offset for up to twenty minutes instead of failing after
   a fixed eight connections.
