@@ -4,6 +4,13 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.19] - 2026-11-12
+
+- Restored two independent browser-response slots during low-memory operation,
+  so a bounded diagnostic request cannot replace the control page with a
+  temporary busy response while recovery, OTA and PhoneAPI keep their separate
+  reserved capacity.
+
 ## [v0.7.18] - 2026-11-12
 
 - Replaced TCP-window-sized send allocations for dynamic HTTP responses with

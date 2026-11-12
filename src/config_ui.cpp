@@ -41,7 +41,10 @@ extern const uint8_t index_html_gz_end[] asm("_binary_web_generated_index_html_g
 namespace {
 constexpr uint8_t MAX_NORMAL_WEB_REQUESTS = 3;
 constexpr uint8_t MAX_RESERVED_WEB_REQUESTS = 3;
-constexpr uint8_t LOW_MEMORY_NORMAL_WEB_REQUESTS = 1;
+// Keep page bootstrap usable while a bounded diagnostic request is active.
+// The UI and its versioned logo need two independent normal slots; recovery,
+// OTA and PhoneAPI traffic continue to use the separate reserved pool below.
+constexpr uint8_t LOW_MEMORY_NORMAL_WEB_REQUESTS = 2;
 constexpr uint8_t LOW_MEMORY_RESERVED_WEB_REQUESTS = 2;
 constexpr uint32_t WEB_LOW_FREE_HEAP_BYTES = 32 * 1024;
 constexpr uint32_t WEB_LOW_LARGEST_BLOCK_BYTES = 16 * 1024;
