@@ -76,6 +76,10 @@ remote site:
 - authenticated dual-slot OTA and remote diagnostics;
 - redundant NVS configuration, task watchdogs and timed recovery restarts;
 - BLE address recovery when an nRF52 radio rotates its private address;
+- automatic gateway-side store-and-forward for RAK WisBlock radios: MeshGate
+  retains up to 128 text messages while the PhoneAPI client is offline and
+  replays them after reconnection, without enabling or configuring a separate
+  Meshtastic Store & Forward module;
 - a radio-managed MQTT proxy and OpenMetrics/Prometheus telemetry;
 - a dark control interface inspired by the visual language of MeshRadar.
 
@@ -263,7 +267,11 @@ retained `FromRadio.packet` envelopes are replayed automatically; the inner
 Meshtastic packet IDs remain intact so clients can deduplicate messages already
 in their local database. The mailbox survives reboots and OTA and is removed by
 the explicit factory reset. When full, the oldest record is overwritten and
-the API's `overwritten` counter increases.
+the API's `overwritten` counter increases. This provides automatic,
+gateway-local store-and-forward behavior for a WisBlock whose ordinary received
+messages would otherwise not be retained for a disconnected PhoneAPI client.
+It is independent of the official Meshtastic Store & Forward module and needs
+no additional radio configuration.
 
 For OTA from the project directory:
 

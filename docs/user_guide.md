@@ -41,6 +41,11 @@ handled by MeshGate. The Tailscale tunnel still encrypts remote traffic.
 
 ### Offline message mailbox
 
+RAK WisBlock radios do not retain ordinary received chat messages for a
+disconnected PhoneAPI client. MeshGate therefore provides automatic,
+gateway-local store-and-forward behavior without requiring the separate
+Meshtastic Store & Forward module or any extra radio configuration.
+
 MeshGate stores the newest 128 decoded Meshtastic text messages even when no
 phone or computer is connected. Reconnect the native Meshtastic app to
 `<meshgate-ip>:4403`, or reconnect a browser Meshtastic Client over HTTP. After
