@@ -77,9 +77,10 @@ remote site:
 - redundant NVS configuration, task watchdogs and timed recovery restarts;
 - BLE address recovery when an nRF52 radio rotates its private address;
 - automatic gateway-side store-and-forward for RAK WisBlock radios: MeshGate
-  retains up to 128 text messages while the PhoneAPI client is offline and
-  replays them after reconnection, without enabling or configuring a separate
-  Meshtastic Store & Forward module;
+  retains up to 128 received messages and successfully BLE-forwarded sent
+  messages while the PhoneAPI client is offline, then restores both sides of
+  the conversation after reconnection without enabling or configuring a
+  separate Meshtastic Store & Forward module;
 - a radio-managed MQTT proxy and OpenMetrics/Prometheus telemetry;
 - a dark control interface inspired by the visual language of MeshRadar.
 
@@ -261,17 +262,20 @@ the explicit factory-reset action clears both copies.
 
 The newest 128 decoded Meshtastic text messages are also retained in a
 checksummed LittleFS ring on the existing data partition. MeshGate drains and
-stores them while no phone or computer is connected. After a native TCP or
-browser PhoneAPI client completes its normal configuration handshake, the
-retained `FromRadio.packet` envelopes are replayed automatically; the inner
-Meshtastic packet IDs remain intact so clients can deduplicate messages already
-in their local database. The mailbox survives reboots and OTA and is removed by
-the explicit factory reset. When full, the oldest record is overwritten and
-the API's `overwritten` counter increases. This provides automatic,
-gateway-local store-and-forward behavior for a WisBlock whose ordinary received
-messages would otherwise not be retained for a disconnected PhoneAPI client.
-It is independent of the official Meshtastic Store & Forward module and needs
-no additional radio configuration.
+stores received messages while no phone or computer is connected. It also
+stores outgoing text only after the radio's BLE `ToRadio` characteristic has
+accepted it. After a native TCP or browser PhoneAPI client completes its normal
+configuration handshake, both received and sent history is replayed
+automatically as `FromRadio.packet` envelopes. Replayed sent entries are local
+history only: MeshGate never writes them back to the radio and therefore never
+transmits them a second time over LoRa. The inner Meshtastic packet IDs remain
+intact so clients can deduplicate messages already in their local database.
+The mailbox survives reboots and OTA and is removed by the explicit factory
+reset. When full, the oldest record is overwritten and the API's `overwritten`
+counter increases. This provides automatic, gateway-local store-and-forward
+behavior for a WisBlock whose ordinary chat history would otherwise not be
+retained for a disconnected PhoneAPI client. It is independent of the official
+Meshtastic Store & Forward module and needs no additional radio configuration.
 
 For OTA from the project directory:
 

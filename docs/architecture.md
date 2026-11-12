@@ -204,14 +204,30 @@ To provide the best user experience, configuration is handled via a web-based ca
 partition; it does not change the partition table and does not consume the
 small NVS partition used for credentials. The on-flash file is a fixed,
 checksummed ring containing the latest 128 decoded `TEXT_MESSAGE_APP` packets.
-Each record keeps the readable text and a replay-safe `FromRadio` protobuf.
-Duplicate LoRa delivery is rejected by a RAM fingerprint index. When the ring
-is full, the oldest record is replaced.
+Each record keeps the readable text, its sent/received direction and a
+replay-safe `FromRadio` protobuf. The direction uses the record's existing
+reserved byte, so enabling sent-history retention does not change or erase the
+version-1 on-flash format. Duplicate LoRa delivery and a radio echo of an
+already stored outgoing packet are rejected by a normalized RAM fingerprint
+index. When the ring is full, the oldest record is replaced.
 
 The BLE task treats an initialized mailbox as a permanent consumer, so the
-radio is drained even with zero TCP/HTTP/MQTT clients. MQTT proxy envelopes,
-configuration records, telemetry, node information and encrypted packets that
-the paired radio cannot decode are not mailbox messages.
+radio is drained even with zero TCP/HTTP/MQTT clients. A text `ToRadio` envelope
+is retained only after the BLE write succeeds. Its replay-safe wrapper uses the
+local node number learned from `FromRadio.my_info`; this restores sent chat
+history to a reconnecting client without placing the packet back on BLE or
+transmitting it over LoRa again. MQTT proxy envelopes, configuration records,
+telemetry, node information and encrypted packets that the paired radio cannot
+decode are not mailbox messages.
+
+The BLE task does not decode mailbox protobufs or write LittleFS. It places
+candidate `FromRadio` envelopes and successfully written `ToRadio` envelopes
+into a four-entry statically allocated work queue after a lightweight top-level
+wire-field filter has discarded unrelated protobuf variants. `bridgeNetTask`
+handles one candidate after live PhoneAPI delivery and replay on Core 0. Consequently a
+slow flash write can delay Web/TCP work but cannot stall the Core-1 BLE/GATT
+loop; if the bounded queue ever fills under abnormal sustained traffic, BLE
+continuity wins and the history candidate is skipped.
 
 TCP clients are armed for replay only after they send `ToRadio.want_config_id`
 and receive the matching `FromRadio.config_complete_id`. HTTP PhoneAPI uses the
@@ -223,9 +239,9 @@ local to the old radio FIFO session; the inner `MeshPacket.id` is preserved for
 normal Meshtastic client deduplication and its `delayed` flag identifies the
 replay as a delayed broadcast or direct message.
 
-`GET /api/mailbox` exposes the same ring as JSON. `after` is an exclusive
-sequence cursor and each response is capped at 32 messages to protect TLS/VPN
-heap headroom. The endpoint reports ring bounds,
+`GET /api/mailbox` exposes the same ring as JSON, including a `direction` value
+of `sent` or `received`. `after` is an exclusive sequence cursor and each
+response is capped at 32 messages to protect TLS/VPN heap headroom. The endpoint reports ring bounds,
 overwrite, duplicate and invalid-record counters. Ordinary reboot and OTA keep
 the data partition; the explicit factory-reset endpoint clears the mailbox.
 

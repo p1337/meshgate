@@ -17,6 +17,7 @@ struct MessageMailboxStats {
 
 struct MessageMailboxEntry {
     uint32_t sequence;
+    bool outgoing;
     uint32_t from;
     uint32_t to;
     uint32_t packet_id;
@@ -36,6 +37,12 @@ bool message_mailbox_is_ready();
 // Inspects a raw FromRadio protobuf and stores decoded text messages. Returns
 // true only when a new message was committed; non-message envelopes are ignored.
 bool message_mailbox_capture_from_radio(const uint8_t* data, size_t len);
+
+// Inspects a raw ToRadio protobuf after it was accepted by the BLE
+// characteristic and stores decoded text messages as replay-only sent
+// history. The generated FromRadio envelope is returned to PhoneAPI clients;
+// it is never written back to the radio or transmitted over LoRa.
+bool message_mailbox_capture_to_radio(const uint8_t* data, size_t len);
 
 MessageMailboxStats message_mailbox_get_stats();
 

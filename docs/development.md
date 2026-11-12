@@ -67,6 +67,13 @@ The resulting OTA image is
 NimBLE-Arduino 1.x in this environment; it is retained only for the IDF-4
 recovery profiles.
 
+`tools/upload_ota.ps1` allows ten minutes for the request body by default.
+This is intentional: a production image sent through a Tailscale DERP relay
+and a mobile or hotel uplink can need more than the former three-minute
+timeout. Override `-UploadTimeoutSeconds` only when the path is known. A client
+timeout does not prove that the inactive image was activated; inspect
+`GET /api/ota` and confirm the running partition before retrying.
+
 Production-profile builds report the next real release version from
 `FIRMWARE_VERSION`; MeshGate does not distribute `-dev` OTA images. Bump that
 value before building an end-user image and create the identical SemVer Git
@@ -170,6 +177,74 @@ causes an immediate cache-safety assertion or IPC stack-canary panic. Do not
 change these overrides without an on-device boot, DERP-handshake, OTA, BLE, and
 three-client TCP stress test.
 
+#### Production load-shedding baseline
+
+On 2026-11-12 the deployed IDF-5 Nano was exercised with eight rounds across
+five concurrent HTTP paths (`/status`, `/metrics`, `/api/logs`, the bounded
+mailbox query and the local SVG), followed by 20 sequential TCP connections and
+three simultaneous port-4403 clients. `/status` remained available for all
+eight requests, all 20 sequential TCP connections and all three concurrent
+clients succeeded, BLE and MQTTS stayed connected, and every bridge queue kept
+its drop counter at zero. Under the first HTTP burst the historical minimum
+heap reached 476 bytes. A follow-up with three sustained four-request batches
+reached 184 bytes even though the device recovered to about 25 KiB free heap
+without a restart. The low-memory admission threshold was therefore raised to
+32 KiB free heap or a 16 KiB largest internal block, and low-memory mode now
+admits only one ordinary response at a time while keeping two reserved recovery
+slots. Treat resulting `503` responses as successful load shedding, not as
+endpoint failure.
+Future changes to HTTP admission control, asset serving, TLS allocation or task
+stacks must repeat this test and preserve the always-available status/recovery
+path. The production Wi-Fi RSSI during this baseline was between -93 and
+-98 dBm, so latency figures from the run are not a clean LAN throughput
+benchmark.
+
+A controlled `/api/reboot` recovery check on the same deployment returned
+`202`, produced an observable offline interval, and restored LAN HTTP plus TCP
+4403 after 15.8 seconds. BLE, MQTTS, Tailscale control-plane registration and
+the DERP data path were all ready after 20.2 seconds. The persistent mailbox
+retained its three records and unchanged next-sequence cursor, all queue-drop
+counters remained zero, and the fresh boot reported 33.6 KiB free heap with a
+13.4 KiB observed minimum. Use these values as a regression baseline for
+scheduled/manual restart work; a successful reboot must preserve both NVS
+configuration and LittleFS mailbox state.
+
+A later mixed-path test held two TCP 4403 clients open while repeatedly
+churning the third slot and requesting LAN status, metrics, the local SVG and
+Tailscale status concurrently. The device preserved BLE, MQTTS, Tailscale/DERP
+and all queues without drops or a restart, but one four-request round exceeded
+an 8-second client timeout. Internal heap temporarily reached 9.2 KiB free with
+a 1.5 KiB largest block, then recovered without intervention to 24.6 KiB free
+with a 7.7 KiB largest block. This is a diagnostic limit, not a throughput
+target: future tests must treat multiple held PhoneAPI sockets plus simultaneous
+LAN and DERP asset requests as the high-pressure case and confirm that reserved
+status/recovery endpoints remain responsive before adding more load.
+
+A follow-up immediately after the scheduled 18:00 maintenance restart held all
+three TCP 4403 client slots while running six concurrent batches of LAN
+`/status`, Tailscale `/status`, and alternating metrics, logs, mailbox and SVG
+requests. All 18 requests returned `200`; both status paths succeeded in every
+batch, and the slowest response took 6.5 seconds over the production -90 dBm
+Wi-Fi link. The historical minimum heap reached 2.5 KiB but recovered to
+32.6 KiB free with a 12.3 KiB largest block after the clients closed. BLE,
+MQTTS and DERP remained connected, all queue-drop counters stayed at zero, and
+the mailbox retained the same three records and sequence cursor. This confirms
+correctness under full client-slot pressure, but the latency and minimum-heap
+figures remain a stress boundary rather than a supported throughput target.
+
+A subsequent 30-connection TCP churn test exposed a separate ownership leak:
+all connections and 30 concurrent HTTP checks succeeded, but internal free heap
+remained about 7.4 KiB below its pre-test baseline after more than three
+minutes. `AsyncServer` creates every accepted `AsyncClient` with `new` and
+transfers ownership to the application callback. MeshGate deleted its
+per-client context on disconnect but not the `AsyncClient` itself. The
+disconnect callback now releases both objects, and the max-client rejection
+path installs the same deferred cleanup before closing. Both the IDF-5
+production profile and Arduino-Core-2 recovery profile compile successfully
+with the fix. Any future TCP churn regression must verify that free heap returns
+to its pre-test range after lwIP connection cleanup, not merely that the active
+client count returns to zero.
+
 `GET /tailscale_status` must show both `connected: true` and
 `derp_connected: true`. The first value alone only proves Tailscale control-plane
 registration and does not prove that HTTP or TCP 4403 can traverse the tailnet.
@@ -241,6 +316,18 @@ To prevent high-bandwidth network traffic from starving BLE operations or lockin
 | **`diag_telemetry`** | Core 0 | **1** | 3072 B | Periodic diagnostic task (15s interval) |
 | **`bridgeBleTask`** | Core 1 | **1** | 8192 B | BLE Engine (polls `FromRadio`, handles `FromNum`, writes to `ToRadio`) |
 | **`reliability_task`** | Core 1 | **2** | 4096 B | Watchdog, link supervision and allocation-free restart requests |
+
+The BLE task always services app/TCP `ToRadio` traffic before MQTT downlink
+traffic. After a lightweight top-level wire-field filter, it copies mailbox
+candidates into a statically allocated four-entry queue; `bridgeNetTask`
+performs protobuf decoding and LittleFS writes on Core 0
+only after live PhoneAPI delivery and replay. This deliberately allows
+Web/WLAN work to lag instead of blocking BLE. Outgoing mailbox history is
+queued only after a successful BLE characteristic write; failed writes are
+never recorded. The mailbox replay path cannot enqueue data into `ToRadio`, so
+replay cannot duplicate an LoRa transmission. The record's existing reserved
+byte stores sent/received direction without changing the version-1 file size
+or invalidating retained mailbox data.
 
 The reliability supervisor suppresses scheduled, link-failure, low-memory and
 manual restart requests while OTA owns the update path. Only the successful OTA

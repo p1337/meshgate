@@ -47,17 +47,22 @@ gateway-local store-and-forward behavior without requiring the separate
 Meshtastic Store & Forward module or any extra radio configuration.
 
 MeshGate stores the newest 128 decoded Meshtastic text messages even when no
-phone or computer is connected. Reconnect the native Meshtastic app to
-`<meshgate-ip>:4403`, or reconnect a browser Meshtastic Client over HTTP. After
-the normal radio configuration finishes, MeshGate automatically replays the
-retained messages through the standard PhoneAPI. Existing inner packet IDs are
-preserved so the client can ignore messages already present locally.
+phone or computer is connected. This includes received messages and messages
+you sent through MeshGate that the radio successfully accepted over BLE.
+Reconnect the native Meshtastic app to `<meshgate-ip>:4403`, or reconnect a
+browser Meshtastic Client over HTTP. After the normal radio configuration
+finishes, MeshGate automatically replays both sides of the retained
+conversation through the standard PhoneAPI. Sent history is replayed only to
+the client and is never transmitted over LoRa a second time. Existing inner
+packet IDs are preserved so the client can ignore messages already present
+locally.
 
 For another integration, request
 `http://<meshgate-ip>/api/mailbox?limit=32`. Poll incrementally with the last
-returned sequence, for example `/api/mailbox?after=123&limit=32`. The response
-also reports capacity, oldest/next sequence, overwritten, duplicate and invalid
-counters. The mailbox survives reboot and OTA. **Reset All Settings** clears it
+returned sequence, for example `/api/mailbox?after=123&limit=32`. Each message
+contains `direction: sent` or `direction: received`; the response also reports
+capacity, oldest/next sequence, overwritten, duplicate and invalid counters.
+The mailbox survives reboot and OTA. **Reset All Settings** clears it
 along with configuration. Retained text is readable to anyone who can access
 the private MeshGate Web API, so do not publish that API to the internet.
 

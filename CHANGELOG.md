@@ -4,6 +4,22 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.17] - 2026-11-12
+
+- Retained successfully BLE-forwarded outgoing text messages alongside
+  received messages, restoring both sides of a conversation after a PhoneAPI
+  client reconnects without retransmitting sent packets over LoRa.
+- Added sent/received direction to the persistent mailbox JSON API while
+  preserving the existing on-flash format and all retained records.
+- Moved mailbox protobuf decoding and flash persistence from the BLE core to a
+  bounded static Core-0 work queue so Web/TCP traffic yields before BLE/GATT.
+- Released every accepted or rejected `AsyncClient` after disconnect, fixing
+  the permanent heap loss exposed by repeated Meshtastic app reconnects.
+- Tightened low-memory HTTP admission after production stress testing while
+  preserving independent capacity for status, recovery, OTA and PhoneAPI.
+- Made the raw developer OTA uploader tolerate slow Tailscale DERP and mobile
+  uplinks with a configurable upload timeout and explicit slot verification.
+
 ## [v0.7.16] - 2026-11-12
 
 - Kept the control page and logo responsive under fragmented internal memory

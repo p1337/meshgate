@@ -2,6 +2,7 @@
 
 #include <climits>
 #include <cmath>
+#include <ctime>
 #include <atomic>
 #include <LittleFS.h>
 #include <pb_decode.h>
@@ -62,6 +63,9 @@ std::atomic<uint32_t> s_duplicates{0};
 std::atomic<uint32_t> s_invalid{0};
 MailboxRecord* s_read_record = nullptr;
 MailboxRecord* s_write_record = nullptr;
+meshtastic_FromRadio s_from_radio = meshtastic_FromRadio_init_default;
+meshtastic_ToRadio s_to_radio = meshtastic_ToRadio_init_default;
+std::atomic<uint32_t> s_local_node_num{0};
 
 uint32_t fnv1a32(const void* data, size_t len) {
     const uint8_t* bytes = static_cast<const uint8_t*>(data);
@@ -206,14 +210,116 @@ void rebuildFingerprintsLocked(File& file) {
 
 uint64_t messageFingerprint(const meshtastic_MeshPacket& packet) {
     uint64_t hash = 14695981039346656037ULL;
-    hash = fnv1a64Update(hash, &packet.from, sizeof(packet.from));
     hash = fnv1a64Update(hash, &packet.to, sizeof(packet.to));
     hash = fnv1a64Update(hash, &packet.id, sizeof(packet.id));
-    hash = fnv1a64Update(hash, &packet.rx_time, sizeof(packet.rx_time));
+    // A successful ToRadio write and the radio's later FromRadio echo carry
+    // the same non-zero mesh packet id, channel, destination and payload, but
+    // the radio may add sender and receive-time fields. Normalizing those
+    // transport-side additions prevents one sent chat message from occupying
+    // two mailbox records. For legacy id=0 packets, retain sender/time so
+    // repeated equal text is not collapsed indefinitely.
+    if (packet.id == 0) {
+        hash = fnv1a64Update(hash, &packet.from, sizeof(packet.from));
+        hash = fnv1a64Update(hash, &packet.rx_time, sizeof(packet.rx_time));
+    }
     hash = fnv1a64Update(hash, &packet.channel, sizeof(packet.channel));
     hash = fnv1a64Update(hash, &packet.decoded.portnum, sizeof(packet.decoded.portnum));
     hash = fnv1a64Update(hash, packet.decoded.payload.bytes, packet.decoded.payload.size);
     return hash;
+}
+
+bool commitTextPacket(meshtastic_FromRadio& fromRadio, bool outgoing) {
+    if (fromRadio.which_payload_variant != meshtastic_FromRadio_packet_tag ||
+        fromRadio.packet.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
+        fromRadio.packet.decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP) {
+        return false;
+    }
+
+    const meshtastic_MeshPacket& packet = fromRadio.packet;
+    MailboxRecord& record = *s_write_record;
+    memset(&record, 0, sizeof(record));
+    record.magic = RECORD_MAGIC;
+    record.fingerprint = messageFingerprint(packet);
+    if (record.fingerprint == 0) {
+        record.fingerprint = 1;
+    }
+    record.from = packet.from;
+    record.to = packet.to;
+    record.packet_id = packet.id;
+    record.rx_time = packet.rx_time;
+    record.rx_rssi = static_cast<int16_t>(constrain(packet.rx_rssi, INT16_MIN, INT16_MAX));
+    record.rx_snr_x4 = static_cast<int16_t>(constrain(lroundf(packet.rx_snr * 4.0f), INT16_MIN, INT16_MAX));
+    record.channel = packet.channel;
+    record.reserved = outgoing ? 1 : 0;
+    record.text_len = static_cast<uint16_t>(
+        packet.decoded.payload.size < MESSAGE_MAILBOX_TEXT_MAX
+            ? packet.decoded.payload.size
+            : MESSAGE_MAILBOX_TEXT_MAX
+    );
+    memcpy(record.text, packet.decoded.payload.bytes, record.text_len);
+
+    // FromRadio.id belongs to the radio FIFO session. Replaying an old FIFO id
+    // after a fresh config handshake can look like a transport gap to clients.
+    // Re-encode the same MeshPacket with id=0; the inner packet id, sender,
+    // channel, timestamps and payload remain unchanged for app deduplication.
+    fromRadio.id = 0;
+    fromRadio.packet.delayed = packet.to == UINT32_MAX
+        ? meshtastic_MeshPacket_Delayed_DELAYED_BROADCAST
+        : meshtastic_MeshPacket_Delayed_DELAYED_DIRECT;
+    pb_ostream_t output = pb_ostream_from_buffer(record.raw, sizeof(record.raw));
+    if (!pb_encode(&output, meshtastic_FromRadio_fields, &fromRadio) || output.bytes_written == 0) {
+        s_invalid.fetch_add(1, std::memory_order_relaxed);
+        log_w("[Mailbox] Could not encode replay-safe %s message", outgoing ? "sent" : "received");
+        return false;
+    }
+    record.raw_len = static_cast<uint16_t>(output.bytes_written);
+
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    if (fingerprintKnownLocked(record.fingerprint)) {
+        s_duplicates.fetch_add(1, std::memory_order_relaxed);
+        xSemaphoreGive(s_mutex);
+        return false;
+    }
+
+    record.sequence = s_header.next_sequence;
+    record.checksum = recordChecksum(record);
+
+    bool committed = false;
+    const uint16_t writtenSlot = s_header.head;
+    File file = LittleFS.open(MAILBOX_PATH, "r+");
+    if (file && file.seek(recordOffset(s_header.head), SeekSet) &&
+        file.write(reinterpret_cast<const uint8_t*>(&record), sizeof(record)) == sizeof(record)) {
+        s_header.head = static_cast<uint16_t>((s_header.head + 1) % MESSAGE_MAILBOX_CAPACITY);
+        if (s_header.count < MESSAGE_MAILBOX_CAPACITY) {
+            ++s_header.count;
+        } else {
+            ++s_header.overwritten;
+        }
+        ++s_header.next_sequence;
+        if (s_header.next_sequence == 0) {
+            // A wrap would make sequence ordering ambiguous. Start a fresh ring;
+            // reaching this requires billions of stored messages.
+            file.close();
+            committed = createEmptyMailboxLocked();
+        } else {
+            committed = writeHeader(file);
+            file.flush();
+        }
+    }
+    if (file) {
+        file.close();
+    }
+
+    if (committed && s_header.count > 0) {
+        s_fingerprints[writtenSlot] = record.fingerprint;
+    } else {
+        s_invalid.fetch_add(1, std::memory_order_relaxed);
+        log_e("[Mailbox] Failed to commit %s text message", outgoing ? "sent" : "received");
+    }
+    xSemaphoreGive(s_mutex);
+    return committed;
 }
 
 bool nextRecordLocked(uint32_t* cursor, uint32_t end) {
@@ -312,101 +418,51 @@ bool message_mailbox_capture_from_radio(const uint8_t* data, size_t len) {
         return false;
     }
 
-    // This path runs only in bridgeBleTask. Keeping the generated protobuf
-    // union and flash record static protects that task's 8 KiB stack.
-    meshtastic_FromRadio fromRadio = meshtastic_FromRadio_init_default;
+    // The bridge's Core-0 mailbox worker is the only capture caller. Keeping
+    // generated protobuf unions and flash records static protects its 4 KiB
+    // stack and avoids heap fragmentation.
+    s_from_radio = meshtastic_FromRadio_init_default;
     pb_istream_t stream = pb_istream_from_buffer(data, len);
-    if (!pb_decode(&stream, meshtastic_FromRadio_fields, &fromRadio) ||
-        fromRadio.which_payload_variant != meshtastic_FromRadio_packet_tag ||
-        fromRadio.packet.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
-        fromRadio.packet.decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP) {
+    if (!pb_decode(&stream, meshtastic_FromRadio_fields, &s_from_radio)) {
+        return false;
+    }
+    if (s_from_radio.which_payload_variant == meshtastic_FromRadio_my_info_tag &&
+        s_from_radio.my_info.my_node_num != 0) {
+        s_local_node_num.store(s_from_radio.my_info.my_node_num, std::memory_order_relaxed);
+        return false;
+    }
+    return commitTextPacket(s_from_radio, false);
+}
+
+bool message_mailbox_capture_to_radio(const uint8_t* data, size_t len) {
+    if (!s_ready.load(std::memory_order_relaxed) || !data || len == 0 || len > MESHTASTIC_MAX_PACKET_SIZE) {
         return false;
     }
 
-    const meshtastic_MeshPacket& packet = fromRadio.packet;
-    MailboxRecord& record = *s_write_record;
-    memset(&record, 0, sizeof(record));
-    record.magic = RECORD_MAGIC;
-    record.fingerprint = messageFingerprint(packet);
-    if (record.fingerprint == 0) {
-        record.fingerprint = 1;
-    }
-    record.from = packet.from;
-    record.to = packet.to;
-    record.packet_id = packet.id;
-    record.rx_time = packet.rx_time;
-    record.rx_rssi = static_cast<int16_t>(constrain(packet.rx_rssi, INT16_MIN, INT16_MAX));
-    record.rx_snr_x4 = static_cast<int16_t>(constrain(lroundf(packet.rx_snr * 4.0f), INT16_MIN, INT16_MAX));
-    record.channel = packet.channel;
-    record.text_len = static_cast<uint16_t>(
-        packet.decoded.payload.size < MESSAGE_MAILBOX_TEXT_MAX
-            ? packet.decoded.payload.size
-            : MESSAGE_MAILBOX_TEXT_MAX
-    );
-    memcpy(record.text, packet.decoded.payload.bytes, record.text_len);
-
-    // FromRadio.id belongs to the radio FIFO session. Replaying an old FIFO id
-    // after a fresh config handshake can look like a transport gap to clients.
-    // Re-encode the same MeshPacket with id=0; the inner packet id, sender,
-    // channel, timestamps and payload remain unchanged for app deduplication.
-    fromRadio.id = 0;
-    fromRadio.packet.delayed = packet.to == UINT32_MAX
-        ? meshtastic_MeshPacket_Delayed_DELAYED_BROADCAST
-        : meshtastic_MeshPacket_Delayed_DELAYED_DIRECT;
-    pb_ostream_t output = pb_ostream_from_buffer(record.raw, sizeof(record.raw));
-    if (!pb_encode(&output, meshtastic_FromRadio_fields, &fromRadio) || output.bytes_written == 0) {
-        s_invalid.fetch_add(1, std::memory_order_relaxed);
-        log_w("[Mailbox] Could not encode replay-safe FromRadio message");
-        return false;
-    }
-    record.raw_len = static_cast<uint16_t>(output.bytes_written);
-
-    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
-        return false;
-    }
-    if (fingerprintKnownLocked(record.fingerprint)) {
-        s_duplicates.fetch_add(1, std::memory_order_relaxed);
-        xSemaphoreGive(s_mutex);
+    // The bridge queues this work only after the radio accepted the BLE
+    // characteristic write, keeping failed sends out of the local history.
+    s_to_radio = meshtastic_ToRadio_init_default;
+    pb_istream_t stream = pb_istream_from_buffer(data, len);
+    if (!pb_decode(&stream, meshtastic_ToRadio_fields, &s_to_radio) ||
+        s_to_radio.which_payload_variant != meshtastic_ToRadio_packet_tag ||
+        s_to_radio.packet.which_payload_variant != meshtastic_MeshPacket_decoded_tag ||
+        s_to_radio.packet.decoded.portnum != meshtastic_PortNum_TEXT_MESSAGE_APP) {
         return false;
     }
 
-    record.sequence = s_header.next_sequence;
-    record.checksum = recordChecksum(record);
-
-    bool committed = false;
-    const uint16_t writtenSlot = s_header.head;
-    File file = LittleFS.open(MAILBOX_PATH, "r+");
-    if (file && file.seek(recordOffset(s_header.head), SeekSet) &&
-        file.write(reinterpret_cast<const uint8_t*>(&record), sizeof(record)) == sizeof(record)) {
-        s_header.head = static_cast<uint16_t>((s_header.head + 1) % MESSAGE_MAILBOX_CAPACITY);
-        if (s_header.count < MESSAGE_MAILBOX_CAPACITY) {
-            ++s_header.count;
-        } else {
-            ++s_header.overwritten;
-        }
-        ++s_header.next_sequence;
-        if (s_header.next_sequence == 0) {
-            // A wrap would make sequence ordering ambiguous. Start a fresh ring;
-            // reaching this requires billions of stored messages.
-            file.close();
-            committed = createEmptyMailboxLocked();
-        } else {
-            committed = writeHeader(file);
-            file.flush();
+    s_from_radio = meshtastic_FromRadio_init_default;
+    s_from_radio.which_payload_variant = meshtastic_FromRadio_packet_tag;
+    s_from_radio.packet = s_to_radio.packet;
+    if (s_from_radio.packet.from == 0) {
+        s_from_radio.packet.from = s_local_node_num.load(std::memory_order_relaxed);
+    }
+    if (s_from_radio.packet.rx_time == 0) {
+        const time_t now = time(nullptr);
+        if (now > 1600000000) {
+            s_from_radio.packet.rx_time = static_cast<uint32_t>(now);
         }
     }
-    if (file) {
-        file.close();
-    }
-
-    if (committed && s_header.count > 0) {
-        s_fingerprints[writtenSlot] = record.fingerprint;
-    } else {
-        s_invalid.fetch_add(1, std::memory_order_relaxed);
-        log_e("[Mailbox] Failed to commit received text message");
-    }
-    xSemaphoreGive(s_mutex);
-    return committed;
+    return commitTextPacket(s_from_radio, true);
 }
 
 MessageMailboxStats message_mailbox_get_stats() {
@@ -477,6 +533,7 @@ bool message_mailbox_next_entry(uint32_t* cursor, uint32_t end, MessageMailboxEn
     }
     memset(entry, 0, sizeof(*entry));
     entry->sequence = s_read_record->sequence;
+    entry->outgoing = s_read_record->reserved == 1;
     entry->from = s_read_record->from;
     entry->to = s_read_record->to;
     entry->packet_id = s_read_record->packet_id;

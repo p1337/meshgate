@@ -5,7 +5,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Firmware,
 
-    [string]$Token
+    [string]$Token,
+
+    [ValidateRange(180, 1800)]
+    [int]$UploadTimeoutSeconds = 600
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,7 +49,7 @@ $headers = @{
 $beforePartition = $status.running_partition
 $response = Invoke-RestMethod -Method Post -Uri "$baseUri/api/ota" `
     -Headers $headers -ContentType 'application/octet-stream' `
-    -InFile $firmwareFile.FullName -TimeoutSec 180
+    -InFile $firmwareFile.FullName -TimeoutSec $UploadTimeoutSeconds
 
 if (-not $response.success) {
     throw 'The bridge did not accept the firmware image.'

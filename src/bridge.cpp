@@ -15,6 +15,26 @@ struct BridgePacket {
     size_t len;
 };
 
+enum class MailboxCaptureDirection : uint8_t {
+    FromRadio,
+    ToRadio,
+};
+
+struct MailboxCaptureWork {
+    BridgePacket packet;
+    MailboxCaptureDirection direction;
+};
+
+// Persistent protobuf decoding and LittleFS writes are intentionally kept off
+// the BLE core. The static queue cannot fragment the heap and gives BLE/GATT
+// work priority over the Web UI and mailbox persistence performed on Core 0.
+constexpr size_t MAILBOX_CAPTURE_QUEUE_SIZE = 4;
+static StaticQueue_t mailbox_capture_queue_struct;
+static uint8_t mailbox_capture_queue_storage[
+    MAILBOX_CAPTURE_QUEUE_SIZE * sizeof(MailboxCaptureWork)
+];
+static QueueHandle_t mailbox_capture_queue = NULL;
+
 /**
  * Queue for sending packets from TCP -> BLE.
  */
@@ -157,12 +177,77 @@ static bool findTopLevelVarintField(
     return false;
 }
 
+static bool hasTopLevelField(const uint8_t* data, size_t len, uint32_t wantedField) {
+    if (!data) {
+        return false;
+    }
+    size_t offset = 0;
+    while (offset < len) {
+        uint64_t key = 0;
+        if (!readProtobufVarint(data, len, offset, key) || key == 0) {
+            return false;
+        }
+        const uint32_t field = static_cast<uint32_t>(key >> 3);
+        const uint8_t wireType = static_cast<uint8_t>(key & 0x07);
+        if (field == wantedField) {
+            return true;
+        }
+        if (wireType == 0) {
+            uint64_t ignored = 0;
+            if (!readProtobufVarint(data, len, offset, ignored)) return false;
+        } else if (wireType == 1) {
+            if (len - offset < 8) return false;
+            offset += 8;
+        } else if (wireType == 2) {
+            uint64_t fieldLen = 0;
+            if (!readProtobufVarint(data, len, offset, fieldLen) || fieldLen > len - offset) return false;
+            offset += static_cast<size_t>(fieldLen);
+        } else if (wireType == 5) {
+            if (len - offset < 4) return false;
+            offset += 4;
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
+
 static bool extractWantConfigId(const uint8_t* data, size_t len, uint32_t& id) {
     return findTopLevelVarintField(data, len, 3, id);
 }
 
 static bool extractConfigCompleteId(const uint8_t* data, size_t len, uint32_t& id) {
     return findTopLevelVarintField(data, len, 7, id);
+}
+
+static void enqueueMailboxCapture(
+    MailboxCaptureDirection direction,
+    const uint8_t* data,
+    size_t len
+) {
+    if (!mailbox_capture_queue || !data || len == 0 || len > MESHTASTIC_MAX_PACKET_SIZE) {
+        return;
+    }
+    // Ignore unrelated config/telemetry union variants before they consume a
+    // work slot. FromRadio fields 2/3 are packet/my_info; ToRadio field 1 is
+    // packet. The inexpensive wire scan avoids nanopb work on the BLE core.
+    const bool relevant = direction == MailboxCaptureDirection::ToRadio
+        ? hasTopLevelField(data, len, 1)
+        : (hasTopLevelField(data, len, 2) || hasTopLevelField(data, len, 3));
+    if (!relevant) {
+        return;
+    }
+    static MailboxCaptureWork work;
+    memset(&work, 0, sizeof(work));
+    work.direction = direction;
+    work.packet.len = len;
+    memcpy(work.packet.data, data, len);
+    if (xQueueSend(mailbox_capture_queue, &work, 0) != pdTRUE) {
+        // Retaining history is deliberately lower priority than keeping the
+        // BLE link responsive. A four-entry static backlog should only fill
+        // during abnormal sustained traffic.
+        log_w("[Mailbox] Capture queue full; skipped one history candidate");
+    }
 }
 
 void bridge_http_phoneapi_mark_active() {
@@ -261,6 +346,12 @@ size_t bridge_dequeue_http_from_ble(uint8_t* data, size_t capacity) {
 static void onClientConnected(void* arg, AsyncClient* client) {
     if (connectedClientsCount.load() >= MAX_TCP_CLIENTS) {
         log_w("[Bridge] TCP Connection rejected from %s: Max clients (%d) reached.", client->remoteIP().toString().c_str(), MAX_TCP_CLIENTS);
+        // AsyncServer allocates each accepted AsyncClient with `new` and
+        // transfers ownership to this callback. Even a rejected client must
+        // therefore be released after the asynchronous close completes.
+        client->onDisconnect([](void*, AsyncClient* c) {
+            delete c;
+        }, nullptr);
         client->close();
         return;
     }
@@ -368,6 +459,11 @@ static void onClientConnected(void* arg, AsyncClient* client) {
 
         log_i("[Bridge] TCP Client disconnected. Total clients remaining: %zu", connectedClientsCount.load());
         delete ctx;
+        // AsyncServer transfers ownership of the heap-allocated AsyncClient
+        // to its onClient callback. Not deleting it leaked one client object
+        // per connection and left the gateway in permanent low-memory mode
+        // after repeated app reconnects.
+        delete c;
     }, ctx);
 }
 
@@ -681,6 +777,16 @@ static void bridgeBleTask(void* parameter) {
                     if (success) {
                         log_d("[Bridge-BLE] Write success");
                         s_ble_tx_count.fetch_add(1, std::memory_order_relaxed);
+                        // Store only text messages that the BLE characteristic
+                        // actually accepted. The mailbox converts the ToRadio
+                        // envelope into replay-only sent history; it never
+                        // feeds that envelope back to BLE or transmits it a
+                        // second time over LoRa.
+                        enqueueMailboxCapture(
+                            MailboxCaptureDirection::ToRadio,
+                            packet.data,
+                            packet.len
+                        );
                     } else {
                         log_e("[Bridge-BLE] ERROR: Failed to write packet to ToRadio characteristic");
                         s_ble_invalid_count.fetch_add(1, std::memory_order_relaxed);
@@ -735,10 +841,12 @@ static void bridgeBleTask(void* parameter) {
                         log_d("[Bridge-BLE] Fast-Polled %d new bytes from FromRadio!", currentVal.length());
                         s_ble_rx_count.fetch_add(1, std::memory_order_relaxed);
 
-                        // Persist decoded chat packets before any subsystem can
-                        // consume the envelope. Duplicate mesh packets are
+                        // Stage mailbox inspection before another subsystem
+                        // consumes the envelope. Core 0 performs protobuf
+                        // decoding and persistence; duplicate mesh packets are
                         // rejected by the mailbox's bounded fingerprint index.
-                        message_mailbox_capture_from_radio(
+                        enqueueMailboxCapture(
+                            MailboxCaptureDirection::FromRadio,
                             reinterpret_cast<const uint8_t*>(currentVal.data()),
                             currentVal.length()
                         );
@@ -809,7 +917,10 @@ static void bridgeNetTask(void* parameter) {
     while (bridgeRunning) {
         BridgePacket packet;
         uint8_t frame[MESHTASTIC_MAX_PACKET_SIZE + 4];
-        if (xQueueReceive(ble_to_tcp_queue, &packet, pdMS_TO_TICKS(50)) == pdTRUE) {
+        const TickType_t liveWait = mailbox_capture_queue && uxQueueMessagesWaiting(mailbox_capture_queue) > 0
+            ? 0
+            : pdMS_TO_TICKS(50);
+        if (xQueueReceive(ble_to_tcp_queue, &packet, liveWait) == pdTRUE) {
             log_d("[Bridge-Net] Broadcasting %zu bytes to %zu TCP client", packet.len, connectedClientsCount.load());
             // Build contiguous TCP frame to prevent fragmentation desyncs
             size_t frame_len = packet.len + 4;
@@ -888,6 +999,25 @@ static void bridgeNetTask(void* parameter) {
                 }
             }
             xSemaphoreGive(tcpClientsMutex);
+        }
+
+        // Live PhoneAPI delivery and replay always run first. Decode and
+        // persist at most one mailbox candidate afterwards on Core 0, so
+        // LittleFS latency can delay networking but never the BLE/GATT loop.
+        static MailboxCaptureWork mailboxWork;
+        if (mailbox_capture_queue &&
+            xQueueReceive(mailbox_capture_queue, &mailboxWork, 0) == pdTRUE) {
+            if (mailboxWork.direction == MailboxCaptureDirection::ToRadio) {
+                message_mailbox_capture_to_radio(
+                    mailboxWork.packet.data,
+                    mailboxWork.packet.len
+                );
+            } else {
+                message_mailbox_capture_from_radio(
+                    mailboxWork.packet.data,
+                    mailboxWork.packet.len
+                );
+            }
         }
     }
     vTaskDelete(NULL);
@@ -975,6 +1105,12 @@ void bridge_init(const String& ble_name, const String& ble_mac, uint32_t ble_pin
         sizeof(BridgePacket),
         ble_to_http_queue_storage,
         &ble_to_http_queue_struct
+    );
+    mailbox_capture_queue = xQueueCreateStatic(
+        MAILBOX_CAPTURE_QUEUE_SIZE,
+        sizeof(MailboxCaptureWork),
+        mailbox_capture_queue_storage,
+        &mailbox_capture_queue_struct
     );
 
     // Register MQTT Downlink Callback to enqueue ToRadio packets for BLE transmission

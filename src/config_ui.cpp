@@ -40,10 +40,10 @@ extern const uint8_t index_html_gz_end[] asm("_binary_web_generated_index_html_g
 namespace {
 constexpr uint8_t MAX_NORMAL_WEB_REQUESTS = 3;
 constexpr uint8_t MAX_RESERVED_WEB_REQUESTS = 3;
-constexpr uint8_t LOW_MEMORY_NORMAL_WEB_REQUESTS = 2;
+constexpr uint8_t LOW_MEMORY_NORMAL_WEB_REQUESTS = 1;
 constexpr uint8_t LOW_MEMORY_RESERVED_WEB_REQUESTS = 2;
-constexpr uint32_t WEB_LOW_FREE_HEAP_BYTES = 24 * 1024;
-constexpr uint32_t WEB_LOW_LARGEST_BLOCK_BYTES = 8 * 1024;
+constexpr uint32_t WEB_LOW_FREE_HEAP_BYTES = 32 * 1024;
+constexpr uint32_t WEB_LOW_LARGEST_BLOCK_BYTES = 16 * 1024;
 constexpr size_t WEB_FLASH_STREAM_CHUNK_BYTES = 1024;
 
 // ESPAsyncWebServer's stock AsyncProgmemResponse sizes each temporary send
@@ -2651,6 +2651,8 @@ void config_ui_start_server() {
             snprintf(fromId, sizeof(fromId), "!%08lx", static_cast<unsigned long>(entry.from));
             snprintf(toId, sizeof(toId), "!%08lx", static_cast<unsigned long>(entry.to));
             response->print("{\"sequence\":"); response->print(entry.sequence);
+            response->print(",\"direction\":\""); response->print(entry.outgoing ? "sent" : "received");
+            response->print("\"");
             response->print(",\"from\":\""); response->print(fromId);
             response->print("\",\"to\":\""); response->print(toId);
             response->print("\",\"packet_id\":"); response->print(entry.packet_id);

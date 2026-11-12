@@ -228,9 +228,13 @@ The following keys are stored in the `Preferences` namespace (`bridge_cfg`):
 
 Message history is deliberately not stored in NVS. `message_mailbox.cpp` uses
 a fixed checksummed LittleFS ring on the existing `spiffs` data partition for
-the newest 128 decoded text messages. This avoids exhausting the 20 KiB NVS
-partition and keeps credentials independent from mailbox writes. OTA preserves
-the data partition; the explicit `/reset` factory action clears the ring.
+the newest 128 decoded received and successfully BLE-forwarded sent text
+messages. The existing record layout stores direction in its reserved byte, so
+the change remains compatible with already populated version-1 mailbox files.
+This avoids exhausting the 20 KiB NVS partition and keeps credentials
+independent from mailbox writes. `GET /api/mailbox` reports each entry as
+`direction: sent` or `direction: received`. OTA preserves the data partition;
+the explicit `/reset` factory action clears the ring.
 
 ## Technical Decisions & Considerations
 * **Captive Portal / WebView Compatibility Constraints (macOS / iOS CNA & Windows):**
