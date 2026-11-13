@@ -1,0 +1,98 @@
+name: Bug report
+description: Report a reproducible MeshGate defect
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Remove credentials, keys, private messages and unnecessary network details before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: MeshGate version
+      description: The version shown in the System tab.
+      placeholder: vX.Y.Z
+    validations:
+      required: true
+  - type: dropdown
+    id: board
+    attributes:
+      label: ESP32 board
+      options:
+        - Arduino Nano ESP32 (production IDF 5 build)
+        - Arduino Nano ESP32 (recovery build)
+        - Seeed XIAO ESP32-S3
+        - Generic ESP32-S3 DevKitC
+        - ESP32-WROOM / NodeMCU
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: radio
+    attributes:
+      label: Meshtastic radio
+      placeholder: RAK WisBlock / RAK4631
+    validations:
+      required: true
+  - type: dropdown
+    id: path
+    attributes:
+      label: Connection path
+      multiple: true
+      options:
+        - Local Wi-Fi / TCP 4403
+        - Local Wi-Fi / HTTP PhoneAPI
+        - Tailscale / DERP
+        - Tailscale / direct UDP
+        - Classic WireGuard
+        - MQTT
+        - BLE
+        - USB / Web Flasher
+        - Official OTA
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Provide the shortest sequence that reliably reproduces the issue.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste only relevant /status fields and a short /api/logs excerpt. Remove all secrets and private message text.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I reproduced this on the latest release or explained why I cannot update.
+          required: true
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed credentials, keys and private message content.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

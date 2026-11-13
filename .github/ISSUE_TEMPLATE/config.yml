@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/p1337/meshgate/security/advisories/new
+    about: Report security issues privately; do not open a public issue.
+  - name: Installation and user guide
+    url: https://github.com/p1337/meshgate/blob/main/docs/user_guide.md
+    about: Review setup, connection, VPN, MQTT and recovery guidance.

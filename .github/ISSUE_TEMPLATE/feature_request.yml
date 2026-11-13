@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose a focused MeshGate improvement
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the operational problem first. A proposal is stronger when it fits the existing architecture and constrained-memory model.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What limitation or user need should be addressed?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain the user-visible result, not only an implementation choice.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing alternatives considered
+      description: Which current MeshGate feature, API or external tool did you evaluate?
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Embedded constraints and risks
+      description: Consider internal heap, BLE/Wi-Fi coexistence, flash, NVS compatibility, OTA safety and security.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues and documentation.
+          required: true
+        - label: This proposal does not include credentials, private data or a public security report.
+          required: true
