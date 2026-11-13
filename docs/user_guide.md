@@ -66,6 +66,29 @@ The mailbox survives reboot and OTA. **Reset All Settings** clears it
 along with configuration. Retained text is readable to anyone who can access
 the private MeshGate Web API, so do not publish that API to the internet.
 
+### Built-in channel chat
+
+After MeshGate has received the radio configuration, its control page opens a
+channel-aware chat panel on the left side of a desktop browser. On a phone the
+same panel is available as a drawer so it does not cover the configuration
+cards. The panel uses the persistent mailbox above; it does not create a
+second message store.
+
+- `Public (AQ==)` identifies the standard public channel.
+- Other enabled radio channels are shown by their configured name or index.
+- Channel keys are never copied into the mailbox or returned to the browser.
+- A red badge shows unread retained messages for each channel.
+- Sender names link to the corresponding MeshRadar node page when a node ID is
+  available.
+- The selected tab is the channel used for a new broadcast. The attached radio
+  supplies the sender identity and performs the actual LoRa transmission.
+
+The initial state **Queued for radio** means that the packet entered MeshGate's
+bounded BLE queue. It changes to **Radio accepted** only after the BLE write
+succeeds and the sent packet appears in the mailbox. Neither state proves that
+another LoRa node received or acknowledged the broadcast. Use a native
+Meshtastic client when full delivery and acknowledgement details are required.
+
 ### Native Tailscale on the IDF 5 Nano build
 
 The `arduino_nano_esp32_idf5` image can join a tailnet directly through

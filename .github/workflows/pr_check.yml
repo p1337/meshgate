@@ -45,18 +45,10 @@ jobs:
       - name: Install PlatformIO Core & Dependencies
         run: pip install -U platformio protobuf grpcio-tools
 
-      - name: Build recovery firmware profiles
-        run: >-
-          pio run
-          -e seeed_xiao_esp32s3
-          -e esp32dev
-          -e esp32-s3-devkitc-1
-          -e arduino_nano_esp32
-
       - name: Prepare production build environment
         run: |
           pio pkg install -e arduino_nano_esp32_idf5 --no-save
           "$HOME/.platformio/penv/bin/python" -m pip install -U protobuf grpcio-tools intelhex
 
-      - name: Build production firmware profile
+      - name: Build Arduino Nano ESP32 production firmware
         run: pio run -e arduino_nano_esp32_idf5

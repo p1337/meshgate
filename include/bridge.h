@@ -37,6 +37,10 @@ struct BridgeDiagStats {
     uint32_t tcp_rx_count;
     uint32_t tcp_tx_count;
     uint32_t tcp_invalid_count;
+    uint32_t tcp_connections_accepted;
+    uint32_t tcp_connections_disconnected;
+    uint32_t tcp_connections_rejected;
+    uint32_t tcp_context_alloc_failures;
     bool http_phoneapi_active;
     uint32_t http_rx_count;
     uint32_t http_tx_count;

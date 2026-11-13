@@ -26,11 +26,8 @@ installing the IDF-5 platform. Clean CI runners must install the packages into
 that environment too, after `pio pkg install` has created it. Installing them
 only into the outer runner Python makes `generate_protos.py` fail even though
 `pip` reports them as installed. The clean-runner toolchain also requires
-`intelhex` in that environment for `esptool`. Build the Arduino Core 2 recovery
-profiles before installing the Arduino Core 3/IDF-5 production platform, then
-build `arduino_nano_esp32_idf5` separately. Installing both platform families
-before one combined `pio run` can replace same-named global PlatformIO packages
-and make otherwise valid profiles interfere with one another.
+`intelhex` in that environment for `esptool`. MeshGate defines and builds only
+the Arduino Nano ESP32 IDF-5 production environment.
 
 Verify the installation by running:
 ```bash
@@ -69,8 +66,7 @@ On Windows with the repository's PlatformIO virtual environment:
 
 The resulting OTA image is
 `.pio/build/arduino_nano_esp32_idf5/firmware.bin`. Do not substitute
-NimBLE-Arduino 1.x in this environment; it is retained only for the IDF-4
-recovery profiles.
+NimBLE-Arduino 1.x; the sole production environment requires version 2.5.2.
 
 `tools/upload_ota.ps1` allows ten minutes for the request body by default.
 This is intentional: a production image sent through a Tailscale DERP relay
@@ -125,22 +121,9 @@ To exit the serial monitor, press `Ctrl + C`.
 
 ---
 ## 6. Hardware Configuration & Build Options
-This project is designed to be highly portable across different ESP32 hardware variants. All magic numbers (like hardware pins, port numbers, and LED behaviors) are centralized in the `include/build_options.h` file.
-
-### Overriding at Compile Time
-You do **not** need to modify the C++ code to port this project to a new board. All constants defined in `build_options.h` are wrapped in `#ifndef` guards, meaning you can dynamically override them at compile-time directly inside the `platformio.ini` file using `build_flags`.
-
-For example, if you are using a standard NodeMCU board where the physical BOOT button is on GPIO 15 and the LED is Active High, you would add this to your `platformio.ini`:
-
-```ini
-[env:custom_board]
-platform = espressif32
-board = nodemcu-32s
-framework = arduino
-build_flags = 
-    -D BOOT_BUTTON_PIN=15
-    -D LED_ACTIVE_LOW=false
-```
+This project targets the Arduino Nano ESP32 (ESP32-S3). Runtime constants and
+the Nano pin behavior are centralized in `include/build_options.h` and the
+single `arduino_nano_esp32_idf5` PlatformIO environment.
 
 ### Available Build Flags
 - `BOOT_BUTTON_PIN`: The GPIO pin for the physical button used to force Setup Mode (Default: `0`).
@@ -163,21 +146,15 @@ All FreeRTOS queues (`tcp_to_ble_queue`, `ble_to_tcp_queue`, `ble_to_http_queue`
 
 Each `BridgePacket` holds a 576-byte payload plus length metadata ($\approx 584\text{ bytes}$).
 
-#### Unified Sane Sizing Across All ESP32 & ESP32-S3 Targets
+#### Queue sizing model
 * **Queue Allocations:**
   - `tcp_to_ble_queue`: $32 \text{ packets} \times 584\text{ B} = 18.7\text{ KB}$
   - `ble_to_tcp_queue`: $32 \text{ packets} \times 584\text{ B} = 18.7\text{ KB}$
   - `mqtt_to_ble_queue`: $16 \text{ packets} \times 584\text{ B} = 9.3\text{ KB}$
   - **Total Static Queue RAM:** $\approx 46.7\text{ KB}$ in `.bss`.
-* **Classic ESP32 override:** `esp32dev` uses `BRIDGE_QUEUE_SIZE=24`. Its
-  statically linkable DRAM window is smaller than ESP32-S3, and this retains
-  24 complete packets per direction while leaving linker/runtime headroom for
-  the persistent mailbox. S3 profiles retain the default 32 unless explicitly
-  overridden below.
-* **Runtime Free Heap Footprint:**
-  - **Seeed XIAO ESP32-S3:** **~106 KB free heap** (Min: ~88 KB, MaxBlock: ~95 KB).
-  - **Classic ESP32 (`esp32dev`):** **~95 KB free heap** (Min: ~78 KB, MaxBlock: ~80 KB).
-* **Why This Matters:** LwIP networking, AsyncWebServer, and MbedTLS require ~15 KB of contiguous free memory. Sizing the queues to 32/16 ensures $>5\times$ safety margin on all targets without risking memory exhaustion or socket starvation.
+* **Why This Matters:** LwIP networking, AsyncWebServer, MbedTLS and native
+  Tailscale compete for internal RAM. The production overrides below are based
+  on measurements from the Arduino Nano ESP32 and are not portability claims.
 
 #### IDF-5 / MicroLink queue sizing
 
@@ -269,8 +246,8 @@ transfers ownership to the application callback. MeshGate deleted its
 per-client context on disconnect but not the `AsyncClient` itself. The
 disconnect callback now releases both objects, and the max-client rejection
 path installs the same deferred cleanup before closing. Both the IDF-5
-production profile and Arduino-Core-2 recovery profile compile successfully
-with the fix. Any future TCP churn regression must verify that free heap returns
+Arduino Nano ESP32 production profile compiles successfully with the fix. Any
+future TCP churn regression must verify that free heap returns
 to its pre-test range after lwIP connection cleanup, not merely that the active
 client count returns to zero.
 

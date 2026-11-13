@@ -87,11 +87,11 @@ Because BLE operations (connecting, reading characteristics) can block, and we a
 ### 4. Memory Management (100% Static `.bss` Queues)
 - **Zero Heap Fragmentation**: All FreeRTOS queues (`tcp_to_ble_queue`, `ble_to_tcp_queue`, `ble_to_http_queue`, `mqtt_to_ble_queue`) are allocated statically in `.bss` via `xQueueCreateStatic`.
 - **Packet Sizing (`MESHTASTIC_MAX_PACKET_SIZE = 576`)**: `BridgePacket` uses a fixed `uint8_t data[576]` array (584 bytes per slot aligned), accounting for max 512-byte payload + 32-byte topic + headers. TCP frames use stack memory (`uint8_t frame[580]`), ensuring zero dynamic `malloc`/`free` calls in fast-path routing.
-- **Unified Sane Queue Sizing Across All Targets**:
-  - `BRIDGE_QUEUE_SIZE = 32` (18.7 KB per queue)
-  - `MQTT_QUEUE_SIZE = 16` (9.3 KB)
-  - **Total Static Queue RAM:** ~46.7 KB in `.bss`.
-  - **Runtime Heap Benefits:** Leaves **~106 KB free heap on ESP32-S3** and **~95 KB on Classic ESP32 (`esp32dev`)**, providing abundant headroom (>5x the ~15 KB needed for LwIP/TLS) and completely eliminating heap exhaustion when TLS, AsyncTCP, and the WebUI run simultaneously.
+- **Arduino Nano ESP32 production queue sizing**:
+  - `BRIDGE_QUEUE_SIZE = 4`
+  - `MQTT_QUEUE_SIZE = 2`
+  - Values are deliberately bounded for the ESP32-S3 production workload with
+    BLE, MQTT TLS and native Tailscale active at the same time.
 - **Queue Drop Telemetry & Backpressure Strategy**:
   - `tcp_to_ble_queue`: 100ms backpressure timeout; drops and increments `tcp_to_ble_dropped` if full.
   - `ble_to_tcp_queue`: 50ms backpressure timeout; drops and increments `ble_to_tcp_dropped` if full.

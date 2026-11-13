@@ -16,8 +16,8 @@
 
 > [!IMPORTANT]
 > **Project status: public beta.** The production path is actively tested on the
-> **Arduino Nano ESP32**. Other build targets compile in CI, but do not yet have
-> the same depth of runtime validation. Review [Validation & Reliability](docs/validation.md)
+> **Arduino Nano ESP32 (ESP32-S3)**. It is the only supported build target.
+> Review [Validation & Reliability](docs/validation.md)
 > and [Known limitations](#known-limitations) before an unattended deployment.
 
 ## What MeshGate does
@@ -52,6 +52,7 @@ The primary deployment model is deliberately split:
 - Keyless, browser-approved Tailscale enrollment with DERP fallback
 - Optional classic WireGuard and radio-managed MQTT proxying
 - Persistent 128-message mailbox with received and sent conversation replay
+- Built-in channel chat with unread counters and radio-accepted send status
 - Verified dual-slot OTA from the official release channel
 - Redundant configuration storage, watchdog recovery and scheduled restarts
 - Remote status, bounded logs and Prometheus/OpenMetrics diagnostics
@@ -103,16 +104,11 @@ internet.
 
 | PlatformIO environment | Hardware | Tailscale | Support level |
 | --- | --- | --- | --- |
-| `arduino_nano_esp32_idf5` | Arduino Nano ESP32 (ESP32-S3) | Yes | **Production target / public beta** |
-| `arduino_nano_esp32` | Arduino Nano ESP32 (ESP32-S3) | No | Recovery image |
-| `seeed_xiao_esp32s3` | Seeed XIAO ESP32-S3 | No | Community build |
-| `esp32-s3-devkitc-1` | Generic ESP32-S3 DevKitC | No | Community build |
-| `esp32dev` | ESP32-WROOM / NodeMCU | No | Community build |
+| `arduino_nano_esp32_idf5` | Arduino Nano ESP32 (ESP32-S3) | Yes | **Only supported production target / public beta** |
 
-ESP32-S2 is not supported because it has no Bluetooth radio. Native Tailscale
-is currently limited to the IDF 5 production environment. The remaining
-targets provide local TCP, MQTT proxying, OTA and classic WireGuard where the
-board resources allow it.
+MeshGate does not build or publish firmware for ESP32-WROOM, ESP32-S2, generic
+ESP32-S3 boards, Seeed XIAO ESP32-S3 or any second recovery profile. The single
+Nano production environment uses Arduino Core 3.3.9 and ESP-IDF 5.5.4.
 
 ## Reliability and security
 
@@ -169,7 +165,7 @@ pio run -e arduino_nano_esp32_idf5
 
 The production toolchain is pinned in `platformio.ini`. See
 [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change. Pull requests
-must pass the repository's multi-profile PlatformIO build check.
+must pass the repository's Arduino Nano ESP32 production build check.
 
 ## Project origin, attribution and license
 

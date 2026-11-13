@@ -8,7 +8,9 @@
 #include "utils.h"
 #include "mqtt_net.h"
 #include "message_mailbox.h"
+#include <array>
 #include <atomic>
+#include <new>
 
 struct BridgePacket {
     uint8_t data[MESHTASTIC_MAX_PACKET_SIZE]; // Max Meshtastic ToRadio envelope / packet size
@@ -84,6 +86,10 @@ static std::atomic<uint32_t> s_ble_invalid_count{0};
 static std::atomic<uint32_t> s_tcp_rx_count{0};
 static std::atomic<uint32_t> s_tcp_tx_count{0};
 static std::atomic<uint32_t> s_tcp_invalid_count{0};
+static std::atomic<uint32_t> s_tcp_connections_accepted{0};
+static std::atomic<uint32_t> s_tcp_connections_disconnected{0};
+static std::atomic<uint32_t> s_tcp_connections_rejected{0};
+static std::atomic<uint32_t> s_tcp_context_alloc_failures{0};
 
 static std::atomic<uint32_t> s_http_last_activity_ms{0};
 static std::atomic<uint32_t> s_http_rx_count{0};
@@ -95,8 +101,11 @@ static std::atomic<uint32_t> s_http_replay_end{0};
 static std::atomic<bool> s_http_replay_active{false};
 
 struct ClientContext {
+    static constexpr size_t RX_BUFFER_CAPACITY = 2048;
+
     AsyncClient* client;
-    std::vector<uint8_t> rx_buffer;
+    std::array<uint8_t, RX_BUFFER_CAPACITY> rx_buffer{};
+    size_t rx_length = 0;
     std::atomic<uint32_t> requested_config_id{0};
     std::atomic<uint32_t> mailbox_replay_cursor{0};
     std::atomic<uint32_t> mailbox_replay_end{0};
@@ -104,8 +113,9 @@ struct ClientContext {
 };
 
 static AsyncServer* tcpServer = NULL;
-static std::vector<ClientContext*> tcpClients;
+static ClientContext* tcpClients[MAX_TCP_CLIENTS] = {};
 static SemaphoreHandle_t tcpClientsMutex = NULL; // Mutex to protect tcpClients vector from concurrent modification
+static StaticSemaphore_t tcpClientsMutexStorage;
 static std::atomic<size_t> connectedClientsCount{0};
 static bool bridgeRunning = false;
 static String targetBleName = "";
@@ -229,11 +239,13 @@ static void enqueueMailboxCapture(
         return;
     }
     // Ignore unrelated config/telemetry union variants before they consume a
-    // work slot. FromRadio fields 2/3 are packet/my_info; ToRadio field 1 is
-    // packet. The inexpensive wire scan avoids nanopb work on the BLE core.
+    // work slot. FromRadio fields 2/3/4/10 are packet/my_info/node_info/channel;
+    // ToRadio field 1 is packet. The inexpensive wire scan avoids nanopb work
+    // on the BLE core while retaining the metadata needed by the chat UI.
     const bool relevant = direction == MailboxCaptureDirection::ToRadio
         ? hasTopLevelField(data, len, 1)
-        : (hasTopLevelField(data, len, 2) || hasTopLevelField(data, len, 3));
+        : (hasTopLevelField(data, len, 2) || hasTopLevelField(data, len, 3) ||
+           hasTopLevelField(data, len, 4) || hasTopLevelField(data, len, 10));
     if (!relevant) {
         return;
     }
@@ -344,7 +356,35 @@ size_t bridge_dequeue_http_from_ble(uint8_t* data, size_t capacity) {
 
 // TCP callbacks
 static void onClientConnected(void* arg, AsyncClient* client) {
-    if (connectedClientsCount.load() >= MAX_TCP_CLIENTS) {
+    size_t clientSlot = MAX_TCP_CLIENTS;
+    ClientContext* ctx = nullptr;
+
+    if (tcpClientsMutex && xSemaphoreTake(tcpClientsMutex, portMAX_DELAY) == pdTRUE) {
+        for (size_t i = 0; i < MAX_TCP_CLIENTS; ++i) {
+            if (tcpClients[i] == nullptr) {
+                clientSlot = i;
+                break;
+            }
+        }
+        if (clientSlot < MAX_TCP_CLIENTS) {
+            // One bounded allocation replaces the former vector plus its
+            // repeated growth allocations. The fixed RX storage is released
+            // together with the context after the disconnect callback.
+            ctx = new (std::nothrow) ClientContext();
+            if (ctx) {
+                ctx->client = client;
+                tcpClients[clientSlot] = ctx;
+                connectedClientsCount.fetch_add(1, std::memory_order_relaxed);
+                s_tcp_connections_accepted.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                s_tcp_context_alloc_failures.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        xSemaphoreGive(tcpClientsMutex);
+    }
+
+    if (!ctx) {
+        s_tcp_connections_rejected.fetch_add(1, std::memory_order_relaxed);
         log_w("[Bridge] TCP Connection rejected from %s: Max clients (%d) reached.", client->remoteIP().toString().c_str(), MAX_TCP_CLIENTS);
         // AsyncServer allocates each accepted AsyncClient with `new` and
         // transfers ownership to this callback. Even a rejected client must
@@ -362,17 +402,6 @@ static void onClientConnected(void* arg, AsyncClient* client) {
     client->setNoDelay(false);
     client->setRxTimeout(TCP_IDLE_TIMEOUT_SECONDS); // 10 minute idle timeout
 
-    // Create new client context to track this connection.
-    ClientContext* ctx = new ClientContext();
-    ctx->client = client;
-
-    // Only update the tcpClients list after grabbing the mutex
-    if (xSemaphoreTake(tcpClientsMutex, portMAX_DELAY) == pdTRUE) {
-        tcpClients.push_back(ctx);
-        connectedClientsCount.fetch_add(1, std::memory_order_relaxed);
-        xSemaphoreGive(tcpClientsMutex);
-    }
-
     log_i("[Bridge] TCP Client connected from %s. Total clients: %zu", client->remoteIP().toString().c_str(), connectedClientsCount.load());
 
     client->onData([](void* arg, AsyncClient* c, void* data, size_t len) {
@@ -382,7 +411,7 @@ static void onClientConnected(void* arg, AsyncClient* client) {
         log_d("[Bridge-TCP] RX %zu bytes from %s", len, c->remoteIP().toString().c_str());
 
         // Protect against OOM (e.g., malicious stream or massive desync)
-        if (ctx->rx_buffer.size() + len > 2048) {
+        if (len > ClientContext::RX_BUFFER_CAPACITY - ctx->rx_length) {
             log_e("[Bridge-TCP] ERROR: RX Buffer overflow! Disconnecting client to prevent OOM.");
             s_tcp_invalid_count.fetch_add(1, std::memory_order_relaxed);
             c->close();
@@ -390,11 +419,12 @@ static void onClientConnected(void* arg, AsyncClient* client) {
         }
 
         // Append new data to client's RX buffer
-        ctx->rx_buffer.insert(ctx->rx_buffer.end(), buf, buf + len);
+        memcpy(ctx->rx_buffer.data() + ctx->rx_length, buf, len);
+        ctx->rx_length += len;
 
         // Process as many full frames as possible
         size_t processed = 0;
-        while (ctx->rx_buffer.size() - processed >= 4) {
+        while (ctx->rx_length - processed >= 4) {
             if (ctx->rx_buffer[processed] == 0x94 && ctx->rx_buffer[processed+1] == 0xC3) {
                 uint16_t payload_len = (ctx->rx_buffer[processed+2] << 8) | ctx->rx_buffer[processed+3];
 
@@ -406,7 +436,7 @@ static void onClientConnected(void* arg, AsyncClient* client) {
                     continue;
                 }
 
-                if (ctx->rx_buffer.size() - processed >= 4 + payload_len) {
+                if (ctx->rx_length - processed >= 4 + payload_len) {
                     // Valid full frame received from client
                     log_d("[Bridge-TCP] Parsed frame: len %u", payload_len);
                     s_tcp_rx_count.fetch_add(1, std::memory_order_relaxed);
@@ -440,7 +470,11 @@ static void onClientConnected(void* arg, AsyncClient* client) {
 
         // Remove processed bytes from buffer
         if (processed > 0) {
-            ctx->rx_buffer.erase(ctx->rx_buffer.begin(), ctx->rx_buffer.begin() + processed);
+            const size_t remaining = ctx->rx_length - processed;
+            if (remaining > 0) {
+                memmove(ctx->rx_buffer.data(), ctx->rx_buffer.data() + processed, remaining);
+            }
+            ctx->rx_length = remaining;
         }
     }, ctx);
 
@@ -449,10 +483,13 @@ static void onClientConnected(void* arg, AsyncClient* client) {
 
         // Only update the tcpClients list after grabbing the mutex
         if (xSemaphoreTake(tcpClientsMutex, portMAX_DELAY) == pdTRUE) {
-            auto it = std::find(tcpClients.begin(), tcpClients.end(), ctx);
-            if (it != tcpClients.end()) {
-                tcpClients.erase(it);
-                connectedClientsCount.fetch_sub(1, std::memory_order_relaxed);
+            for (size_t i = 0; i < MAX_TCP_CLIENTS; ++i) {
+                if (tcpClients[i] == ctx) {
+                    tcpClients[i] = nullptr;
+                    connectedClientsCount.fetch_sub(1, std::memory_order_relaxed);
+                    s_tcp_connections_disconnected.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
             }
             xSemaphoreGive(tcpClientsMutex);
         }
@@ -936,6 +973,9 @@ static void bridgeNetTask(void* parameter) {
                 const bool isConfigComplete = extractConfigCompleteId(packet.data, packet.len, completeId);
                 if (xSemaphoreTake(tcpClientsMutex, portMAX_DELAY) == pdTRUE) {
                     for (ClientContext* ctx : tcpClients) {
+                        if (!ctx) {
+                            continue;
+                        }
                         if (ctx->client->space() >= frame_len) {
                             ctx->client->write((const char*)frame, frame_len);
                             ctx->client->send(); // Force immediate transmission
@@ -972,6 +1012,9 @@ static void bridgeNetTask(void* parameter) {
         // overflowing AsyncTCP buffers after a large configuration response.
         if (xSemaphoreTake(tcpClientsMutex, portMAX_DELAY) == pdTRUE) {
             for (ClientContext* ctx : tcpClients) {
+                if (!ctx) {
+                    continue;
+                }
                 if (!ctx->mailbox_replay_active.load(std::memory_order_relaxed) ||
                     ctx->client->space() < MESHTASTIC_MAX_PACKET_SIZE + 4) {
                     continue;
@@ -1119,10 +1162,18 @@ void bridge_init(const String& ble_name, const String& ble_mac, uint32_t ble_pin
     });
 
     // Mutex for thread safe modifying/reading of connected TCP clients.
-    tcpClientsMutex = xSemaphoreCreateMutex();
+    tcpClientsMutex = xSemaphoreCreateMutexStatic(&tcpClientsMutexStorage);
+    if (!tcpClientsMutex) {
+        log_e("[Bridge] Failed to create TCP client mutex");
+        return;
+    }
 
     // Start the tcp server
-    tcpServer = new AsyncServer(TCP_PORT);
+    tcpServer = new (std::nothrow) AsyncServer(TCP_PORT);
+    if (!tcpServer) {
+        log_e("[Bridge] Failed to allocate TCP server");
+        return;
+    }
     tcpServer->onClient(&onClientConnected, tcpServer);
 }
 
@@ -1132,6 +1183,10 @@ static TaskHandle_t bridgeNetTaskHandle = NULL;
 void bridge_start() {
     // If already running, refuse to start (again).
     if (bridgeRunning) {
+        return;
+    }
+    if (!tcpServer || !tcpClientsMutex) {
+        log_e("[Bridge] TCP server initialization incomplete; bridge not started");
         return;
     }
     bridgeRunning = true;
@@ -1180,6 +1235,10 @@ BridgeDiagStats bridge_get_diag_stats() {
     stats.tcp_rx_count = s_tcp_rx_count.load(std::memory_order_relaxed);
     stats.tcp_tx_count = s_tcp_tx_count.load(std::memory_order_relaxed);
     stats.tcp_invalid_count = s_tcp_invalid_count.load(std::memory_order_relaxed);
+    stats.tcp_connections_accepted = s_tcp_connections_accepted.load(std::memory_order_relaxed);
+    stats.tcp_connections_disconnected = s_tcp_connections_disconnected.load(std::memory_order_relaxed);
+    stats.tcp_connections_rejected = s_tcp_connections_rejected.load(std::memory_order_relaxed);
+    stats.tcp_context_alloc_failures = s_tcp_context_alloc_failures.load(std::memory_order_relaxed);
     stats.http_phoneapi_active = bridge_http_phoneapi_is_active();
     stats.http_rx_count = s_http_rx_count.load(std::memory_order_relaxed);
     stats.http_tx_count = s_http_tx_count.load(std::memory_order_relaxed);

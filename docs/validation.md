@@ -17,8 +17,7 @@ baselines, not an uptime guarantee or service-level agreement.
 | Radio transport | Meshtastic BLE GATT to TCP `4403` and HTTP PhoneAPI |
 | Persistent state | Mirrored NVS configuration and LittleFS mailbox |
 
-Other PlatformIO environments are compiled by CI, but do not currently have
-the same depth of device-level validation.
+No other PlatformIO environments are supported, compiled by CI or published.
 
 ## Recorded baselines
 
@@ -56,8 +55,8 @@ path without repeating the full pressure test.
 A later 30-connection churn run found that accepted `AsyncClient` instances
 were not released after their per-client context was destroyed. The current
 implementation releases both objects and applies the same deferred cleanup to
-the max-client rejection path. Production and recovery profiles compile with
-the fix.
+the max-client rejection path. The Arduino Nano ESP32 production profile
+compiles with the fix.
 
 Before this item is considered closed for a stable release, repeat the
 30-connection test on production hardware and confirm that free heap returns to
@@ -68,7 +67,8 @@ sufficient.
 
 The repository currently provides:
 
-- a pull-request workflow that builds every PlatformIO environment;
+- a pull-request workflow that builds the single supported Arduino Nano ESP32
+  production environment;
 - a tag-driven production release build;
 - a version-to-tag consistency check;
 - SHA-256 checksums for all release assets;
@@ -82,7 +82,7 @@ CI compilation is necessary but does not replace hardware validation.
 
 Complete the applicable checks before promoting a public-beta build:
 
-- [ ] All PlatformIO environments compile in CI.
+- [ ] The `arduino_nano_esp32_idf5` production environment compiles in CI.
 - [ ] Production firmware boots on Arduino Nano ESP32 without a reset loop.
 - [ ] Setup AP, captive portal and configuration persistence work.
 - [ ] BLE pairing, reconnect and bidirectional PhoneAPI traffic work.

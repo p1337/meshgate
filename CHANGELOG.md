@@ -4,6 +4,26 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.21] - 2026-11-13
+
+- Added a channel-aware control-page chat backed by the existing persistent
+  mailbox, including public `AQ==` identification, unread counters, sender
+  links, timestamps and a responsive mobile drawer.
+- Added bounded radio channel/node metadata caches and chat APIs that never
+  expose channel PSKs, validate channel selection and text size, and send
+  through the attached Meshtastic radio's identity.
+- Distinguished bounded queue admission from successful BLE radio acceptance
+  instead of presenting either state as end-to-end LoRa delivery.
+- Replaced per-connection TCP receive vectors with fixed bounded buffers and
+  explicit client ownership, including deferred cleanup for disconnected and
+  rejected clients.
+- Added bounded TCP lifecycle diagnostics for accepted, disconnected and
+  rejected connections plus context-allocation failures, together with a
+  private-LAN-only 1,000-cycle regression test.
+- Restricted PlatformIO defaults, pull-request checks and release artifacts to
+  the single supported Arduino Nano ESP32 (ESP32-S3/IDF-5) production target;
+  unsupported WROOM, generic S3, XIAO and recovery builds are no longer built.
+
 ## [v0.7.20] - 2026-11-12
 
 - Made official OTA resilient across unstable and interrupted network links:

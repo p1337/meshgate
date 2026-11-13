@@ -4,7 +4,7 @@
 This project is an ESP32-based transparent bridge that connects to a Meshtastic radio via Bluetooth Low Energy (BLE) and exposes it as a standard Meshtastic TCP connection over WiFi. This allows standard Meshtastic software (web UI, Python CLI, Android/iOS apps) to connect to the ESP32 over the local network as if it were a native network-connected Meshtastic device.
 
 ## Core Requirements
-*   **Hardware Compatibility:** Maintain separate PlatformIO build profiles for the Seeed XIAO ESP32-S3, Generic ESP32 (WROOM-32), and Generic ESP32-S3 DevKit to cover 95% of active microcontrollers without code refactoring. ESP32-S2 is explicitly excluded due to lack of Bluetooth silicon.
+*   **Hardware Target:** Build and support only the Arduino Nano ESP32 (ESP32-S3) through the `arduino_nano_esp32_idf5` production environment.
 *   **Bluetooth Connection:** Act as a BLE Central device, connecting to the Meshtastic radio (BLE Peripheral). Must support secure pairing with a PIN code.
 *   **WiFi Connection:** Connect to a local WiFi network.
 *   **TCP Server:** Expose a TCP port (default Meshtastic port is 4403) that accepts incoming connections.
@@ -22,13 +22,10 @@ This project is an ESP32-based transparent bridge that connects to a Meshtastic 
 
 #### ESP-IDF 5 and Tailscale migration
 
-The `arduino_nano_esp32` profile remains the Arduino Core 2.0.17 / ESP-IDF
-4.4.7 recovery build. The deployed `arduino_nano_esp32_idf5` profile targets
-Arduino Core 3.3.9 / ESP-IDF 5.5.4 and uses NimBLE-Arduino 2.5.2. NimBLE 1.x
-must not be used in that profile: it duplicates or incompatibly configures the
-IDF-5 BLE stack and caused instruction/cache faults as soon as BLE started.
-The 2.x callback, millisecond timeout, scan-result, and passkey APIs are selected
-at compile time while the recovery profile retains its 1.x API.
+The sole `arduino_nano_esp32_idf5` profile targets Arduino Core 3.3.9 /
+ESP-IDF 5.5.4 and uses NimBLE-Arduino 2.5.2. NimBLE 1.x must not be used: it
+duplicates or incompatibly configures the IDF-5 BLE stack and caused
+instruction/cache faults as soon as BLE started.
 
 MicroLink 2.0.0 at upstream commit
 `216da3300f0493b0860247d43f7af5ce29df63a5` supplies native Tailscale support
@@ -244,6 +241,22 @@ of `sent` or `received`. `after` is an exclusive sequence cursor and each
 response is capped at 32 messages to protect TLS/VPN heap headroom. The endpoint reports ring bounds,
 overwrite, duplicate and invalid-record counters. Ordinary reboot and OTA keep
 the data partition; the explicit factory-reset endpoint clears the mailbox.
+
+The mailbox module also maintains bounded RAM-only metadata caches for at most
+eight enabled channels and 64 nodes. They are populated from the radio's normal
+`FromRadio.channel`, `FromRadio.node_info`, and `FromRadio.my_info` configuration
+stream. Channel PSKs are inspected only long enough to identify the one-byte
+default public key and are never copied into either cache or any Web response.
+The optional control-page chat therefore resolves channel labels and sender
+names without creating another persistent store or exposing channel secrets.
+
+Chat sends are encoded as ordinary broadcast `ToRadio.packet` envelopes with
+`TEXT_MESSAGE_APP`, the chosen known channel index, `want_ack`, and a fresh
+packet ID. They enter the same bounded HTTP-to-BLE queue as the standard HTTP
+PhoneAPI. The browser may report queue acceptance immediately, but it reports
+radio acceptance only after the successful BLE write has produced the normal
+sent-mailbox record. No Web-layer state is presented as end-to-end LoRa
+delivery.
 
 ## Project Structure
 ```text

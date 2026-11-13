@@ -160,7 +160,7 @@
 // Keep main on the next real release version. The release workflow injects
 // the matching Git tag during its clean build. MeshGate does not distribute
 // versionless/dev OTA images to end users.
-#define FIRMWARE_VERSION "v0.7.20"
+#define FIRMWARE_VERSION "v0.7.21"
 #endif
 
 #ifndef HARDWARE_BOARD_NAME

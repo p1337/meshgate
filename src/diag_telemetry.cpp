@@ -93,6 +93,14 @@ void diag_telemetry_format_json(const SystemTelemetrySnapshot& s, Print& out) {
     out.print(s.bridge.tcp_tx_count);
     out.print(",\"invalid_count\":");
     out.print(s.bridge.tcp_invalid_count);
+    out.print(",\"connections_accepted_total\":");
+    out.print(s.bridge.tcp_connections_accepted);
+    out.print(",\"connections_disconnected_total\":");
+    out.print(s.bridge.tcp_connections_disconnected);
+    out.print(",\"connections_rejected_total\":");
+    out.print(s.bridge.tcp_connections_rejected);
+    out.print(",\"context_alloc_failures_total\":");
+    out.print(s.bridge.tcp_context_alloc_failures);
     out.print("},\"http_phoneapi\":{\"active\":");
     out.print(s.bridge.http_phoneapi_active ? "true" : "false");
     out.print(",\"rx_count\":");
@@ -248,6 +256,20 @@ void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& o
               "# TYPE meshbridge_tcp_clients_max gauge\n"
               "meshbridge_tcp_clients_max ");
     out.println(MAX_TCP_CLIENTS);
+
+    out.print("# HELP meshbridge_tcp_connections_total TCP connection lifecycle events\n"
+              "# TYPE meshbridge_tcp_connections_total counter\n"
+              "meshbridge_tcp_connections_total{event=\"accepted\"} ");
+    out.println(s.bridge.tcp_connections_accepted);
+    out.print("meshbridge_tcp_connections_total{event=\"disconnected\"} ");
+    out.println(s.bridge.tcp_connections_disconnected);
+    out.print("meshbridge_tcp_connections_total{event=\"rejected\"} ");
+    out.println(s.bridge.tcp_connections_rejected);
+
+    out.print("# HELP meshbridge_tcp_context_alloc_failures_total TCP client context allocations that failed\n"
+              "# TYPE meshbridge_tcp_context_alloc_failures_total counter\n"
+              "meshbridge_tcp_context_alloc_failures_total ");
+    out.println(s.bridge.tcp_context_alloc_failures);
     out.println();
 
     // 4. Traffic Throughput & Error Counters

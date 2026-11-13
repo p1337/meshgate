@@ -57,22 +57,14 @@ a MeshGate release number. The production environment is
 - NimBLE-Arduino 2.5.2
 - MicroLink for Tailscale-compatible networking
 
-The `arduino_nano_esp32` ESP-IDF 4 build remains intentionally available as a
-USB recovery image.
-
 ## Platform scope
 
-The repository builds five firmware environments:
+The repository builds and publishes one firmware environment:
 
-1. `arduino_nano_esp32_idf5` — production Nano ESP32 with Tailscale
-2. `arduino_nano_esp32` — Nano ESP32 recovery image
-3. `seeed_xiao_esp32s3` — compact ESP32-S3 bridge
-4. `esp32-s3-devkitc-1` — generic ESP32-S3 bridge
-5. `esp32dev` — classic ESP32-WROOM / NodeMCU bridge
+1. `arduino_nano_esp32_idf5` — Arduino Nano ESP32 (ESP32-S3) production
+   firmware with native Tailscale support.
 
-Only the Nano IDF 5 target includes native Tailscale today. The shared bridge,
-MQTT, Web UI, diagnostics, persistence and OTA code remains common wherever
-the platform supports it.
+There are no WROOM, generic ESP32-S3, XIAO or second recovery builds.
 
 ## Keeping the fork reviewable
 

@@ -22,13 +22,14 @@ cd meshgate
 pio run -e arduino_nano_esp32_idf5
 ```
 
-Run the complete build matrix before submitting firmware changes:
+Run the only supported production target before submitting firmware changes:
 
 ```powershell
-pio run
+pio run -e arduino_nano_esp32_idf5
 ```
 
-The pull-request workflow repeats this build on a clean runner.
+The pull-request workflow repeats this single Arduino Nano ESP32 build on a
+clean runner. No other board profiles are built or published.
 
 ## Pull-request expectations
 

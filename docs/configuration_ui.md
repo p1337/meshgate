@@ -35,6 +35,18 @@ The large header logo links to the canonical MeshGate GitHub repository in a
 separate browser tab, using the same compile-time `PROJECT_GITHUB_URL` as the
 footer so the two destinations cannot diverge.
 
+* **Channel Chat Panel:**
+  * Uses the existing persistent 128-message mailbox; no parallel browser or
+    flash message store is created.
+  * Remains visible beside the cards on desktop and becomes a drawer on small
+    screens.
+  * Lists the enabled channels learned from the radio configuration, unread
+    counts, retained incoming/outgoing text, timestamps, and sender links.
+  * Identifies the standard public channel as `Public (AQ==)` while never
+    returning channel PSKs to the browser.
+  * Sends a broadcast on the selected channel through the attached radio.
+    `Queued for radio` means bounded-queue admission; `Radio accepted` is shown
+    only after a successful BLE write creates the sent mailbox record.
 * **WiFi Network Card:**
   * Displays the current configured SSID, masked password status, live WiFi connection status pill (`Connected` / `AP Mode` / `Disconnected` / `Not Configured`), active IP address, advertised mDNS hostname (e.g. `dsc-ae28.local`), and live WiFi RSSI signal strength with colored quality pill (`Excellent` / `Good` / `Fair` / `Weak`).
   * Displays active **TCP Clients** (`X / 3`) and live **TCP Traffic** counters (sent, received, invalid).
@@ -163,9 +175,19 @@ footer so the two destinations cannot diverge.
    * **`OPTIONS|GET /api/mailbox`**: Returns retained decoded text messages as
      JSON. The default response contains the newest 32 entries in chronological
      order. `after=<sequence>` is an exclusive cursor and `limit=<1..32>`
-     bounds each response. Ring and integrity counters are included. The native
+     bounds each response. Message objects also contain the resolved channel
+     label, public-channel flag and cached sender names when available. Ring
+     and integrity counters are included. The native
      TCP and HTTP PhoneAPI paths replay these records automatically after a
      matching configuration handshake; they do not require this JSON endpoint.
+   * **`OPTIONS|GET /api/chat/meta`**: Returns BLE readiness, the local radio
+     node number and the bounded list of enabled channel indices and display
+     names. No PSK or other channel secret is returned.
+   * **`OPTIONS|POST /api/chat/send`**: Accepts `channel=<index>` and a UTF-8
+     `text` body field of at most 233 bytes. The channel must exist in the
+     current radio configuration. The endpoint is rate-limited, queues one
+     ordinary Meshtastic text broadcast for BLE, and returns `202` plus its
+     packet ID; it does not claim end-to-end delivery.
    * **`GET /start_scan_wifi`**: Initiates an asynchronous WiFi network scan.
    * **`GET /scan_wifi_results`**: Polls WiFi scan progress and returns JSON array of discovered networks: `[{"ssid":"MyWiFi","rssi":-58,"is_open":false}]`.
    * **`GET /start_scan`**: Initiates an asynchronous 4-second BLE scan.

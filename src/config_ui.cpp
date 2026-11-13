@@ -19,6 +19,7 @@
 #include "device_presence.h"
 #include "bounded_stream_response.h"
 #include <esp_heap_caps.h>
+#include <atomic>
 
 /**
  * For retrieving configuration properties stored in NVS.
@@ -49,6 +50,8 @@ constexpr uint8_t LOW_MEMORY_RESERVED_WEB_REQUESTS = 2;
 constexpr uint32_t WEB_LOW_FREE_HEAP_BYTES = 32 * 1024;
 constexpr uint32_t WEB_LOW_LARGEST_BLOCK_BYTES = 16 * 1024;
 constexpr size_t WEB_FLASH_STREAM_CHUNK_BYTES = 1024;
+constexpr uint32_t CHAT_SEND_MIN_INTERVAL_MS = 1500;
+std::atomic<uint32_t> s_last_chat_send_ms{0};
 
 // ESPAsyncWebServer's stock AsyncProgmemResponse sizes each temporary send
 // allocation to the complete currently available TCP window. After TLS, BLE
@@ -390,6 +393,43 @@ const char index_html[] PROGMEM = R"rawliteral(
   :root { --bg:#0a0c10; --panel:#0f1318; --panel2:#111a24; --border:#1e2a38; --accent:#5eed97; --accent2:#ff6b35; --green:#39ff14; --yellow:#ffd60a; --red:#ff3860; --muted:#7d8daa; --text:#c8d6e5; --dim:#8ea2bb; --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace; --sans:"Segoe UI","Exo 2",sans-serif; }
   * { box-sizing: border-box; }
   body { font-family:var(--sans); padding:16px; max-width:680px; margin:auto; background:var(--bg); color:var(--text); }
+  .chat-panel { position:fixed; inset:0 auto 0 0; z-index:35; display:none; width:390px; padding:12px; border-right:1px solid var(--border); background:rgba(10,12,16,.985); box-shadow:12px 0 32px rgba(0,0,0,.35); }
+  .chat-panel.ready { display:flex; flex-direction:column; }
+  .chat-header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 4px 10px; border-bottom:1px solid var(--border); }
+  .chat-heading { color:var(--accent); font:700 14px var(--mono); letter-spacing:1px; text-transform:uppercase; }
+  .chat-identity { color:var(--dim); font:10px var(--mono); text-align:right; max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chat-close { display:none; width:auto; margin:0; padding:4px 8px; color:var(--text); background:transparent; }
+  .chat-channels { display:flex; gap:6px; padding:10px 0; overflow-x:auto; scrollbar-width:thin; }
+  .chat-channel { position:relative; flex:0 0 auto; width:auto; min-width:78px; margin:0; padding:7px 24px 7px 9px; border-color:var(--border); color:var(--dim); background:var(--panel); text-align:left; font-size:11px; }
+  .chat-channel.active { color:#07110b; border-color:var(--accent); background:var(--accent); }
+  .chat-unread { position:absolute; top:-6px; right:-5px; display:none; min-width:20px; height:20px; padding:0 5px; align-items:center; justify-content:center; border:2px solid var(--bg); border-radius:12px; color:#fff; background:var(--red); font:700 10px var(--mono); }
+  .chat-unread.visible { display:flex; }
+  .chat-state { min-height:18px; margin:0 2px 6px; color:var(--dim); font:10px var(--mono); }
+  .chat-messages { flex:1 1 auto; min-height:180px; overflow-y:auto; padding:2px 4px 10px; overscroll-behavior:contain; }
+  .chat-empty { margin:28px 8px; color:var(--muted); font:12px/1.5 var(--mono); text-align:center; }
+  .chat-message { max-width:88%; margin:8px 0; padding:9px 10px; border:1px solid var(--border); border-radius:5px; background:var(--panel2); }
+  .chat-message.sent { margin-left:auto; border-color:rgba(94,237,151,.45); background:rgba(94,237,151,.06); }
+  .chat-meta { display:flex; justify-content:space-between; gap:8px; margin-bottom:5px; color:var(--dim); font:10px var(--mono); }
+  .chat-sender { color:var(--accent); text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chat-sender:hover { text-decoration:underline; }
+  .chat-text { color:var(--text); font-size:13px; line-height:1.42; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .chat-delivery { margin-top:5px; color:var(--muted); font:9px var(--mono); text-align:right; }
+  .chat-delivery.accepted { color:var(--accent); }
+  .chat-delivery.failed { color:var(--red); }
+  .chat-composer { flex:0 0 auto; padding-top:9px; border-top:1px solid var(--border); }
+  .chat-composer textarea { min-height:68px; max-height:140px; resize:vertical; margin:0 0 6px; }
+  .chat-compose-row { display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; }
+  .chat-compose-note { color:var(--muted); font:9px/1.35 var(--mono); }
+  .chat-send { width:auto; min-width:92px; margin:0; }
+  .chat-toggle { position:fixed; left:12px; bottom:12px; z-index:34; display:none; width:auto; min-width:108px; padding:10px 13px; color:#07110b; border-color:var(--accent); background:var(--accent); box-shadow:0 8px 24px rgba(0,0,0,.38); }
+  @media (min-width:1100px) {
+    body { margin-left:420px; margin-right:auto; }
+  }
+  @media (max-width:1099px) {
+    .chat-panel.ready { display:flex; width:min(390px,92vw); transform:translateX(-102%); transition:transform .2s ease; }
+    .chat-panel.ready.open { transform:translateX(0); }
+    .chat-close,.chat-toggle.ready { display:block; }
+  }
   .brand-link { display:block; width:100%; max-width:560px; margin:8px auto 6px; }
   .brand-logo { display:block; width:100%; height:auto; aspect-ratio:900/296; object-fit:contain; }
   .brand-subtitle { margin:0 0 20px; color:var(--dim); text-align:center; font:11px var(--mono); letter-spacing:2px; text-transform:uppercase; }
@@ -496,6 +536,24 @@ const char index_html[] PROGMEM = R"rawliteral(
 </style>
 </head>
 <body>
+  <aside id="chat-panel" class="chat-panel" aria-label="Meshtastic channel chat">
+    <div class="chat-header">
+      <div><div class="chat-heading">Mesh messages</div><div id="chat-identity" class="chat-identity">Waiting for radio configuration</div></div>
+      <button type="button" class="chat-close" onclick="toggleChat(false)" aria-label="Close chat">×</button>
+    </div>
+    <div id="chat-channels" class="chat-channels" role="tablist" aria-label="Meshtastic channels"></div>
+    <div id="chat-state" class="chat-state">Loading retained messages…</div>
+    <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+    <div class="chat-composer">
+      <textarea id="chat-text" maxlength="233" placeholder="Write to the selected channel" oninput="updateChatByteCount()"></textarea>
+      <div class="chat-compose-row">
+        <span id="chat-compose-note" class="chat-compose-note">0 / 233 bytes · delivery beyond radio acceptance is not guaranteed</span>
+        <button type="button" id="chat-send" class="btn-success chat-send" onclick="sendChatMessage()">Send</button>
+      </div>
+    </div>
+  </aside>
+  <button type="button" id="chat-toggle" class="chat-toggle" onclick="toggleChat(true)">Messages <span id="chat-total-unread"></span></button>
+
   <a class="brand-link" href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(" target="_blank" rel="noopener noreferrer" aria-label="Open the MeshGate project on GitHub">
     <img class="brand-logo" src="/assets/meshgate-logo.svg?v=)rawliteral" FIRMWARE_VERSION R"rawliteral(" width="900" height="296" decoding="sync" alt="MeshGate">
   </a>
@@ -1009,8 +1067,276 @@ const char index_html[] PROGMEM = R"rawliteral(
     let tailscaleAuthOpenedUrl = '';
     let visitorCounterLoaded = false;
     let otaAutomaticCheckRetries = 0;
+    let chatChannels = [];
+    let chatMessages = [];
+    let chatPending = [];
+    let chatActiveChannel = null;
+    let chatCursor = 0;
+    let chatUnread = {};
+    let chatInitialLoadComplete = false;
+    let chatPollTimer = null;
+    let chatMetaTimer = null;
+    let chatLocalNode = null;
 
     const meshGateTabs = ['connection', 'remote', 'services', 'system'];
+
+    function toggleChat(open) {
+      const panel = document.getElementById('chat-panel');
+      if (panel) panel.classList.toggle('open', !!open);
+    }
+
+    function chatUtf8Length(value) {
+      if (window.TextEncoder) return new TextEncoder().encode(value).length;
+      return unescape(encodeURIComponent(value)).length;
+    }
+
+    function updateChatByteCount() {
+      const input = document.getElementById('chat-text');
+      const note = document.getElementById('chat-compose-note');
+      const bytes = chatUtf8Length(input.value);
+      note.innerText = bytes + ' / 233 bytes · delivery beyond radio acceptance is not guaranteed';
+      note.style.color = bytes > 233 ? 'var(--red)' : 'var(--muted)';
+      document.getElementById('chat-send').disabled = bytes === 0 || bytes > 233 || chatActiveChannel === null;
+    }
+
+    function chatChannelByIndex(index) {
+      return chatChannels.find(channel => Number(channel.index) === Number(index));
+    }
+
+    function chatChannelName(index) {
+      const channel = chatChannelByIndex(index);
+      return channel ? channel.name : 'Channel ' + index;
+    }
+
+    function renderChatChannels() {
+      const container = document.getElementById('chat-channels');
+      container.textContent = '';
+      chatChannels.forEach(channel => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'chat-channel' + (Number(channel.index) === Number(chatActiveChannel) ? ' active' : '');
+        button.setAttribute('role', 'tab');
+        button.setAttribute('aria-selected', Number(channel.index) === Number(chatActiveChannel) ? 'true' : 'false');
+        button.title = channel.role + (channel.public_default ? ' · public default key AQ==' : ' · key remains on the radio');
+        const label = document.createElement('span');
+        label.textContent = channel.name;
+        button.appendChild(label);
+        const badge = document.createElement('span');
+        const unread = Number(chatUnread[channel.index] || 0);
+        badge.className = 'chat-unread' + (unread ? ' visible' : '');
+        badge.textContent = unread > 99 ? '99+' : String(unread);
+        button.appendChild(badge);
+        button.onclick = function() { selectChatChannel(channel.index); };
+        container.appendChild(button);
+      });
+      const total = Object.values(chatUnread).reduce((sum, value) => sum + Number(value || 0), 0);
+      document.getElementById('chat-total-unread').innerText = total ? '(' + total + ')' : '';
+      updateChatByteCount();
+    }
+
+    function selectChatChannel(index) {
+      chatActiveChannel = Number(index);
+      chatUnread[chatActiveChannel] = 0;
+      try { localStorage.setItem('meshgate_chat_channel', String(chatActiveChannel)); } catch (_) {}
+      renderChatChannels();
+      renderChatMessages(true);
+    }
+
+    function formatChatTime(seconds) {
+      if (!seconds) return 'time unavailable';
+      const date = new Date(Number(seconds) * 1000);
+      return date.toLocaleString([], { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+    }
+
+    function chatSenderLabel(message) {
+      if (message.from_name) return message.from_name;
+      if (message.from_short) return message.from_short;
+      return message.from || (chatLocalNode && chatLocalNode.id) || 'Local radio';
+    }
+
+    function appendChatMessageElement(container, message) {
+      const item = document.createElement('article');
+      item.className = 'chat-message ' + (message.direction === 'sent' ? 'sent' : 'received');
+      const meta = document.createElement('div');
+      meta.className = 'chat-meta';
+      const sender = document.createElement(message.from ? 'a' : 'span');
+      sender.className = 'chat-sender';
+      sender.textContent = chatSenderLabel(message);
+      if (message.from) {
+        sender.href = 'https://meshradar.pl/node/' + message.from.replace('!', '').toLowerCase();
+        sender.target = '_blank';
+        sender.rel = 'noopener noreferrer';
+      }
+      const time = document.createElement('span');
+      time.textContent = formatChatTime(message.rx_time);
+      meta.appendChild(sender);
+      meta.appendChild(time);
+      const text = document.createElement('div');
+      text.className = 'chat-text';
+      text.textContent = message.text;
+      item.appendChild(meta);
+      item.appendChild(text);
+      if (message.direction === 'sent') {
+        const delivery = document.createElement('div');
+        delivery.className = 'chat-delivery ' + (message.delivery || 'accepted');
+        delivery.textContent = message.delivery === 'queued' ? 'Queued for radio' :
+          (message.delivery === 'failed' ? 'Send failed' : 'Radio accepted');
+        item.appendChild(delivery);
+      }
+      container.appendChild(item);
+    }
+
+    function renderChatMessages(forceBottom) {
+      const container = document.getElementById('chat-messages');
+      const wasNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+      container.textContent = '';
+      const visible = chatMessages
+        .concat(chatPending)
+        .filter(message => Number(message.channel) === Number(chatActiveChannel))
+        .sort((a, b) => Number(a.sequence || 4294967295) - Number(b.sequence || 4294967295));
+      if (!visible.length) {
+        const empty = document.createElement('div');
+        empty.className = 'chat-empty';
+        empty.textContent = 'No retained messages on ' + chatChannelName(chatActiveChannel) + '.';
+        container.appendChild(empty);
+      } else {
+        visible.forEach(message => appendChatMessageElement(container, message));
+      }
+      if (forceBottom || wasNearBottom) container.scrollTop = container.scrollHeight;
+    }
+
+    function addChatMessages(messages, countUnread) {
+      let changed = false;
+      messages.forEach(message => {
+        if (chatMessages.some(existing => Number(existing.sequence) === Number(message.sequence))) return;
+        message.delivery = message.direction === 'sent' ? 'accepted' : '';
+        chatPending = chatPending.filter(pending => Number(pending.packet_id) !== Number(message.packet_id));
+        chatMessages.push(message);
+        if (countUnread && Number(message.channel) !== Number(chatActiveChannel)) {
+          chatUnread[message.channel] = Number(chatUnread[message.channel] || 0) + 1;
+        }
+        changed = true;
+      });
+      if (chatMessages.length > 128) chatMessages = chatMessages.slice(chatMessages.length - 128);
+      if (changed) {
+        renderChatChannels();
+        renderChatMessages(false);
+      }
+    }
+
+    function loadChatHistory(after, pagesLeft) {
+      return fetch('/api/mailbox?after=' + after + '&limit=32', { cache:'no-store' })
+        .then(response => response.json())
+        .then(data => {
+          addChatMessages(data.messages || [], false);
+          const messages = data.messages || [];
+          if (messages.length) chatCursor = Number(messages[messages.length - 1].sequence);
+          else chatCursor = Math.max(chatCursor, Number(data.next_sequence || 1) - 1);
+          if (messages.length === 32 && chatCursor < Number(data.next_sequence || 1) - 1 && pagesLeft > 1) {
+            return loadChatHistory(chatCursor, pagesLeft - 1);
+          }
+          chatInitialLoadComplete = true;
+          document.getElementById('chat-state').innerText = 'Retained mailbox · ' + Number(data.count || 0) + ' / ' + Number(data.capacity || 0);
+          renderChatMessages(true);
+        });
+    }
+
+    function pollChatMailbox() {
+      if (chatPollTimer) clearTimeout(chatPollTimer);
+      fetch('/api/mailbox?after=' + chatCursor + '&limit=32', { cache:'no-store' })
+        .then(response => response.json())
+        .then(data => {
+          const messages = data.messages || [];
+          if (messages.length) chatCursor = Number(messages[messages.length - 1].sequence);
+          else chatCursor = Math.max(chatCursor, Number(data.next_sequence || 1) - 1);
+          addChatMessages(messages, chatInitialLoadComplete);
+          document.getElementById('chat-state').innerText = 'Retained mailbox · ' + Number(data.count || 0) + ' / ' + Number(data.capacity || 0);
+        })
+        .catch(() => { document.getElementById('chat-state').innerText = 'Mailbox temporarily unavailable'; })
+        .finally(() => { chatPollTimer = setTimeout(pollChatMailbox, 2500); });
+    }
+
+    function refreshChatMetadata() {
+      if (chatMetaTimer) clearTimeout(chatMetaTimer);
+      fetch('/api/chat/meta', { cache:'no-store' }).then(response => response.json()).then(meta => {
+        chatChannels = meta.channels || [];
+        chatLocalNode = meta.local_node || null;
+        const panel = document.getElementById('chat-panel');
+        const toggle = document.getElementById('chat-toggle');
+        const available = chatChannels.length > 0;
+        panel.classList.toggle('ready', available);
+        toggle.classList.toggle('ready', available);
+        document.getElementById('chat-identity').innerText = chatLocalNode
+          ? ((chatLocalNode.long_name || chatLocalNode.id) + ' · ' + (meta.ble_connected ? 'radio connected' : 'radio offline'))
+          : (meta.ble_connected ? 'Reading radio configuration…' : 'Radio offline');
+        if (available && (chatActiveChannel === null || !chatChannelByIndex(chatActiveChannel))) {
+          let saved = null;
+          try { saved = Number(localStorage.getItem('meshgate_chat_channel')); } catch (_) {}
+          const preferred = chatChannels.find(channel => Number(channel.index) === saved) ||
+            chatChannels.find(channel => channel.public_default) ||
+            chatChannels.find(channel => channel.role === 'primary') || chatChannels[0];
+          chatActiveChannel = Number(preferred.index);
+        }
+        renderChatChannels();
+        renderChatMessages(false);
+      }).catch(() => {
+        document.getElementById('chat-state').innerText = 'Radio metadata temporarily unavailable';
+      }).finally(() => { chatMetaTimer = setTimeout(refreshChatMetadata, 15000); });
+    }
+
+    function sendChatMessage() {
+      const input = document.getElementById('chat-text');
+      const button = document.getElementById('chat-send');
+      const value = input.value;
+      const bytes = chatUtf8Length(value);
+      if (!value || bytes > 233 || chatActiveChannel === null) return;
+      button.disabled = true;
+      document.getElementById('chat-state').innerText = 'Queueing message for the radio…';
+      const body = 'channel=' + encodeURIComponent(chatActiveChannel) + '&text=' + encodeURIComponent(value);
+      fetch('/api/chat/send', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/x-www-form-urlencoded' },
+        body:body
+      }).then(response => response.json().then(data => ({ ok:response.ok, data:data }))).then(result => {
+        if (!result.ok || !result.data.success) throw new Error(result.data.error || 'Send failed');
+        chatPending.push({
+          sequence:0,
+          direction:'sent',
+          from:chatLocalNode ? chatLocalNode.id : '',
+          from_name:chatLocalNode ? chatLocalNode.long_name : '',
+          channel:chatActiveChannel,
+          packet_id:result.data.packet_id,
+          rx_time:Math.floor(Date.now() / 1000),
+          text:value,
+          delivery:'queued'
+        });
+        input.value = '';
+        document.getElementById('chat-state').innerText = 'Message queued; waiting for radio acceptance';
+        renderChatMessages(true);
+        updateChatByteCount();
+        setTimeout(pollChatMailbox, 250);
+      }).catch(error => {
+        document.getElementById('chat-state').innerText = error.message || 'Send failed';
+      }).finally(() => {
+        button.disabled = false;
+        updateChatByteCount();
+      });
+    }
+
+    function initChat() {
+      document.getElementById('chat-text').addEventListener('keydown', function(event) {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          sendChatMessage();
+        }
+      });
+      refreshChatMetadata();
+      loadChatHistory(0, 4).catch(() => {
+        chatInitialLoadComplete = true;
+        document.getElementById('chat-state').innerText = 'Mailbox temporarily unavailable';
+      }).finally(pollChatMailbox);
+      updateChatByteCount();
+    }
 
     function selectTab(tabName, updateHash = true) {
       const selected = meshGateTabs.includes(tabName) ? tabName : 'connection';
@@ -2368,6 +2694,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       loadConfig();
       updateStatus();
       checkOfficialReleaseOnConnect();
+      initChat();
     };
 
     window.addEventListener('hashchange', function() {
@@ -2586,6 +2913,136 @@ void config_ui_start_server() {
         request->send(response);
     });
 
+    server.on("/api/chat/meta", HTTP_OPTIONS, [](AsyncWebServerRequest* request) {
+        AsyncWebServerResponse* response = request->beginResponse(204);
+        addApiCorsHeaders(response, "GET, OPTIONS");
+        request->send(response);
+    });
+
+    // Channel and node metadata learned from the attached radio's normal
+    // configuration stream. PSKs are intentionally never copied or returned.
+    server.on("/api/chat/meta", HTTP_GET, [](AsyncWebServerRequest* request) {
+        BoundedStreamResponse* response = new BoundedStreamResponse("application/json; charset=utf-8");
+        addApiCorsHeaders(response, "GET, OPTIONS");
+        response->print("{\"ready\":");
+        response->print(message_mailbox_is_ready() ? "true" : "false");
+        response->print(",\"ble_connected\":");
+        response->print(bridge_is_ble_connected() ? "true" : "false");
+
+        MessageMailboxNode local = {};
+        response->print(",\"local_node\":");
+        if (message_mailbox_get_local_node(&local)) {
+            char nodeId[11] = {};
+            snprintf(nodeId, sizeof(nodeId), "!%08lx", static_cast<unsigned long>(local.num));
+            response->print("{\"id\":\""); response->print(nodeId);
+            response->print("\",\"num\":"); response->print(local.num);
+            response->print(",\"long_name\":\"");
+            writeJsonBytes(*response, local.long_name, strnlen(local.long_name, sizeof(local.long_name)));
+            response->print("\",\"short_name\":\"");
+            writeJsonBytes(*response, local.short_name, strnlen(local.short_name, sizeof(local.short_name)));
+            response->print("\"}");
+        } else {
+            response->print("null");
+        }
+
+        MessageMailboxChannel channels[8] = {};
+        const size_t channelCount = message_mailbox_list_channels(channels, 8);
+        response->print(",\"channels\":[");
+        for (size_t i = 0; i < channelCount; ++i) {
+            if (i) response->print(',');
+            response->print("{\"index\":"); response->print(channels[i].index);
+            response->print(",\"name\":\"");
+            writeJsonBytes(*response, channels[i].name, strnlen(channels[i].name, sizeof(channels[i].name)));
+            response->print("\",\"role\":\"");
+            response->print(channels[i].primary ? "primary" : "secondary");
+            response->print("\",\"public_default\":");
+            response->print(channels[i].public_default ? "true" : "false");
+            response->print('}');
+        }
+        response->print("]}");
+        request->send(response);
+    });
+
+    server.on("/api/chat/send", HTTP_OPTIONS, [](AsyncWebServerRequest* request) {
+        AsyncWebServerResponse* response = request->beginResponse(204);
+        addApiCorsHeaders(response, "POST, OPTIONS");
+        request->send(response);
+    });
+
+    // Queue one text broadcast through the same BLE path used by native
+    // Meshtastic clients. A successful response means queued only; the UI
+    // upgrades it to "radio accepted" after the BLE write enters the mailbox.
+    server.on("/api/chat/send", HTTP_POST, [](AsyncWebServerRequest* request) {
+        auto sendError = [request](int status, const char* message) {
+            String body = "{\"success\":false,\"error\":\"";
+            body += message;
+            body += "\"}";
+            AsyncWebServerResponse* response = request->beginResponse(
+                status, "application/json; charset=utf-8", body
+            );
+            addApiCorsHeaders(response, "POST, OPTIONS");
+            request->send(response);
+        };
+
+        if (!bridge_is_ble_connected()) {
+            sendError(503, "Meshtastic radio is not connected");
+            return;
+        }
+        if (!request->hasParam("channel", true) || !request->hasParam("text", true)) {
+            sendError(400, "channel and text are required");
+            return;
+        }
+
+        const String channelValue = request->getParam("channel", true)->value();
+        bool validChannelNumber = !channelValue.isEmpty();
+        for (size_t i = 0; validChannelNumber && i < channelValue.length(); ++i) {
+            validChannelNumber = channelValue[i] >= '0' && channelValue[i] <= '9';
+        }
+        const long channelNumber = channelValue.toInt();
+        MessageMailboxChannel channel = {};
+        if (!validChannelNumber || channelNumber < 0 || channelNumber > 255 ||
+            !message_mailbox_get_channel(static_cast<uint8_t>(channelNumber), &channel)) {
+            sendError(400, "Unknown or disabled channel");
+            return;
+        }
+
+        const String text = request->getParam("text", true)->value();
+        if (text.isEmpty() || text.length() > MESSAGE_MAILBOX_TEXT_MAX) {
+            sendError(400, "Message must contain 1 to 233 UTF-8 bytes");
+            return;
+        }
+
+        const uint32_t now = millis();
+        const uint32_t previous = s_last_chat_send_ms.load(std::memory_order_relaxed);
+        if (previous != 0 && static_cast<uint32_t>(now - previous) < CHAT_SEND_MIN_INTERVAL_MS) {
+            sendError(429, "Please wait before sending another mesh message");
+            return;
+        }
+        s_last_chat_send_ms.store(now, std::memory_order_relaxed);
+
+        uint8_t packet[MESHTASTIC_MAX_PACKET_SIZE] = {};
+        size_t packetLen = 0;
+        uint32_t packetId = 0;
+        if (!message_mailbox_build_text_to_radio(
+                static_cast<uint8_t>(channelNumber),
+                reinterpret_cast<const uint8_t*>(text.c_str()),
+                text.length(), packet, sizeof(packet), &packetLen, &packetId) ||
+            !bridge_enqueue_http_to_ble(packet, packetLen)) {
+            sendError(503, "Radio queue is busy; retry shortly");
+            return;
+        }
+
+        char json[128] = {};
+        snprintf(
+            json, sizeof(json),
+            "{\"success\":true,\"state\":\"queued\",\"packet_id\":%lu}",
+            static_cast<unsigned long>(packetId)
+        );
+        AsyncWebServerResponse* response = request->beginResponse(202, "application/json", json);
+        addApiCorsHeaders(response, "POST, OPTIONS");
+        request->send(response);
+    });
+
     // Persistent decoded text-message history. The default response contains
     // the newest page in chronological order. `after` is an exclusive
     // sequence cursor for efficient polling; `limit` is capped at ring size.
@@ -2661,6 +3118,23 @@ void config_ui_start_server() {
             response->print("\",\"to\":\""); response->print(toId);
             response->print("\",\"packet_id\":"); response->print(entry.packet_id);
             response->print(",\"channel\":"); response->print(entry.channel);
+            MessageMailboxChannel channel = {};
+            response->print(",\"channel_name\":\"");
+            if (message_mailbox_get_channel(entry.channel, &channel)) {
+                writeJsonBytes(*response, channel.name, strnlen(channel.name, sizeof(channel.name)));
+            }
+            response->print("\",\"public_default\":");
+            response->print(channel.public_default ? "true" : "false");
+            MessageMailboxNode sender = {};
+            response->print(",\"from_name\":\"");
+            if (message_mailbox_get_node(entry.from, &sender)) {
+                writeJsonBytes(*response, sender.long_name, strnlen(sender.long_name, sizeof(sender.long_name)));
+            }
+            response->print("\",\"from_short\":\"");
+            if (sender.num != 0) {
+                writeJsonBytes(*response, sender.short_name, strnlen(sender.short_name, sizeof(sender.short_name)));
+            }
+            response->print("\"");
             response->print(",\"rx_time\":"); response->print(entry.rx_time);
             response->print(",\"rx_rssi\":"); response->print(entry.rx_rssi);
             response->print(",\"rx_snr\":"); response->print(entry.rx_snr_x4 / 4.0f, 2);

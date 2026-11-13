@@ -7,6 +7,7 @@
 #include <LittleFS.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
+#include <esp_system.h>
 
 #include "meshtastic/mesh.pb.h"
 #include "meshtastic/portnums.pb.h"
@@ -19,6 +20,8 @@ constexpr char MAILBOX_PATH[] = "/meshgate-mailbox.bin";
 constexpr uint32_t MAILBOX_MAGIC = 0x5842474d;  // MGBX
 constexpr uint32_t RECORD_MAGIC = 0x3147534d;   // MSG1
 constexpr uint16_t MAILBOX_FORMAT_VERSION = 1;
+constexpr size_t CHANNEL_CACHE_CAPACITY = 8;
+constexpr size_t NODE_CACHE_CAPACITY = 64;
 
 struct __attribute__((packed)) MailboxHeader {
     uint32_t magic;
@@ -65,7 +68,81 @@ MailboxRecord* s_read_record = nullptr;
 MailboxRecord* s_write_record = nullptr;
 meshtastic_FromRadio s_from_radio = meshtastic_FromRadio_init_default;
 meshtastic_ToRadio s_to_radio = meshtastic_ToRadio_init_default;
+meshtastic_ToRadio* s_send_to_radio = nullptr;
+SemaphoreHandle_t s_send_mutex = nullptr;
 std::atomic<uint32_t> s_local_node_num{0};
+MessageMailboxChannel s_channels[CHANNEL_CACHE_CAPACITY] = {};
+bool s_channel_used[CHANNEL_CACHE_CAPACITY] = {};
+MessageMailboxNode s_nodes[NODE_CACHE_CAPACITY] = {};
+uint32_t s_node_generation[NODE_CACHE_CAPACITY] = {};
+uint32_t s_metadata_generation = 0;
+
+template <size_t N>
+void copyCString(char (&destination)[N], const char* source) {
+    if (!source) {
+        destination[0] = '\0';
+        return;
+    }
+    strncpy(destination, source, N - 1);
+    destination[N - 1] = '\0';
+}
+
+void upsertNodeLocked(const meshtastic_NodeInfo& info) {
+    if (info.num == 0 || !info.has_user) {
+        return;
+    }
+
+    size_t slot = NODE_CACHE_CAPACITY;
+    size_t oldest = 0;
+    for (size_t i = 0; i < NODE_CACHE_CAPACITY; ++i) {
+        if (s_nodes[i].num == info.num) {
+            slot = i;
+            break;
+        }
+        if (s_nodes[i].num == 0 && slot == NODE_CACHE_CAPACITY) {
+            slot = i;
+        }
+        if (s_node_generation[i] < s_node_generation[oldest]) {
+            oldest = i;
+        }
+    }
+    if (slot == NODE_CACHE_CAPACITY) {
+        slot = oldest;
+    }
+
+    s_nodes[slot].num = info.num;
+    copyCString(s_nodes[slot].long_name, info.user.long_name);
+    copyCString(s_nodes[slot].short_name, info.user.short_name);
+    s_node_generation[slot] = ++s_metadata_generation;
+}
+
+void upsertChannelLocked(const meshtastic_Channel& source) {
+    if (source.index < 0 || static_cast<size_t>(source.index) >= CHANNEL_CACHE_CAPACITY) {
+        return;
+    }
+    const size_t slot = static_cast<size_t>(source.index);
+    if (!source.has_settings || source.role == meshtastic_Channel_Role_DISABLED) {
+        memset(&s_channels[slot], 0, sizeof(s_channels[slot]));
+        s_channel_used[slot] = false;
+        return;
+    }
+
+    MessageMailboxChannel& channel = s_channels[slot];
+    memset(&channel, 0, sizeof(channel));
+    channel.index = static_cast<uint8_t>(source.index);
+    channel.primary = source.role == meshtastic_Channel_Role_PRIMARY;
+    channel.public_default = source.settings.psk.size == 1 && source.settings.psk.bytes[0] == 1;
+    if (channel.public_default) {
+        copyCString(channel.name, "Public (AQ==)");
+    } else if (source.settings.name[0] != '\0') {
+        copyCString(channel.name, source.settings.name);
+    } else if (channel.primary) {
+        copyCString(channel.name, "Primary");
+    } else {
+        snprintf(channel.name, sizeof(channel.name), "Channel %u", channel.index);
+    }
+    s_channel_used[slot] = true;
+}
 
 uint32_t fnv1a32(const void* data, size_t len) {
     const uint8_t* bytes = static_cast<const uint8_t*>(data);
@@ -369,7 +446,14 @@ bool message_mailbox_init() {
     if (!s_write_record) {
         s_write_record = static_cast<MailboxRecord*>(calloc(1, sizeof(MailboxRecord)));
     }
-    if (!s_mutex || !s_fingerprints || !s_read_record || !s_write_record) {
+    if (!s_send_mutex) {
+        s_send_mutex = xSemaphoreCreateMutex();
+    }
+    if (!s_send_to_radio) {
+        s_send_to_radio = static_cast<meshtastic_ToRadio*>(calloc(1, sizeof(meshtastic_ToRadio)));
+    }
+    if (!s_mutex || !s_fingerprints || !s_read_record || !s_write_record ||
+        !s_send_mutex || !s_send_to_radio) {
         log_e("[Mailbox] Could not allocate storage state");
         return false;
     }
@@ -429,6 +513,20 @@ bool message_mailbox_capture_from_radio(const uint8_t* data, size_t len) {
     if (s_from_radio.which_payload_variant == meshtastic_FromRadio_my_info_tag &&
         s_from_radio.my_info.my_node_num != 0) {
         s_local_node_num.store(s_from_radio.my_info.my_node_num, std::memory_order_relaxed);
+        return false;
+    }
+    if (s_from_radio.which_payload_variant == meshtastic_FromRadio_node_info_tag) {
+        if (xSemaphoreTake(s_mutex, portMAX_DELAY) == pdTRUE) {
+            upsertNodeLocked(s_from_radio.node_info);
+            xSemaphoreGive(s_mutex);
+        }
+        return false;
+    }
+    if (s_from_radio.which_payload_variant == meshtastic_FromRadio_channel_tag) {
+        if (xSemaphoreTake(s_mutex, portMAX_DELAY) == pdTRUE) {
+            upsertChannelLocked(s_from_radio.channel);
+            xSemaphoreGive(s_mutex);
+        }
         return false;
     }
     return commitTextPacket(s_from_radio, false);
@@ -546,6 +644,106 @@ bool message_mailbox_next_entry(uint32_t* cursor, uint32_t end, MessageMailboxEn
     entry->text[s_read_record->text_len] = '\0';
     xSemaphoreGive(s_mutex);
     return true;
+}
+
+size_t message_mailbox_list_channels(MessageMailboxChannel* channels, size_t capacity) {
+    if (!channels || capacity == 0 || !s_mutex || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return 0;
+    }
+    size_t count = 0;
+    for (size_t i = 0; i < CHANNEL_CACHE_CAPACITY && count < capacity; ++i) {
+        if (s_channel_used[i]) {
+            channels[count++] = s_channels[i];
+        }
+    }
+    xSemaphoreGive(s_mutex);
+    return count;
+}
+
+bool message_mailbox_get_channel(uint8_t index, MessageMailboxChannel* channel) {
+    if (!channel || index >= CHANNEL_CACHE_CAPACITY || !s_mutex ||
+        xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    const bool found = s_channel_used[index];
+    if (found) {
+        *channel = s_channels[index];
+    }
+    xSemaphoreGive(s_mutex);
+    return found;
+}
+
+bool message_mailbox_get_node(uint32_t num, MessageMailboxNode* node) {
+    if (!node || num == 0 || !s_mutex || xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    bool found = false;
+    for (size_t i = 0; i < NODE_CACHE_CAPACITY; ++i) {
+        if (s_nodes[i].num == num) {
+            *node = s_nodes[i];
+            found = true;
+            break;
+        }
+    }
+    xSemaphoreGive(s_mutex);
+    return found;
+}
+
+bool message_mailbox_get_local_node(MessageMailboxNode* node) {
+    if (!node) {
+        return false;
+    }
+    const uint32_t local = s_local_node_num.load(std::memory_order_relaxed);
+    if (local == 0) {
+        return false;
+    }
+    if (message_mailbox_get_node(local, node)) {
+        return true;
+    }
+    memset(node, 0, sizeof(*node));
+    node->num = local;
+    return true;
+}
+
+bool message_mailbox_build_text_to_radio(
+    uint8_t channel,
+    const uint8_t* text,
+    size_t text_len,
+    uint8_t* output,
+    size_t output_capacity,
+    size_t* output_len,
+    uint32_t* packet_id
+) {
+    if (!text || text_len == 0 || text_len > MESSAGE_MAILBOX_TEXT_MAX ||
+        !output || output_capacity == 0 || !output_len || !packet_id ||
+        !s_send_mutex || !s_send_to_radio ||
+        xSemaphoreTake(s_send_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+        return false;
+    }
+
+    *s_send_to_radio = meshtastic_ToRadio_init_default;
+    s_send_to_radio->which_payload_variant = meshtastic_ToRadio_packet_tag;
+    meshtastic_MeshPacket& packet = s_send_to_radio->packet;
+    packet.to = UINT32_MAX;
+    packet.channel = channel;
+    packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
+    packet.decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
+    packet.decoded.payload.size = text_len;
+    memcpy(packet.decoded.payload.bytes, text, text_len);
+    packet.want_ack = true;
+    do {
+        packet.id = esp_random();
+    } while (packet.id == 0);
+
+    pb_ostream_t stream = pb_ostream_from_buffer(output, output_capacity);
+    const bool ok = pb_encode(&stream, meshtastic_ToRadio_fields, s_send_to_radio) &&
+                    stream.bytes_written > 0;
+    if (ok) {
+        *output_len = stream.bytes_written;
+        *packet_id = packet.id;
+    }
+    xSemaphoreGive(s_send_mutex);
+    return ok;
 }
 
 bool message_mailbox_clear() {
