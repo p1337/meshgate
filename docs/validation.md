@@ -40,8 +40,8 @@ preserved are maintained in [development.md](development.md).
 Early HTTP pressure tests drove the historical minimum internal heap to 476 B
 and later 184 B before recovery. The production policy was therefore tightened
 to require either 32 KiB free internal heap or a 16 KiB largest internal block
-for ordinary work. In low-memory mode, MeshGate admits one ordinary response at
-a time and preserves two recovery slots. A bounded `503` with `Retry-After`
+for ordinary work. In low-memory mode, MeshGate admits two ordinary responses
+at a time and preserves two recovery slots. A bounded `503` with `Retry-After`
 under this condition is intentional load shedding, not proof that the recovery
 plane failed.
 
@@ -85,6 +85,9 @@ Complete the applicable checks before promoting a public-beta build:
 - [ ] The `arduino_nano_esp32_idf5` production environment compiles in CI.
 - [ ] Production firmware boots on Arduino Nano ESP32 without a reset loop.
 - [ ] Setup AP, captive portal and configuration persistence work.
+- [ ] A cold control-page load completes configuration, `/status`, both VPN
+      status reads, OTA status and mailbox initialization without leaving
+      permanent `Loading` or `Unavailable` values under low-memory admission.
 - [ ] BLE pairing, reconnect and bidirectional PhoneAPI traffic work.
 - [ ] TCP `4403` and HTTP PhoneAPI work with supported clients.
 - [ ] Tailscale shows both control-plane registration and a usable data path.

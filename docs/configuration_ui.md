@@ -276,6 +276,15 @@ the explicit `/reset` factory action clears the ring.
   memory needed for remote recovery. Two normal low-memory slots remain
   available so the page and its versioned logo can complete in parallel; both
   use bounded flash streaming and cannot consume a full TCP-window allocation.
-* **Client-Side Polling:** The unified `/status` endpoint is polled periodically (defaulting to 7s, dynamically adjustable to 3s or 1s via the <kbd>P</kbd> key) using chained asynchronous requests to maintain real-time telemetry while completely avoiding request stacking and minimizing CPU/network overhead.
+* **Client-Side Bootstrap and Polling:** A normal page load reads configuration,
+  runtime status, VPN status, OTA metadata and mailbox state in one serialized
+  chain. It never starts those independent JSON responses as a browser-side
+  burst. Truncated JSON plus deliberate `429`/`503` load shedding are retried
+  with bounded delays. The unified `/status` endpoint is then polled
+  periodically (defaulting to 7s, dynamically adjustable to 3s or 1s via the
+  <kbd>P</kbd> key) using chained asynchronous requests. Mailbox polling starts
+  only after initial metadata and history have completed and runs every five
+  seconds. This keeps the page recoverable under fragmented heap without
+  stacking requests.
 * **Radio Concurrency:** The ESP32 shares a single 2.4GHz radio antenna for WiFi and Bluetooth. Using `ESPAsyncWebServer` combined with asynchronous background tasks for BLE operations prevents HTTP request timeouts and prevents radio collisions while switching between WiFi AP and BLE scanning/testing.
 * **NimBLE Stack:** `NimBLE-Arduino` provides low memory footprint BLE client capabilities, essential for coexisting with `ESPAsyncWebServer` and `WiFi` on resource-constrained ESP32-S3 boards without heap exhaustion.

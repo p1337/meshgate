@@ -4,6 +4,17 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.22] - 2026-11-13
+
+- Serialized the control-page bootstrap so configuration, runtime status, VPN
+  status, OTA metadata and mailbox state no longer compete for the constrained
+  HTTP response pool during one page load.
+- Added bounded retries for interrupted JSON responses and deliberate HTTP
+  load shedding, preventing transient low-memory pressure from leaving OTA and
+  system values permanently stuck at `Loading` or `Unavailable`.
+- Serialized official OTA status reads and reduced mailbox polling pressure
+  while preserving the reserved recovery, OTA and PhoneAPI request capacity.
+
 ## [v0.7.21] - 2026-11-13
 
 - Added a channel-aware control-page chat backed by the existing persistent

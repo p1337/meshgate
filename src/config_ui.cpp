@@ -1080,6 +1080,32 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     const meshGateTabs = ['connection', 'remote', 'services', 'system'];
 
+    function fetchJsonRetry(url, options, retries) {
+      const attemptsLeft = retries === undefined ? 2 : retries;
+      const requestOptions = Object.assign({ cache:'no-store' }, options || {});
+      return fetch(url, requestOptions)
+        .then(response => response.text().then(text => {
+          let body = null;
+          try { body = text ? JSON.parse(text) : null; }
+          catch (_) {
+            const parseError = new Error('Incomplete response from MeshGate');
+            parseError.retryable = true;
+            throw parseError;
+          }
+          if (!response.ok) {
+            const error = new Error((body && body.error) || ('MeshGate returned HTTP ' + response.status));
+            error.retryable = response.status === 503 || response.status === 429;
+            throw error;
+          }
+          return body;
+        }))
+        .catch(error => {
+          if (attemptsLeft <= 0 || (error.retryable === false)) throw error;
+          return new Promise(resolve => setTimeout(resolve, 900))
+            .then(() => fetchJsonRetry(url, requestOptions, attemptsLeft - 1));
+        });
+    }
+
     function toggleChat(open) {
       const panel = document.getElementById('chat-panel');
       if (panel) panel.classList.toggle('open', !!open);
@@ -1243,8 +1269,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     function pollChatMailbox() {
       if (chatPollTimer) clearTimeout(chatPollTimer);
-      fetch('/api/mailbox?after=' + chatCursor + '&limit=32', { cache:'no-store' })
-        .then(response => response.json())
+      fetchJsonRetry('/api/mailbox?after=' + chatCursor + '&limit=32', null, 1)
         .then(data => {
           const messages = data.messages || [];
           if (messages.length) chatCursor = Number(messages[messages.length - 1].sequence);
@@ -1253,12 +1278,12 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('chat-state').innerText = 'Retained mailbox · ' + Number(data.count || 0) + ' / ' + Number(data.capacity || 0);
         })
         .catch(() => { document.getElementById('chat-state').innerText = 'Mailbox temporarily unavailable'; })
-        .finally(() => { chatPollTimer = setTimeout(pollChatMailbox, 2500); });
+        .finally(() => { chatPollTimer = setTimeout(pollChatMailbox, 5000); });
     }
 
     function refreshChatMetadata() {
       if (chatMetaTimer) clearTimeout(chatMetaTimer);
-      fetch('/api/chat/meta', { cache:'no-store' }).then(response => response.json()).then(meta => {
+      return fetchJsonRetry('/api/chat/meta', null, 1).then(meta => {
         chatChannels = meta.channels || [];
         chatLocalNode = meta.local_node || null;
         const panel = document.getElementById('chat-panel');
@@ -1330,12 +1355,17 @@ const char index_html[] PROGMEM = R"rawliteral(
           sendChatMessage();
         }
       });
-      refreshChatMetadata();
-      loadChatHistory(0, 4).catch(() => {
-        chatInitialLoadComplete = true;
-        document.getElementById('chat-state').innerText = 'Mailbox temporarily unavailable';
-      }).finally(pollChatMailbox);
       updateChatByteCount();
+      return refreshChatMetadata()
+        .catch(() => {
+          document.getElementById('chat-state').innerText = 'Radio metadata temporarily unavailable';
+        })
+        .then(() => loadChatHistory(0, 4))
+        .catch(() => {
+          chatInitialLoadComplete = true;
+          document.getElementById('chat-state').innerText = 'Mailbox temporarily unavailable';
+        })
+        .finally(pollChatMailbox);
     }
 
     function selectTab(tabName, updateHash = true) {
@@ -1458,8 +1488,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     function loadConfig() {
-      fetch('/config')
-        .then(r => r.json())
+      return fetchJsonRetry('/config', null, 2)
         .then(cfg => {
           currentConfig = cfg;
           document.getElementById('view-wifi-ssid').innerText = cfg.wifi_ssid || '(Not configured)';
@@ -1484,7 +1513,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('input-tailscale-name').value = cfg.tailscale_device_name || 'meshgate';
           document.getElementById('btn-edit-tailscale').disabled = !cfg.tailscale_supported;
           document.getElementById('btn-edit-tailscale').innerText = cfg.tailscale_enabled ? 'Edit' : 'Setup';
-          updateTailscaleStatus();
 
           // WireGuard fields. Secret inputs intentionally remain empty.
           document.getElementById('view-wireguard-ip').innerText = cfg.wireguard_local_ip || '(Not configured)';
@@ -1501,17 +1529,17 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('input-wireguard-private-key').value = '';
           document.getElementById('input-wireguard-preshared-key').value = '';
           document.getElementById('input-wireguard-clear-psk').checked = false;
-          updateWireguardStatus();
 
           // MQTT fields
           document.getElementById('input-mqtt-enabled').checked = !!cfg.mqtt_enabled;
           document.getElementById('input-mqtt-tls-insecure').checked = !!cfg.mqtt_tls_insecure;
           document.getElementById('input-mqtt-ca').value = cfg.mqtt_custom_ca || '';
-          updateStatus();
+          return cfg;
         })
         .catch(() => {
           document.getElementById('view-wifi-ssid').innerText = 'Error loading';
           document.getElementById('view-ble-device').innerText = 'Error loading';
+          throw new Error('Could not read the saved MeshGate configuration.');
         });
     }
 
@@ -1519,8 +1547,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       const pill = document.getElementById('view-tailscale-status');
       const connectionBox = document.getElementById('tailscale-connection-box');
       const loginBox = document.getElementById('tailscale-login-box');
-      return fetch('/tailscale_status')
-        .then(r => r.json())
+      return fetchJsonRetry('/tailscale_status', null, 1)
         .then(status => {
           document.getElementById('view-tailscale-peers').innerText = status.peer_count || 0;
           document.getElementById('view-tailscale-path').innerText = status.connected ? (status.derp_connected ? 'Ready (DERP relay)' : 'Connected (path negotiating)') : '(Not connected)';
@@ -1748,8 +1775,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     function updateWireguardStatus() {
       const pill = document.getElementById('view-wireguard-status');
-      fetch('/wireguard_status')
-        .then(r => r.json())
+      return fetchJsonRetry('/wireguard_status', null, 1)
         .then(status => {
           if (!status.enabled) {
             pill.className = 'status-pill disabled';
@@ -1904,11 +1930,10 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     function updateStatus() {
-      if (statusFetchInFlight) return;
+      if (statusFetchInFlight) return Promise.resolve(null);
       statusFetchInFlight = true;
 
-      fetch('/status')
-        .then(r => r.json())
+      return fetchJsonRetry('/status', null, 2)
         .then(st => {
           // WiFi Metrics
           if (st.wifi) {
@@ -2052,13 +2077,15 @@ const char index_html[] PROGMEM = R"rawliteral(
               renderProgressBar('view-queue-m2b-bar', 'view-queue-m2b-text', st.queues.mqtt_to_ble.waiting, st.queues.mqtt_to_ble.capacity, st.queues.mqtt_to_ble.dropped);
             }
           }
+          return st;
         })
-        .catch(() => {})
+        .catch(() => null)
         .finally(() => {
           statusFetchInFlight = false;
-          updateTailscaleStatus();
-          updateWireguardStatus();
-          scheduleNextStatusPoll();
+          return updateTailscaleStatus()
+            .catch(() => null)
+            .then(() => updateWireguardStatus().catch(() => null))
+            .finally(scheduleNextStatusPoll);
         });
     }
 
@@ -2442,12 +2469,12 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     function refreshOtaStatus() {
-      return Promise.all([
-        fetch('/api/ota', { cache: 'no-store' }).then(r => r.json()),
-        fetch('/api/ota/official', { cache: 'no-store' }).then(r => r.json())
-      ]).then(results => {
-        const slots = results[0];
-        const status = results[1];
+      return fetchJsonRetry('/api/ota', null, 2)
+        .then(slots => fetchJsonRetry('/api/ota/official', null, 2)
+          .then(status => ({ slots:slots, status:status })))
+        .then(result => {
+        const slots = result.slots;
+        const status = result.status;
         const versionLink = document.getElementById('view-ota-version');
         const latestLink = document.getElementById('view-ota-latest');
         versionLink.innerText = status.current_version || slots.firmware_version || '(Unknown)';
@@ -2551,13 +2578,13 @@ const char index_html[] PROGMEM = R"rawliteral(
         });
     }
 
-    function checkOfficialReleaseOnConnect() {
-      return Promise.all([
-        refreshOtaStatus(),
-        fetch('/status', { cache: 'no-store' }).then(r => r.json())
-      ]).then(results => {
-        const otaStatus = results[0];
-        const runtimeStatus = results[1];
+    function checkOfficialReleaseOnConnect(runtimeStatus, otaStatus) {
+      const prerequisite = runtimeStatus && otaStatus
+        ? Promise.resolve({ runtimeStatus:runtimeStatus, otaStatus:otaStatus })
+        : updateStatus().then(status => refreshOtaStatus().then(ota => ({ runtimeStatus:status, otaStatus:ota })));
+      return prerequisite.then(results => {
+        const otaStatus = results.otaStatus;
+        const runtimeStatus = results.runtimeStatus;
         const wifi = runtimeStatus && runtimeStatus.wifi;
         if (!otaStatus.supported || !wifi || !wifi.connected || wifi.is_ap_mode) return;
         if (otaStatus.busy) {
@@ -2691,10 +2718,24 @@ const char index_html[] PROGMEM = R"rawliteral(
       document.getElementById('modal-btn-confirm').onclick = confirmModalAction;
       document.getElementById('view-ota-latest').addEventListener('click', checkOfficialReleaseManually);
       selectTab(window.location.hash.replace('#', ''), false);
-      loadConfig();
-      updateStatus();
-      checkOfficialReleaseOnConnect();
-      initChat();
+      let runtimeStatus = null;
+      let otaStatus = null;
+      loadConfig()
+        .then(() => updateStatus())
+        .then(status => {
+          runtimeStatus = status;
+          return refreshOtaStatus();
+        })
+        .then(status => {
+          otaStatus = status;
+          return initChat();
+        })
+        .then(() => {
+          setTimeout(() => checkOfficialReleaseOnConnect(runtimeStatus, otaStatus), 3000);
+        })
+        .catch(error => {
+          showAlert('ota-alert', 'error', error.message || 'MeshGate startup data is temporarily unavailable.');
+        });
     };
 
     window.addEventListener('hashchange', function() {
