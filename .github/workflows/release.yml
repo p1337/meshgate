@@ -40,7 +40,7 @@ jobs:
         run: |
           pip install -U platformio protobuf grpcio-tools
           pio pkg install -e arduino_nano_esp32_idf5 --no-save
-          "$HOME/.platformio/penv/bin/python" -m pip install -U protobuf grpcio-tools
+          "$HOME/.platformio/penv/bin/python" -m pip install -U protobuf grpcio-tools intelhex
 
       - name: Inject Version into Firmware
         run: |

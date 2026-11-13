@@ -25,7 +25,12 @@ PIOArduino creates a second Python environment at `~/.platformio/penv` while
 installing the IDF-5 platform. Clean CI runners must install the packages into
 that environment too, after `pio pkg install` has created it. Installing them
 only into the outer runner Python makes `generate_protos.py` fail even though
-`pip` reports them as installed.
+`pip` reports them as installed. The clean-runner toolchain also requires
+`intelhex` in that environment for `esptool`. Build the Arduino Core 2 recovery
+profiles before installing the Arduino Core 3/IDF-5 production platform, then
+build `arduino_nano_esp32_idf5` separately. Installing both platform families
+before one combined `pio run` can replace same-named global PlatformIO packages
+and make otherwise valid profiles interfere with one another.
 
 Verify the installation by running:
 ```bash

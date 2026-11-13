@@ -214,3 +214,9 @@ through [LinkedIn](https://de.linkedin.com/in/robert-stefanowicz-367304180).
 <p align="center">
   <a href="https://paypal.me/p1337/3EUR">☕ Support MeshGate development with €3</a>
 </p>
+
+<p align="center">
+  <a href="https://flagcounter.me/details/kOa">
+    <img src="https://flagcounter.me/kOa" alt="MeshGate visitors by country">
+  </a>
+</p>
