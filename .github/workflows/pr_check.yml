@@ -43,7 +43,10 @@ jobs:
             ${{ runner.os }}-pio-
 
       - name: Install PlatformIO Core & Dependencies
-        run: pip install -U platformio protobuf grpcio-tools
+        run: |
+          pip install -U platformio protobuf grpcio-tools
+          pio pkg install -e arduino_nano_esp32_idf5 --no-save
+          "$HOME/.platformio/penv/bin/python" -m pip install -U protobuf grpcio-tools
 
       - name: Build all firmware profiles
         run: pio run
