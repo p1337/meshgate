@@ -28,6 +28,7 @@ preserved are maintained in [development.md](development.md).
 | Scenario | Observed result | Release significance |
 | --- | --- | --- |
 | Mixed HTTP pressure | Eight rounds across `/status`, `/metrics`, `/api/logs`, mailbox and SVG paths completed while BLE and MQTTS stayed connected | Reserved recovery paths and low-memory admission control must remain available |
+| Fragmented-heap release check | Metadata-only official release checks use a PSRAM-backed 8 KiB stack; the flash-writing installer retains an internal stack | Release discovery must remain available when the largest internal block is below 8 KiB without moving flash-sensitive execution into PSRAM |
 | Sequential TCP churn | 20 sequential TCP `4403` connections succeeded | Basic connection ownership and cleanup path exercised |
 | Full TCP capacity | Three simultaneous TCP clients connected without bridge-queue drops | Confirms the configured production client limit |
 | Full slots plus HTTP | With all three TCP slots held, 18 concurrent-path requests returned `200`; slowest response was 6.5 s on a weak `-90 dBm` Wi-Fi link | Correctness confirmed at the stress boundary; latency is not a throughput target |

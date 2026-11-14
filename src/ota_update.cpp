@@ -7,6 +7,8 @@
 #ifdef ESP_IDF5_MIGRATION_BUILD
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
+#include <esp_heap_caps.h>
+#include <freertos/idf_additions.h>
 #include <mbedtls/sha256.h>
 #endif
 
@@ -249,6 +251,17 @@ String digestToHex(const uint8_t digest[32]) {
     return String(output);
 }
 
+void finishOfficialTask(bool installRequested) {
+    if (installRequested) {
+        vTaskDelete(nullptr);
+    } else {
+        // Metadata-only checks use a PSRAM-backed stack so fragmented internal
+        // SRAM cannot prevent a harmless release lookup. Tasks created with
+        // xTaskCreateWithCaps() must be released by the matching API.
+        vTaskDeleteWithCaps(nullptr);
+    }
+}
+
 void officialUpdateTask(void* parameter) {
     const bool installRequested =
         static_cast<OfficialTaskMode>(reinterpret_cast<uintptr_t>(parameter)) == OfficialTaskMode::Install;
@@ -262,7 +275,7 @@ void officialUpdateTask(void* parameter) {
 
     if (!fetchOfficialMetadata(version, firmwareUrl, expectedSize, expectedSha256)) {
         failOfficial("Could not validate the official GitHub release metadata");
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
     setOfficialText(s_latestVersion, sizeof(s_latestVersion), version);
@@ -270,25 +283,25 @@ void officialUpdateTask(void* parameter) {
     if (versionOrder <= 0 && versionOrder != -2) {
         s_officialState.store(OfficialState::Current, std::memory_order_release);
         s_updateClaimed.store(false, std::memory_order_release);
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
     if (versionOrder == -2) {
         failOfficial("Firmware version metadata is invalid");
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
     if (!installRequested) {
         s_officialState.store(OfficialState::Available, std::memory_order_release);
         s_updateClaimed.store(false, std::memory_order_release);
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
 
     const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
     if (next == nullptr || expectedSize > next->size) {
         failOfficial("Official firmware does not fit the inactive OTA slot");
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
 
@@ -303,7 +316,7 @@ void officialUpdateTask(void* parameter) {
           version.c_str(), static_cast<unsigned>(expectedSize), static_cast<unsigned>(ESP.getFreeHeap()));
     if (!Update.begin(expectedSize, U_FLASH)) {
         failOfficial(Update.errorString());
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
 
@@ -312,7 +325,7 @@ void officialUpdateTask(void* parameter) {
     if (mbedtls_sha256_starts(&shaContext, 0) != 0) {
         mbedtls_sha256_free(&shaContext);
         failOfficial("Could not initialize SHA-256 validation");
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
 
@@ -397,25 +410,25 @@ void officialUpdateTask(void* parameter) {
     mbedtls_sha256_free(&shaContext);
     if (fatalStreamFailure || remaining != 0) {
         failOfficial(fatalStreamError.isEmpty() ? "Firmware download did not complete within the safe retry window" : fatalStreamError);
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
     s_officialState.store(OfficialState::Verifying, std::memory_order_release);
     if (!digestFinished || digestToHex(actualDigest) != expectedSha256) {
         failOfficial("Official firmware SHA-256 verification failed");
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
     s_officialState.store(OfficialState::Installing, std::memory_order_release);
     if (!Update.end(false)) {
         failOfficial(Update.errorString());
-        vTaskDelete(nullptr);
+        finishOfficialTask(installRequested);
         return;
     }
     log_i("[OTA] Official MeshGate %s verified and activated", version.c_str());
     s_officialState.store(OfficialState::Rebooting, std::memory_order_release);
     if (!scheduleRestart()) failOfficial("Firmware installed, but restart scheduling failed");
-    vTaskDelete(nullptr);
+    finishOfficialTask(installRequested);
 }
 #endif
 } // namespace
@@ -463,16 +476,25 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
         }
         void* taskMode = reinterpret_cast<void*>(static_cast<uintptr_t>(
             checkOnly ? OfficialTaskMode::CheckOnly : OfficialTaskMode::Install));
-        // A metadata-only check does not enter the flash writer or allocate the
-        // download/hash buffers. Give it a smaller internal stack so opening
-        // the control page during DERP/MQTTS startup does not fail merely
-        // because the 10 KiB install-task allocation is temporarily
-        // fragmented. The installer keeps its proven 10 KiB stack.
-        const uint32_t taskStackBytes = checkOnly ? 8192 : 10240;
-        if (xTaskCreate(officialUpdateTask, "official-ota", taskStackBytes, taskMode, 2, nullptr) != pdPASS) {
+        // A metadata-only check never writes flash. Its stack may therefore
+        // live in PSRAM, avoiding an 8 KiB contiguous internal-SRAM
+        // requirement after BLE, MQTTS and Tailscale have fragmented the heap.
+        // The flash-writing installer retains its internal, cache-safe stack.
+        const BaseType_t taskCreated = checkOnly
+            ? xTaskCreateWithCaps(
+                officialUpdateTask,
+                "official-check",
+                8192,
+                taskMode,
+                2,
+                nullptr,
+                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+            )
+            : xTaskCreate(officialUpdateTask, "official-ota", 10240, taskMode, 2, nullptr);
+        if (taskCreated != pdPASS) {
             s_updateClaimed.store(false, std::memory_order_release);
             request->send(503, "application/json", checkOnly
-                ? "{\"success\":false,\"error\":\"Release check deferred while network services are starting\"}"
+                ? "{\"success\":false,\"error\":\"Could not start the release check\"}"
                 : "{\"success\":false,\"error\":\"Could not start the update task\"}");
             return;
         }

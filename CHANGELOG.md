@@ -4,6 +4,15 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.23] - 2026-11-14
+
+- Moved metadata-only official release checks to a PSRAM-backed task stack, so
+  BLE, MQTTS and Tailscale heap fragmentation can no longer prevent a firmware
+  version check from starting.
+- Replaced the generic diagnostic-log callback response with a bounded,
+  acknowledged streamer that does not duplicate the retained ring or depend on
+  a TCP-window-sized contiguous heap allocation.
+
 ## [v0.7.22] - 2026-11-13
 
 - Serialized the control-page bootstrap so configuration, runtime status, VPN

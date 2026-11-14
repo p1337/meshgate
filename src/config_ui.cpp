@@ -20,6 +20,7 @@
 #include "bounded_stream_response.h"
 #include <esp_heap_caps.h>
 #include <atomic>
+#include <new>
 
 /**
  * For retrieving configuration properties stored in NVS.
@@ -150,6 +151,92 @@ public:
 
 private:
     const uint8_t* content_ = nullptr;
+    String head_;
+    size_t headOffset_ = 0;
+    size_t inFlight_ = 0;
+};
+
+// Stream the retained log ring with the same bounded ACK discipline as the
+// control page. ESPAsyncWebServer's generic callback response sizes temporary
+// buffers from the TCP window and can stall forever when the largest internal
+// heap block is smaller than that window. This response never duplicates the
+// complete 16 KiB log and backs each send block down to 256 bytes if needed.
+class BoundedLogResponse final : public AsyncWebServerResponse {
+public:
+    BoundedLogResponse() {
+        _code = 200;
+        _contentType = "text/plain; charset=utf-8";
+        web_log_snapshot_begin(cursor_);
+        _contentLength = cursor_.size;
+    }
+
+    bool _sourceValid() const override { return _state < RESPONSE_END; }
+
+    void _respond(AsyncWebServerRequest* request) override {
+        addHeader("Connection", "close", false);
+        _assembleHead(head_, request->version());
+        _state = RESPONSE_HEADERS;
+        _ack(request, 0, 0);
+    }
+
+    size_t _ack(AsyncWebServerRequest* request, size_t len, uint32_t time) override {
+        (void)time;
+        _ackedLength += len;
+        inFlight_ = inFlight_ > len ? inFlight_ - len : 0;
+
+        if (_state == RESPONSE_WAIT_ACK) {
+            if (_ackedLength >= _writtenLength) _state = RESPONSE_END;
+            return 0;
+        }
+        if (_state != RESPONSE_HEADERS && _state != RESPONSE_CONTENT) return 0;
+        if (inFlight_ != 0 || !request->client()->canSend()) return 0;
+
+        const size_t space = request->client()->space();
+        if (space == 0) return 0;
+
+        if (_state == RESPONSE_HEADERS) {
+            size_t wanted = head_.length() - headOffset_;
+            if (wanted > space) wanted = space;
+            if (wanted > WEB_FLASH_STREAM_CHUNK_BYTES) wanted = WEB_FLASH_STREAM_CHUNK_BYTES;
+            const size_t written = request->client()->write(head_.c_str() + headOffset_, wanted);
+            if (written == 0) return 0;
+            headOffset_ += written;
+            _writtenLength += written;
+            inFlight_ += written;
+            if (headOffset_ == head_.length()) _state = RESPONSE_CONTENT;
+            return written;
+        }
+
+        const size_t remaining = _contentLength - _sentLength;
+        if (remaining == 0) {
+            _state = RESPONSE_WAIT_ACK;
+            return 0;
+        }
+
+        size_t wanted = min(remaining, min(space, WEB_FLASH_STREAM_CHUNK_BYTES));
+        uint8_t* buffer = nullptr;
+        while (wanted >= 256 && buffer == nullptr) {
+            buffer = static_cast<uint8_t*>(malloc(wanted));
+            if (buffer == nullptr) wanted /= 2;
+        }
+        if (buffer == nullptr) return 0;
+
+        const size_t copied = web_log_snapshot_read(cursor_, _sentLength, buffer, wanted);
+        const size_t written = copied == 0 ? 0 : request->client()->write(
+            reinterpret_cast<const char*>(buffer), copied
+        );
+        free(buffer);
+        if (written == 0) return 0;
+
+        _sentLength += written;
+        _writtenLength += written;
+        inFlight_ += written;
+        if (_sentLength == _contentLength) _state = RESPONSE_WAIT_ACK;
+        return written;
+    }
+
+private:
+    WebLogSnapshotCursor cursor_;
     String head_;
     size_t headOffset_ = 0;
     size_t inFlight_ = 0;
@@ -3231,24 +3318,15 @@ void config_ui_start_server() {
     ota_update_register(server, config_ui_get_ota_token());
 
     // Machine-readable diagnostics endpoint used for remote support. It mirrors
-    // the bounded serial log ring without exposing pairing PIN values. A tiny
-    // cursor is retained per request while response chunks are copied directly
-    // from the ring; no second 16 KiB String is allocated.
+    // the bounded serial log ring without exposing pairing PIN values. The
+    // response owns its cursor and copies acknowledged chunks directly from
+    // the ring; no second 16 KiB String or TCP-window-sized buffer is needed.
     server.on("/api/logs", HTTP_GET, [](AsyncWebServerRequest *request){
-        WebLogSnapshotCursor* cursor = static_cast<WebLogSnapshotCursor*>(calloc(1, sizeof(WebLogSnapshotCursor)));
-        if (cursor == nullptr) {
+        BoundedLogResponse* response = new (std::nothrow) BoundedLogResponse();
+        if (response == nullptr) {
             request->send(503, "text/plain; charset=utf-8", "Log stream unavailable: insufficient memory");
             return;
         }
-        web_log_snapshot_begin(*cursor);
-        request->_tempObject = cursor;
-        AsyncWebServerResponse* response = request->beginResponse(
-            "text/plain; charset=utf-8",
-            cursor->size,
-            [cursor](uint8_t* buffer, size_t capacity, size_t offset) {
-                return web_log_snapshot_read(*cursor, offset, buffer, capacity);
-            }
-        );
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
     });

@@ -102,10 +102,10 @@ footer so the two destinations cannot diverge.
   * Shows the running firmware version and active/next application slots.
   * Checks the fixed official GitHub release channel automatically whenever a
     normal connected control page opens. The check does not install firmware
-    and is skipped in offline setup AP mode. If DERP or MQTTS startup has
-    temporarily fragmented internal memory, the metadata-only task uses a
-    smaller stack and the browser defers and retries the check without showing
-    an installation failure.
+    and is skipped in offline setup AP mode. The metadata-only task uses a
+    PSRAM-backed stack, so DERP or MQTTS fragmentation of internal memory does
+    not prevent the check from starting. Flash-writing update tasks retain an
+    internal, cache-safe stack.
   * Makes both version values link to the newest-first technical changelog in
     the MeshGate repository.
   * Selecting **Not checked** starts an explicit metadata-only release check;
@@ -166,9 +166,9 @@ footer so the two destinations cannot diverge.
    * **`GET /assets/meshgate-logo.svg`**: Serves the official vector logo directly from embedded flash with a versioned cache key; no filesystem mount or external network is required.
    * **`GET /config`**: Returns current settings as JSON, including WiFi/BLE/MQTT/WireGuard values plus `tailscale_enabled`, `tailscale_supported`, `tailscale_device_name`, and `tailscale_has_auth_key`. Secret WiFi, BLE PIN, WireGuard, OTA, and Tailscale values are never returned. `ble_has_pin` reports only whether a PIN is stored.
    * **`GET /status`**: Returns unified live diagnostic and telemetry JSON polled every 7 seconds by the client: contains `uptime_seconds`, `heap` (free, min_free, max_alloc), `wifi` (connected, is_ap_mode, ip, rssi, mdns_host), `ble` (connected, rx_count, tx_count, invalid_count), `tcp` (connected_clients, max_clients, rx_count, tx_count, invalid_count), `traffic` (ble, tcp, mqtt rx/tx/invalid), `queues` (waiting, capacity, dropped for `tcp_to_ble`, `ble_to_tcp`, `mqtt_to_ble`), `stacks` (ble_task, net_task free bytes), and `mqtt` (gateway_enabled, state, radio_proxy_enabled, broker, root, published, received, dropped, invalid).
-   * **`GET /api/logs`**: Streams the retained diagnostic ring in bounded
-     chunks. The handler keeps only a small cursor and does not duplicate the
-     complete ring in a temporary heap `String`.
+   * **`GET /api/logs`**: Streams the retained diagnostic ring in bounded,
+     acknowledged chunks. The response owns a small cursor, does not duplicate
+     the complete ring and never requests a TCP-window-sized send buffer.
    * **`GET /metrics`**: Standards-compliant Prometheus / OpenMetrics scraping endpoint (`text/plain; version=0.0.4; charset=utf-8`). Streams line-by-line metrics (`meshbridge_*`) directly into lwIP network output buffers via `AsyncResponseStream` with zero large heap allocations. Suitable for scraping by Prometheus, VictoriaMetrics, Grafana Agent, and Home Assistant.
    * **`OPTIONS|PUT /api/v1/toradio`**: Standard Meshtastic HTTP PhoneAPI write endpoint. The PUT body is one bounded raw `ToRadio` protobuf and returns `204` after it is queued for BLE.
    * **`OPTIONS|GET /api/v1/fromradio`**: Standard Meshtastic HTTP PhoneAPI polling endpoint. Returns one raw `FromRadio` protobuf, an empty body, or all queued packets when `all=true`. Responses include CORS and Private Network Access headers for local browser clients.
