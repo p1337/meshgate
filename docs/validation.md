@@ -75,7 +75,8 @@ The repository currently provides:
 - SHA-256 checksums for all release assets;
 - a complete corresponding-source archive containing the exact protobuf
   submodule revision;
-- GitHub Pages metadata for board, size, URL and SHA-256 verified OTA.
+- separate stable and candidate GitHub Pages metadata for board, size, URL and
+  SHA-256 verified OTA, while the public Web Flasher stays stable-only.
 
 CI compilation is necessary but does not replace hardware validation.
 
@@ -95,6 +96,10 @@ Complete the applicable checks before promoting a public-beta build:
 - [ ] MQTT TLS and BLE remain connected during ordinary Web UI use.
 - [ ] Official OTA validates metadata, image size and SHA-256, switches slots
       and retains NVS plus mailbox data.
+- [ ] A device without beta enrollment sees only stable metadata; changing beta
+      enrollment fails without the OTA administrator key and succeeds with it.
+- [ ] Automatic OTA defaults on, respects opt-out, never runs in setup AP mode,
+      and releases MQTT before allocating the internal installer task.
 - [ ] Manual reboot returns `202` and restores critical services.
 - [ ] Queue-drop counters remain zero during the standard pressure scenario.
 - [ ] TCP churn returns heap to its pre-test range after connection cleanup.

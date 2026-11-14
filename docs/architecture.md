@@ -127,17 +127,24 @@ DERP-initiated mobile peer behind carrier NAT receives the handshake response
 through DERP but subsequent IP replies are incorrectly sent to an unreachable
 UDP candidate, producing a repeated handshake loop and no TCP connectivity.
 
-#### Official release OTA channel
+#### Official stable and beta OTA channels
 
-The normal Web UI never accepts a firmware file, URL or key. Its update action
-starts an internal task which fetches `latest_ota.json` from the project's
-GitHub Pages release channel over the embedded Mozilla CA bundle. The Pages
-workflow creates that metadata from the latest GitHub Release and includes the
-fixed production board, fixed firmware URL, byte length and SHA-256 digest.
-Opening the normal connected control page starts the same metadata validation
-in check-only mode. It never downloads or installs firmware automatically; it
-only records whether the fixed official channel is current or newer. Setup AP
-mode skips the network check so the captive portal remains fully offline.
+The normal update action never accepts a firmware file or URL. Only the
+separate beta-enrollment setting accepts the write-only administrator key and
+does not retain it in the browser. The update action starts an internal task
+which fetches the selected fixed metadata URL over the embedded Mozilla CA
+bundle. `latest_ota.json` always names the newest stable
+release. `latest_beta_ota.json` names the highest SemVer candidate across stable
+and GitHub pre-releases, so a beta-enrolled device also advances from a release
+candidate to its final stable version. Each feed fixes the production board,
+firmware URL, byte length and SHA-256 digest.
+
+Stable is the persistent default. Automatic installation is enabled by default
+with an opt-out in the System tab. Changing beta enrollment in either direction
+requires the write-only OTA administrator key and displays an `UNSTABLE`
+warning. The scheduler starts only in normal connected mode, waits five minutes
+plus deterministic per-device jitter, and checks at six-hour intervals. Setup
+AP mode never runs it. The public Web Flasher consumes stable releases only.
 Installed and available version values link to the repository's newest-first
 technical `CHANGELOG.md`.
 Firmware is streamed into the inactive OTA slot and hashed simultaneously;
@@ -150,8 +157,9 @@ when a firmware tag has no matching heading and publishes that technical entry
 as the GitHub Release body. Documentation-only and promotional edits are not
 firmware changelog entries.
 
-The production updater pauses and destroys the active MQTT client before
-opening its own TLS stream. This is required on the Nano ESP32 because a live
+The production updater pauses and destroys the active MQTT client before it
+allocates the internal, cache-safe installer task and opens its TLS stream. This
+is required on the Nano ESP32 because a live
 DERP session, MQTTS and OTA TLS otherwise exhausted internal heap during a
 real 1.8 MB download (observed minimum: 300 bytes) and repeatedly closed the
 stream near 400 KiB. Stored MQTT configuration is never changed and is restored

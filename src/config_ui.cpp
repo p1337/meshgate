@@ -449,6 +449,8 @@ static void writeStoredConfiguration(Preferences& target, const BridgeConfig& cf
     target.putString("ble_mac", cfg.ble_mac);
     target.putString("ble_pin", cfg.ble_pin);
     target.putBool("debug_logs", cfg.debug_logs);
+    target.putBool("ota_beta", cfg.ota_beta_enabled);
+    target.putBool("ota_auto", cfg.ota_auto_update_enabled);
     target.putBool("wg_enabled", cfg.wireguard_enabled);
     target.putString("wg_local_ip", cfg.wireguard_local_ip);
     target.putString("wg_remote", cfg.wireguard_remote_cidr);
@@ -1040,11 +1042,32 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
     <div class="info-row"><span class="info-label">Firmware:</span><a class="info-val version-link" id="view-ota-version" href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" title="Open technical changelog">Loading...</a></div>
     <div class="info-row"><span class="info-label">Latest release:</span><a class="info-val version-link" id="view-ota-latest" href=")rawliteral" PROJECT_GITHUB_URL R"rawliteral(/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" title="Open technical changelog">Not checked</a></div>
+    <div class="info-row"><span class="info-label">Release channel:</span><span class="info-val" id="view-ota-channel">Stable</span></div>
     <div class="info-row"><span class="info-label">Running slot:</span><span class="info-val" id="view-ota-running">Loading...</span></div>
     <div class="info-row"><span class="info-label">Update slot:</span><span class="info-val" id="view-ota-next">Loading...</span></div>
     <div class="alert alert-info" style="display:block; margin-bottom:12px;">
-      MeshGate downloads only the latest official release from GitHub, verifies its board, size and SHA-256 checksum, installs it into the inactive slot and reboots. WiFi, BLE, VPN and MQTT settings are preserved.
+      MeshGate downloads only the selected official release channel from GitHub, verifies board, size and SHA-256, installs into the inactive slot and reboots. WiFi, BLE, VPN, MQTT and mailbox data are preserved.
     </div>
+    <div id="ota-beta-warning" class="alert alert-warning" style="margin-bottom:12px;">
+      <strong>UNSTABLE:</strong> This device follows beta and release-candidate firmware intended for administrator testing.
+    </div>
+    <div class="input-group" style="display:flex; justify-content:space-between; align-items:center; margin:10px 0 12px;">
+      <label for="ota-auto-update" style="margin-bottom:0;">Install official updates automatically</label>
+      <input type="checkbox" id="ota-auto-update" style="width:20px; height:20px; margin:0;">
+    </div>
+    <div class="input-group" style="display:flex; justify-content:space-between; align-items:center; margin:10px 0 12px;">
+      <label for="ota-beta-enabled" style="margin-bottom:0; color:var(--yellow);">Beta firmware · UNSTABLE</label>
+      <input type="checkbox" id="ota-beta-enabled" onchange="updateOtaAdminKeyVisibility()" style="width:20px; height:20px; margin:0;">
+    </div>
+    <div id="ota-admin-key-group" style="display:none;">
+      <label for="ota-admin-key">OTA administrator key:</label>
+      <div class="password-field">
+        <input type="password" id="ota-admin-key" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Required only to change beta enrollment">
+        <button type="button" class="btn-toggle-pass" onclick="togglePassVisibility('ota-admin-key', this)">Show</button>
+      </div>
+      <small>The key is sent only with this request and is never returned to or stored by the browser.</small>
+    </div>
+    <button class="btn-secondary" id="btn-save-ota-policy" onclick="saveOtaPolicy()">Save Update Settings</button>
     <div class="progress-track" style="height:8px; margin:8px 0 12px;"><div id="ota-progress-bar" class="progress-fill progress-green" style="width:0%;"></div></div>
     <div id="ota-alert" class="alert"></div>
     <button class="btn-primary" id="btn-ota-update" onclick="startOfficialOta()">Check &amp; Install Latest Release</button>
@@ -1153,7 +1176,6 @@ const char index_html[] PROGMEM = R"rawliteral(
     let tailscaleEnrollmentActive = false;
     let tailscaleAuthOpenedUrl = '';
     let visitorCounterLoaded = false;
-    let otaAutomaticCheckRetries = 0;
     let chatChannels = [];
     let chatMessages = [];
     let chatPending = [];
@@ -1593,6 +1615,10 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('input-ble-mac').value = cfg.ble_mac || '';
           document.getElementById('input-ble-pin').value = '';
           document.getElementById('sys-debug-logs').checked = !!cfg.debug_logs;
+          document.getElementById('ota-beta-enabled').checked = !!cfg.ota_beta_enabled;
+          document.getElementById('ota-auto-update').checked = cfg.ota_auto_update_enabled !== false;
+          document.getElementById('ota-admin-key').value = '';
+          updateOtaAdminKeyVisibility();
 
           // Tailscale fields. Interactive browser enrollment is keyless.
           document.getElementById('view-tailscale-name').innerText = cfg.tailscale_device_name || 'meshgate';
@@ -2582,6 +2608,65 @@ const char index_html[] PROGMEM = R"rawliteral(
       });
     }
 
+    function updateOtaAdminKeyVisibility() {
+      const betaEnabled = document.getElementById('ota-beta-enabled').checked;
+      const betaChanged = !!currentConfig && betaEnabled !== !!currentConfig.ota_beta_enabled;
+      document.getElementById('ota-admin-key-group').style.display = betaChanged ? 'block' : 'none';
+      if (!betaChanged) document.getElementById('ota-admin-key').value = '';
+    }
+
+    function submitOtaPolicy() {
+      const betaEnabled = document.getElementById('ota-beta-enabled').checked;
+      const autoUpdateEnabled = document.getElementById('ota-auto-update').checked;
+      const betaChanged = !!currentConfig && betaEnabled !== !!currentConfig.ota_beta_enabled;
+      const adminKey = document.getElementById('ota-admin-key').value.trim();
+      if (betaChanged && !/^[0-9a-fA-F]{64}$/.test(adminKey)) {
+        showAlert('ota-alert', 'error', 'Changing beta enrollment requires the 64-character OTA administrator key.');
+        return;
+      }
+
+      const button = document.getElementById('btn-save-ota-policy');
+      const headers = { 'Content-Type':'application/x-www-form-urlencoded' };
+      if (betaChanged) headers['X-OTA-Key'] = adminKey;
+      button.disabled = true;
+      fetch('/api/ota/settings', {
+        method:'POST',
+        headers:headers,
+        body:'beta_enabled=' + (betaEnabled ? 'true' : 'false') +
+             '&auto_update_enabled=' + (autoUpdateEnabled ? 'true' : 'false')
+      }).then(r => r.json().then(body => ({ ok:r.ok, body:body }))).then(result => {
+        if (!result.ok || !result.body.success) throw new Error(result.body.error || 'Update settings could not be saved.');
+        currentConfig.ota_beta_enabled = betaEnabled;
+        currentConfig.ota_auto_update_enabled = autoUpdateEnabled;
+        document.getElementById('ota-admin-key').value = '';
+        updateOtaAdminKeyVisibility();
+        showAlert('ota-alert', 'success', betaEnabled
+          ? 'Beta channel enabled. This device now follows UNSTABLE candidate releases.'
+          : 'Update settings saved. This device follows stable releases.');
+        return refreshOtaStatus();
+      }).catch(error => {
+        showAlert('ota-alert', 'error', error.message || 'Update settings could not be saved.');
+      }).finally(() => {
+        button.disabled = false;
+      });
+    }
+
+    function saveOtaPolicy() {
+      const betaEnabled = document.getElementById('ota-beta-enabled').checked;
+      const betaChanged = !!currentConfig && betaEnabled !== !!currentConfig.ota_beta_enabled;
+      if (betaChanged && betaEnabled) {
+        showModal(
+          'Enable UNSTABLE Beta Firmware',
+          'This administrator-only channel may install untested beta or release-candidate firmware automatically. Continue only on a test device.',
+          'Enable Beta',
+          'btn-warning',
+          submitOtaPolicy
+        );
+        return;
+      }
+      submitOtaPolicy();
+    }
+
     function updateOfficialOtaDisplay(status) {
       const pill = document.getElementById('view-ota-status');
       const btn = document.getElementById('btn-ota-update');
@@ -2595,6 +2680,14 @@ const char index_html[] PROGMEM = R"rawliteral(
       pill.innerText = labels[status.state] || status.state || 'Unknown';
       pill.className = 'status-pill ' + (status.state === 'failed' ? 'error' :
         (status.state === 'available' || status.busy ? 'waiting' : 'connected'));
+      const betaChannel = status.channel === 'beta';
+      document.getElementById('view-ota-channel').innerText = betaChannel ? 'Beta · UNSTABLE' : 'Stable';
+      document.getElementById('view-ota-channel').style.color = betaChannel ? 'var(--yellow)' : 'var(--green)';
+      const betaWarning = document.getElementById('ota-beta-warning');
+      betaWarning.style.display = betaChannel || status.current_is_prerelease ? 'block' : 'none';
+      betaWarning.innerText = betaChannel
+        ? 'UNSTABLE: This device follows beta and release-candidate firmware intended for administrator testing.'
+        : 'UNSTABLE firmware is currently running. The device is back on the stable channel and will advance when a newer stable release is available.';
       btn.disabled = !!status.busy || !status.supported;
       if (status.latest_version) document.getElementById('view-ota-latest').innerText = status.latest_version;
       if (status.changelog_url) {
@@ -2603,14 +2696,14 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
       btn.innerText = status.state === 'available' && status.latest_version
         ? 'Install ' + status.latest_version
-        : 'Check & Install Latest Release';
+        : 'Check & Install Latest ' + (betaChannel ? 'Candidate' : 'Stable Release');
       const total = Number(status.total_bytes || 0);
       const downloaded = Number(status.downloaded_bytes || 0);
       const percent = total > 0 ? Math.min(100, Math.round(downloaded * 100 / total)) : 0;
       bar.style.width = (status.state === 'verifying' || status.state === 'installing' || status.state === 'rebooting' ? 100 : percent) + '%';
       bar.className = 'progress-fill ' + (status.state === 'failed' ? 'progress-red' : 'progress-green');
       if (status.state === 'failed') showAlert('ota-alert', 'error', status.error || 'Official update failed.');
-      if (status.state === 'current') showAlert('ota-alert', 'success', 'MeshGate is already running the latest official release.');
+      if (status.state === 'current') showAlert('ota-alert', 'success', 'MeshGate is already running the latest release in the selected channel.');
       if (status.state === 'available') showAlert('ota-alert', 'warning', 'A newer official MeshGate release is available. Select its version to read the technical changelog before installing.');
       if (status.state === 'rebooting') showAlert('ota-alert', 'success', 'Official release verified and installed. MeshGate is rebooting now.');
     }
@@ -2663,48 +2756,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           latestLink.innerText = 'Not checked';
           showAlert('ota-alert', 'error', err.message || 'The latest release could not be checked.');
         });
-    }
-
-    function checkOfficialReleaseOnConnect(runtimeStatus, otaStatus) {
-      const prerequisite = runtimeStatus && otaStatus
-        ? Promise.resolve({ runtimeStatus:runtimeStatus, otaStatus:otaStatus })
-        : updateStatus().then(status => refreshOtaStatus().then(ota => ({ runtimeStatus:status, otaStatus:ota })));
-      return prerequisite.then(results => {
-        const otaStatus = results.otaStatus;
-        const runtimeStatus = results.runtimeStatus;
-        const wifi = runtimeStatus && runtimeStatus.wifi;
-        if (!otaStatus.supported || !wifi || !wifi.connected || wifi.is_ap_mode) return;
-        if (otaStatus.busy) {
-          pollOfficialOta();
-          return;
-        }
-        showAlert('ota-alert', 'info', 'Checking the latest official GitHub release...');
-        return fetch('/api/ota/official?check_only=true', { method: 'POST' })
-          .then(r => r.json().then(body => ({ ok: r.ok, status: r.status, body: body })))
-          .then(result => {
-            if (result.status === 409) {
-              pollOfficialOta();
-              return;
-            }
-            if (result.status === 503) {
-              if (otaAutomaticCheckRetries < 3) {
-                otaAutomaticCheckRetries += 1;
-                showAlert('ota-alert', 'info', 'Release check postponed while VPN and MQTT finish starting. Retrying automatically...');
-                setTimeout(checkOfficialReleaseOnConnect, 15000);
-              } else {
-                showAlert('ota-alert', 'info', 'Automatic release check postponed. Use the update button later to check manually.');
-              }
-              return;
-            }
-            if (!result.ok || !result.body.success) {
-              throw new Error(result.body.error || 'The release check could not be started.');
-            }
-            otaAutomaticCheckRetries = 0;
-            pollOfficialOta();
-          });
-      }).catch(err => {
-        showAlert('ota-alert', 'error', err.message || 'The latest release could not be checked.');
-      });
     }
 
     let modalConfirmCallback = null;
@@ -2805,21 +2856,10 @@ const char index_html[] PROGMEM = R"rawliteral(
       document.getElementById('modal-btn-confirm').onclick = confirmModalAction;
       document.getElementById('view-ota-latest').addEventListener('click', checkOfficialReleaseManually);
       selectTab(window.location.hash.replace('#', ''), false);
-      let runtimeStatus = null;
-      let otaStatus = null;
       loadConfig()
         .then(() => updateStatus())
-        .then(status => {
-          runtimeStatus = status;
-          return refreshOtaStatus();
-        })
-        .then(status => {
-          otaStatus = status;
-          return initChat();
-        })
-        .then(() => {
-          setTimeout(() => checkOfficialReleaseOnConnect(runtimeStatus, otaStatus), 3000);
-        })
+        .then(() => refreshOtaStatus())
+        .then(() => initChat())
         .catch(error => {
           showAlert('ota-alert', 'error', error.message || 'MeshGate startup data is temporarily unavailable.');
         });
@@ -2850,6 +2890,9 @@ void config_ui_init() {
     } else if (preferences.isKey("wifi_ssid")) {
         backupCurrentConfiguration();
     }
+
+    const BridgeConfig cfg = config_ui_load();
+    ota_update_set_policy(cfg.ota_beta_enabled, cfg.ota_auto_update_enabled);
 }
 
 /**
@@ -2885,6 +2928,8 @@ BridgeConfig config_ui_load() {
 
     // System settings
     cfg.debug_logs = getBool("debug_logs", false);
+    cfg.ota_beta_enabled = getBool("ota_beta", false);
+    cfg.ota_auto_update_enabled = getBool("ota_auto", true);
 
     // WireGuard preferences
     cfg.wireguard_enabled = getBool("wg_enabled", false);
@@ -3312,9 +3357,58 @@ void config_ui_start_server() {
         request->send(response);
     });
 
+    // Auto-update is a normal user preference. Moving a device onto or off
+    // the beta channel changes its trust policy and therefore additionally
+    // requires the existing write-only OTA administrator key.
+    server.on("/api/ota/settings", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (ota_update_is_busy()) {
+            request->send(409, "application/json", "{\"success\":false,\"error\":\"OTA settings cannot change while an update is active\"}");
+            return;
+        }
+        if (!request->hasParam("beta_enabled", true) || !request->hasParam("auto_update_enabled", true)) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing OTA policy parameters\"}");
+            return;
+        }
+        const String betaValue = request->getParam("beta_enabled", true)->value();
+        const String autoValue = request->getParam("auto_update_enabled", true)->value();
+        if ((betaValue != "true" && betaValue != "false") ||
+            (autoValue != "true" && autoValue != "false")) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"OTA policy parameters must be true or false\"}");
+            return;
+        }
+
+        const bool betaEnabled = betaValue == "true";
+        const bool autoUpdateEnabled = autoValue == "true";
+        const BridgeConfig current = config_ui_load();
+        if (betaEnabled != current.ota_beta_enabled && !ota_update_is_authorized(request)) {
+            request->send(401, "application/json", "{\"success\":false,\"error\":\"The OTA administrator key is required to change the beta channel\"}");
+            return;
+        }
+
+        const bool persisted = preferences.putBool("ota_beta", betaEnabled) > 0 &&
+                               preferences.putBool("ota_auto", autoUpdateEnabled) > 0 &&
+                               backupPreferences.putBool("ota_beta", betaEnabled) > 0 &&
+                               backupPreferences.putBool("ota_auto", autoUpdateEnabled) > 0;
+        if (!persisted) {
+            preferences.putBool("ota_beta", current.ota_beta_enabled);
+            preferences.putBool("ota_auto", current.ota_auto_update_enabled);
+            backupPreferences.putBool("ota_beta", current.ota_beta_enabled);
+            backupPreferences.putBool("ota_auto", current.ota_auto_update_enabled);
+            request->send(500, "application/json", "{\"success\":false,\"error\":\"Could not persist the OTA policy redundantly\"}");
+            return;
+        }
+
+        ota_update_set_policy(betaEnabled, autoUpdateEnabled);
+        log_i("[OTA] Policy saved: channel=%s, automatic_updates=%s",
+              betaEnabled ? "beta" : "stable", autoUpdateEnabled ? "enabled" : "disabled");
+        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", "{\"success\":true}");
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+    });
+
     // ESPAsyncWebServer treats a handler URI as matching its slash-delimited
-    // child paths too. Register the specific /api/ota/token route before the
-    // parent /api/ota upload handler so provisioning cannot be shadowed.
+    // child paths too. Register the specific settings/token routes before the
+    // parent /api/ota upload handler so they cannot be shadowed.
     ota_update_register(server, config_ui_get_ota_token());
 
     // Machine-readable diagnostics endpoint used for remote support. It mirrors
@@ -3408,6 +3502,10 @@ void config_ui_start_server() {
         response->print(cfg.ble_pin.isEmpty() ? "false" : "true");
         response->print(",\"debug_logs\":");
         response->print(cfg.debug_logs ? "true" : "false");
+        response->print(",\"ota_beta_enabled\":");
+        response->print(cfg.ota_beta_enabled ? "true" : "false");
+        response->print(",\"ota_auto_update_enabled\":");
+        response->print(cfg.ota_auto_update_enabled ? "true" : "false");
         response->print(",\"mqtt_enabled\":");
         response->print(cfg.mqtt_enabled ? "true" : "false");
         response->print(",\"mqtt_tls_insecure\":");

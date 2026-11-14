@@ -14,6 +14,8 @@ struct BridgeConfig {
 
     // System settings
     bool debug_logs;
+    bool ota_beta_enabled;
+    bool ota_auto_update_enabled;
 
     // WireGuard client settings. The private and pre-shared keys are stored in
     // NVS and are never returned by the configuration HTTP API.

@@ -148,16 +148,26 @@ git-ignored `.ota-token`, verifies image capacity, supplies an MD5 checksum and
 confirms the partition switch after reboot. Wi-Fi, BLE, VPN and MQTT settings
 are stored in NVS and are not erased by an ordinary OTA update.
 
-The normal update is entirely automatic:
+Automatic stable updates are enabled by default. To opt out or update manually:
 
 1. Open the MeshGate control page through its LAN or Tailscale IP.
-2. In **Firmware OTA Update**, select **Check & Install Latest Release** and
-   confirm.
+2. Open **System → Firmware OTA Update**. Disable **Install official updates
+   automatically** if this device must remain on its current version, or select
+   **Check & Install** to update immediately.
 3. MeshGate fetches the official release metadata and firmware from the
-   project's GitHub Pages release channel, validates TLS, board identity, image
-   size and SHA-256, writes the inactive slot and reboots.
+   selected GitHub Pages channel, validates TLS, board identity, image size and
+   SHA-256, writes the inactive slot and reboots.
 
-No local file or key is requested. The authenticated raw endpoint used by
+Stable is the default channel. **Beta firmware · UNSTABLE** is intended only
+for administrator test devices. Changing beta enrollment requires the device's
+64-character OTA administrator key; ordinary users cannot enable it. The public
+USB Web Flasher remains stable-only. A beta-enrolled device follows the highest
+available candidate, including the final stable release when it supersedes a
+beta or release candidate.
+
+Stable and manual updates request no local firmware file or key. The beta
+enrollment key is requested only while changing that administrator setting and
+is cleared from the form afterward. The authenticated raw endpoint used by
 `tools/upload_ota.ps1` remains available for developers and recovery, but is
 not shown in the normal Web UI.
 

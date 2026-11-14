@@ -3,7 +3,7 @@ name: Release Firmware
 on:
   push:
     tags:
-      - 'v*.*.*' # Trigger on version tags e.g. v1.0.0
+      - 'v*.*.*' # Stable v1.0.0 and pre-release v1.1.0-beta.1 tags
 
 permissions:
   contents: write
@@ -130,6 +130,16 @@ jobs:
           - License: GPL-3.0-only. The release assets include a complete
             corresponding-source archive with the exact protobuf revision.
           """
+          if "-" in version:
+              instructions = """
+
+          ## UNSTABLE administrator test build
+
+          This pre-release is distributed only to devices whose administrator
+          explicitly enabled **Beta firmware · UNSTABLE** with the private OTA
+          administrator key. It is not offered by the public Web Flasher or to
+          devices on the stable channel.
+          """ + instructions
           logo = f"![MeshGate](https://raw.githubusercontent.com/p1337/meshgate/{version}/web/assets/meshgate-logo.svg)\n\n"
           Path("release_body.md").write_text(logo + section + instructions, encoding="utf-8")
 
@@ -139,7 +149,7 @@ jobs:
           name: MeshGate ${{ github.ref_name }}
           body_path: release_body.md
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: false
           fail_on_unmatched_files: true
           files: release_assets/*

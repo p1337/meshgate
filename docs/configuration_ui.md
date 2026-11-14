@@ -99,19 +99,22 @@ footer so the two destinations cannot diverge.
   * Contains a **Reboot & Start Bridge** action that restarts the ESP32 into normal runtime mode.
   * Contains a **Reset All Settings** action (with confirmation dialog) that clears all stored NVS credentials and restarts into Setup Mode.
 * **Firmware OTA Update Card:**
-  * Shows the running firmware version and active/next application slots.
-  * Checks the fixed official GitHub release channel automatically whenever a
-    normal connected control page opens. The check does not install firmware
-    and is skipped in offline setup AP mode. The metadata-only task uses a
-    PSRAM-backed stack, so DERP or MQTTS fragmentation of internal memory does
-    not prevent the check from starting. Flash-writing update tasks retain an
-    internal, cache-safe stack.
+  * Shows the running firmware version, selected release channel and active/next
+    application slots.
+  * Enables automatic stable updates by default and provides an opt-out.
+    Scheduling belongs to the firmware rather than the browser, uses
+    deterministic per-device jitter, and is disabled in setup AP mode.
+  * Offers an administrator-only **Beta firmware · UNSTABLE** enrollment. A
+    channel change requires the write-only OTA key; the browser neither receives
+    nor retains it.
   * Makes both version values link to the newest-first technical changelog in
     the MeshGate repository.
   * Selecting **Not checked** starts an explicit metadata-only release check;
     once a release version is known, the same value opens the changelog.
-  * Provides one **Check & Install Latest Release** action with visible state
-    and download progress; no file chooser or user key is shown.
+  * Provides one manual **Check & Install** action for the selected channel with
+    visible state and download progress; it never accepts a firmware file or
+    arbitrary URL. The administrator key field appears only for a pending beta
+    enrollment change.
   * Downloads only the production ESP32-S3 image named by the official release
     metadata and verifies TLS, board identity, size and SHA-256 before activation.
 * **Community Card:**
@@ -212,9 +215,12 @@ footer so the two destinations cannot diverge.
    * **`POST /api/ota/token`**: Stores a new write-only OTA key in both NVS
      namespaces and applies it immediately. It is accepted only in setup mode
      from the setup AP's own subnet, never from LAN or VPN clients.
+   * **`POST /api/ota/settings`**: Persists `beta_enabled` and
+     `auto_update_enabled` redundantly. Auto-update is a normal opt-out setting;
+     changing beta enrollment additionally requires `X-OTA-Key`.
    * **`GET /api/ota/official`**: Reports official update support, current and
-     latest version, technical changelog URL, lifecycle state, byte progress
-     and a bounded error string.
+     latest version, selected channel, automatic-update policy, technical
+     changelog URL, lifecycle state, byte progress and a bounded error string.
    * **`POST /api/ota/official`**: Starts the background official-release
      download and install task. It accepts no URL, file or credential from the
      browser, so it cannot be used to install arbitrary firmware.
@@ -227,7 +233,7 @@ successful OTA completion may request its final restart, after full size and
 SHA-256 validation and successful slot activation. An interruption before that
 point leaves the current application slot selected and bootable.
 
-The `/api/ota/token` and `/api/ota/official` handlers must be registered before `/api/ota`.
+The `/api/ota/token`, `/api/ota/settings` and `/api/ota/official` handlers must be registered before `/api/ota`.
 ESPAsyncWebServer considers a route to match slash-delimited child paths, so
 registering the parent first would shadow the provisioning endpoint with the
 raw firmware-body handler.
@@ -240,6 +246,8 @@ The following keys are stored in the `Preferences` namespace (`bridge_cfg`):
 * `ble_mac` (String)
 * `ble_pin` (String)
 * `debug_logs` (Bool)
+* `ota_beta` (Bool, default `false`, duplicated in `bridge_backup`)
+* `ota_auto` (Bool, default `true`, duplicated in `bridge_backup`)
 * `mqtt_enabled` (Bool)
 * `mqtt_tls_insec` (Bool)
 * `mqtt_custom_ca` (String)

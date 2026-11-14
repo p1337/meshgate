@@ -28,27 +28,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Web Directory
+      - name: Select stable and beta channels
+        id: channels
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > releases.json
+          python tools/select_release_channels.py releases.json >> "$GITHUB_OUTPUT"
 
-          LATEST_TAG=$(gh release view --json tagName --jq .tagName)
-          if [ -z "$LATEST_TAG" ]; then
-            echo "No releases found. Exiting."
-            exit 1
-          fi
-          echo "Latest release is $LATEST_TAG. Downloading binaries..."
+      - name: Setup Web Directory
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STABLE_TAG: ${{ steps.channels.outputs.stable_tag }}
+          CANDIDATE_TAG: ${{ steps.channels.outputs.candidate_tag }}
+        run: |
+          set -euo pipefail
+
+          echo "Stable channel: $STABLE_TAG"
+          echo "Beta candidate channel: $CANDIDATE_TAG"
           
-          # Inject the version string into the HTML
-          sed -i "s|id=\"version-display\">[^<]*|id=\"version-display\">Firmware Version: ${LATEST_TAG}|" web/index.html
+          # The public Web Flasher intentionally remains stable-only.
+          sed -i "s|id=\"version-display\">[^<]*|id=\"version-display\">Firmware Version: ${STABLE_TAG}|" web/index.html
           
           # Add a cache-buster to the manifest URLs to prevent browser caching issues
           # We use GITHUB_RUN_ID so even manual re-runs on the same tag bypass the cache
           sed -i "s/\.json/\.json?v=${GITHUB_RUN_ID}/g" web/index.html
           
-          gh release download "$LATEST_TAG" -D web/firmware --pattern "firmware-*.zip"
+          rm -rf web/firmware web/beta-firmware
+          mkdir -p web/firmware
+          gh release download "$STABLE_TAG" -D web/firmware --pattern "firmware-*.zip"
           
           cd web/firmware
           for zip in *.zip; do
@@ -82,7 +91,7 @@ jobs:
             cat <<EOF > "../manifest_${board}.json"
           {
             "name": "MeshGate factory install / recovery ($board)",
-            "version": "$LATEST_TAG",
+            "version": "$STABLE_TAG",
             "new_install_prompt_erase": true,
             "new_install_improv_wait_time": 30,
             "builds": [
@@ -100,7 +109,7 @@ jobs:
               ota_sha256=$(sha256sum "$board/firmware.bin" | awk '{print $1}')
               cat <<EOF > "../latest_ota.json"
           {
-            "version": "$LATEST_TAG",
+            "version": "$STABLE_TAG",
             "board": "arduino_nano_esp32_idf5",
             "url": "https://p1337.github.io/meshgate/firmware/arduino_nano_esp32_idf5/firmware.bin",
             "size": $ota_size,
@@ -111,9 +120,30 @@ jobs:
           done
           cd ../../
 
+          board="arduino_nano_esp32_idf5"
+          mkdir -p "web/beta-firmware/${board}" candidate_asset
+          gh release download "$CANDIDATE_TAG" -D candidate_asset \
+            --pattern "meshgate-${board}-${CANDIDATE_TAG}-ota.bin"
+          candidate_file="candidate_asset/meshgate-${board}-${CANDIDATE_TAG}-ota.bin"
+          test -f "$candidate_file"
+          cp "$candidate_file" "web/beta-firmware/${board}/firmware.bin"
+          beta_size=$(stat -c %s "web/beta-firmware/${board}/firmware.bin")
+          beta_sha256=$(sha256sum "web/beta-firmware/${board}/firmware.bin" | awk '{print $1}')
+          cat <<EOF > "web/latest_beta_ota.json"
+          {
+            "version": "$CANDIDATE_TAG",
+            "board": "$board",
+            "url": "https://p1337.github.io/meshgate/beta-firmware/${board}/firmware.bin",
+            "size": $beta_size,
+            "sha256": "$beta_sha256"
+          }
+          EOF
+
           test -f "web/manifest_arduino_nano_esp32_idf5.json"
           test -f "web/latest_ota.json"
+          test -f "web/latest_beta_ota.json"
           python -m json.tool web/latest_ota.json >/dev/null
+          python -m json.tool web/latest_beta_ota.json >/dev/null
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

@@ -14,6 +14,7 @@
 #include "ip_led.h"
 #include "message_mailbox.h"
 #include "device_presence.h"
+#include "ota_update.h"
 
 /**
  * Main Entry point.
@@ -159,6 +160,11 @@ void setup() {
             mqttCfg.tls_insecure = cfg.mqtt_tls_insecure;
             mqttCfg.custom_ca = cfg.mqtt_custom_ca;
             mqtt_net_apply_config(mqttCfg);
+
+            // Automatic official updates are opt-out. The scheduler starts
+            // only in normal mode and adds deterministic per-device jitter so
+            // a release does not make every gateway contact GitHub at once.
+            ota_update_start_automatic_checks();
         } else {
             log_i("[BOOT] WiFi Connection Failed! Falling back to Setup Mode.");
             wifi_net_start_ap();
@@ -171,4 +177,5 @@ void loop() {
     wifi_net_loop();
     mqtt_net_loop();
     device_presence_loop();
+    ota_update_loop();
 }

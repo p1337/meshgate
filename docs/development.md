@@ -437,20 +437,27 @@ Follow these steps to trigger the CI/CD pipeline:
    compatibility, API, build and release-pipeline changes only. Do not include
    promotional or documentation-only edits. The release job fails if the
    matching entry is missing and uses that entry as the GitHub Release body.
-4. **Tag the release**: Create the identical SemVer Git tag (e.g., `v1.2.0`) and push it to GitHub:
+4. **Tag the release**: Create the identical SemVer Git tag. Use `v1.2.0` for a
+   stable release or a pre-release identifier such as `v1.3.0-beta.1` for an
+   administrator test build, then push it to GitHub:
    ```bash
    git tag v1.2.0
    git push origin v1.2.0
    ```
 5. **Wait for the Release Pipeline**:
    * Navigate to the **Actions** tab on your GitHub repository.
-   * The **Release Firmware** workflow injects the tag into the firmware, builds the Arduino Nano ESP32 IDF-5 production profile, publishes its ZIP, OTA/factory binaries and SHA-256 checksums, and creates a public GitHub Release.
+   * The **Release Firmware** workflow injects the tag into the firmware, builds
+     the production profile, publishes its assets and creates either a normal
+     release or a GitHub pre-release when the tag contains `-`.
 6. **Wait for the Web Flasher Pipeline**:
    * Successful completion of the release workflow automatically triggers **Deploy Web Flasher to GitHub Pages**. A `workflow_run` trigger is used because releases created with `GITHUB_TOKEN` do not emit another ordinary workflow event.
    * It will securely download the release binaries, automatically generate the `manifest.json` configurations for ESP Web Tools, and deploy them to `https://p1337.github.io/meshgate/`.
-   * It also creates `latest_ota.json` with the production OTA image URL, exact
-     byte length and SHA-256 digest. The on-device one-click updater consumes
-     only this fixed official channel; publish Pages before testing an OTA.
+   * It creates stable `latest_ota.json` and candidate
+     `latest_beta_ota.json` feeds with fixed image URLs, exact byte lengths and
+     SHA-256 digests. The candidate is the highest SemVer across stable and
+     pre-releases. `tools/select_release_channels.py` owns this selection rule.
+   * The public Web Flasher and ordinary devices always remain on the stable
+     release. Only administrator-enrolled devices consume the beta feed.
    * The web flasher will instantly update to show "Firmware Version: v1.2.0".
 
 ### License-complete release assets

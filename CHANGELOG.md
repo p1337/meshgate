@@ -4,6 +4,21 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.24] - 2026-11-14
+
+- Added a persistent stable/beta OTA channel selector in the System tab. Beta
+  enrollment is marked `UNSTABLE`, defaults off and requires the existing
+  write-only OTA administrator key.
+- Added automatic official updates with an opt-out setting. Normal devices
+  follow stable releases; explicitly enrolled administrator devices may follow
+  GitHub pre-releases without exposing them to ordinary users or the Web
+  Flasher.
+- Added deterministic background update scheduling and releases MQTT before
+  creating the cache-safe installer task, preserving OTA headroom under the
+  fragmented-heap conditions observed on the production gateway.
+- Added stable and beta GitHub Pages metadata feeds and correct SemVer
+  precedence for stable, beta and release-candidate firmware versions.
+
 ## [v0.7.23] - 2026-11-14
 
 - Moved metadata-only official release checks to a PSRAM-backed task stack, so

@@ -3,6 +3,7 @@
 #include <Update.h>
 #include <atomic>
 #include <esp_ota_ops.h>
+#include <WiFi.h>
 
 #ifdef ESP_IDF5_MIGRATION_BUILD
 #include <HTTPClient.h>
@@ -22,22 +23,32 @@
 namespace {
 enum class RequestState : uintptr_t { None = 0, Unauthorized, Busy, Invalid, Uploading, Failed, Success };
 enum class OfficialState : uint8_t { Idle = 0, Checking, Current, Available, Downloading, Verifying, Installing, Rebooting, Failed, Unsupported };
-enum class OfficialTaskMode : uintptr_t { CheckOnly = 0, Install = 1 };
 
-constexpr const char* OFFICIAL_METADATA_URL = "https://p1337.github.io/meshgate/latest_ota.json";
-constexpr const char* OFFICIAL_FIRMWARE_URL = "https://p1337.github.io/meshgate/firmware/arduino_nano_esp32_idf5/firmware.bin";
+constexpr const char* STABLE_METADATA_URL = "https://p1337.github.io/meshgate/latest_ota.json";
+constexpr const char* STABLE_FIRMWARE_URL = "https://p1337.github.io/meshgate/firmware/arduino_nano_esp32_idf5/firmware.bin";
+constexpr const char* BETA_METADATA_URL = "https://p1337.github.io/meshgate/latest_beta_ota.json";
+constexpr const char* BETA_FIRMWARE_URL = "https://p1337.github.io/meshgate/beta-firmware/arduino_nano_esp32_idf5/firmware.bin";
 constexpr const char* OFFICIAL_CHANGELOG_URL = "https://github.com/p1337/meshgate/blob/main/CHANGELOG.md";
 constexpr const char* OFFICIAL_BOARD = "arduino_nano_esp32_idf5";
+constexpr uint32_t AUTO_INITIAL_DELAY_MS = 5U * 60U * 1000U;
+constexpr uint32_t AUTO_INITIAL_JITTER_MS = 10U * 60U * 1000U;
+constexpr uint32_t AUTO_INTERVAL_MS = 6U * 60U * 60U * 1000U;
+constexpr uint32_t AUTO_RETRY_MS = 30U * 60U * 1000U;
 
 String s_token;
 AsyncWebServerRequest* s_activeRequest = nullptr;
 std::atomic<bool> s_updateClaimed{false};
+std::atomic<bool> s_betaEnabled{false};
+std::atomic<bool> s_autoUpdateEnabled{true};
+std::atomic<bool> s_autoInstallPending{false};
 std::atomic<OfficialState> s_officialState{OfficialState::Idle};
 std::atomic<uint32_t> s_downloadedBytes{0};
 std::atomic<uint32_t> s_totalBytes{0};
 portMUX_TYPE s_statusMux = portMUX_INITIALIZER_UNLOCKED;
-char s_latestVersion[24] = "";
+char s_latestVersion[48] = "";
 char s_officialError[160] = "";
+std::atomic<bool> s_autoSchedulerStarted{false};
+std::atomic<uint32_t> s_nextAutoCheckAt{0};
 
 #ifdef ESP_IDF5_MIGRATION_BUILD
 extern const uint8_t rootca_crt_bundle_start[] asm("_binary_data_cert_x509_crt_bundle_bin_start");
@@ -92,12 +103,6 @@ const char* officialStateName(OfficialState state) {
         case OfficialState::Unsupported: return "unsupported";
     }
     return "unknown";
-}
-
-bool isOfficialBusy(OfficialState state) {
-    return state == OfficialState::Checking || state == OfficialState::Downloading ||
-           state == OfficialState::Verifying || state == OfficialState::Installing ||
-           state == OfficialState::Rebooting;
 }
 
 void failOfficial(const String& reason) {
@@ -162,44 +167,125 @@ bool isHexDigest(const String& digest) {
     return true;
 }
 
-bool parseVersion(const String& version, int parts[3]) {
+struct ParsedVersion {
+    uint16_t parts[3] = {};
+    String prerelease;
+};
+
+bool parseVersion(const String& version, ParsedVersion& parsed) {
     const char* cursor = version.c_str();
     if (*cursor == 'v' || *cursor == 'V') ++cursor;
     for (int i = 0; i < 3; ++i) {
         if (!isdigit(static_cast<unsigned char>(*cursor))) return false;
+        const char* numberStart = cursor;
         char* end = nullptr;
         const long number = strtol(cursor, &end, 10);
-        if (number < 0 || number > 9999 || end == cursor) return false;
-        parts[i] = static_cast<int>(number);
+        if (number < 0 || number > 65535 || end == cursor ||
+            (end - numberStart > 1 && *numberStart == '0')) return false;
+        parsed.parts[i] = static_cast<uint16_t>(number);
         cursor = end;
         if (i < 2) {
             if (*cursor != '.') return false;
             ++cursor;
         }
     }
-    return *cursor == '\0' || *cursor == '-';
+    if (*cursor == '\0') return true;
+    if (*cursor != '-' || *(cursor + 1) == '\0') return false;
+    parsed.prerelease = cursor + 1;
+    bool previousDot = true;
+    for (size_t i = 0; i < parsed.prerelease.length(); ++i) {
+        const char c = parsed.prerelease[i];
+        if (c == '.') {
+            if (previousDot) return false;
+            previousDot = true;
+        } else if (isalnum(static_cast<unsigned char>(c)) || c == '-') {
+            previousDot = false;
+        } else {
+            return false;
+        }
+    }
+    return !previousDot;
+}
+
+bool isNumericIdentifier(const String& value) {
+    if (value.isEmpty() || (value.length() > 1 && value[0] == '0')) return false;
+    for (size_t i = 0; i < value.length(); ++i) {
+        if (!isdigit(static_cast<unsigned char>(value[i]))) return false;
+    }
+    return true;
+}
+
+int comparePrerelease(const String& lhs, const String& rhs) {
+    if (lhs.isEmpty() || rhs.isEmpty()) {
+        if (lhs.isEmpty() && rhs.isEmpty()) return 0;
+        return lhs.isEmpty() ? 1 : -1;
+    }
+    int lhsStart = 0;
+    int rhsStart = 0;
+    while (true) {
+        const int lhsDot = lhs.indexOf('.', lhsStart);
+        const int rhsDot = rhs.indexOf('.', rhsStart);
+        const String lhsPart = lhs.substring(lhsStart, lhsDot < 0 ? lhs.length() : lhsDot);
+        const String rhsPart = rhs.substring(rhsStart, rhsDot < 0 ? rhs.length() : rhsDot);
+        const bool lhsNumeric = isNumericIdentifier(lhsPart);
+        const bool rhsNumeric = isNumericIdentifier(rhsPart);
+        int order = 0;
+        if (lhsNumeric && rhsNumeric) {
+            if (lhsPart.length() != rhsPart.length()) order = lhsPart.length() > rhsPart.length() ? 1 : -1;
+            else order = lhsPart.compareTo(rhsPart);
+        } else if (lhsNumeric != rhsNumeric) {
+            order = lhsNumeric ? -1 : 1;
+        } else {
+            order = lhsPart.compareTo(rhsPart);
+        }
+        if (order != 0) return order > 0 ? 1 : -1;
+        if (lhsDot < 0 || rhsDot < 0) {
+            if (lhsDot < 0 && rhsDot < 0) return 0;
+            return lhsDot < 0 ? -1 : 1;
+        }
+        lhsStart = lhsDot + 1;
+        rhsStart = rhsDot + 1;
+    }
 }
 
 int compareVersions(const String& current, const String& candidate) {
-    int currentParts[3];
-    int candidateParts[3];
-    if (!parseVersion(current, currentParts) || !parseVersion(candidate, candidateParts)) return -2;
+    ParsedVersion currentVersion;
+    ParsedVersion candidateVersion;
+    if (!parseVersion(current, currentVersion) || !parseVersion(candidate, candidateVersion)) return -2;
     for (int i = 0; i < 3; ++i) {
-        if (candidateParts[i] > currentParts[i]) return 1;
-        if (candidateParts[i] < currentParts[i]) return -1;
+        if (candidateVersion.parts[i] > currentVersion.parts[i]) return 1;
+        if (candidateVersion.parts[i] < currentVersion.parts[i]) return -1;
     }
-    return 0;
+    return comparePrerelease(candidateVersion.prerelease, currentVersion.prerelease);
+}
+
+bool isPrereleaseVersion(const String& version) {
+    ParsedVersion parsed;
+    return parseVersion(version, parsed) && !parsed.prerelease.isEmpty();
+}
+
+uint32_t deviceJitter(uint32_t range) {
+    if (range == 0) return 0;
+    const uint64_t mac = ESP.getEfuseMac();
+    const uint32_t folded = static_cast<uint32_t>(mac) ^ static_cast<uint32_t>(mac >> 32);
+    return folded % range;
+}
+
+void scheduleAutomaticCheck(uint32_t delayMs) {
+    s_nextAutoCheckAt.store(millis() + delayMs, std::memory_order_release);
 }
 
 #ifdef ESP_IDF5_MIGRATION_BUILD
-bool fetchOfficialMetadataOnce(String& version, String& firmwareUrl, size_t& imageSize, String& sha256) {
+bool fetchOfficialMetadataOnce(bool betaChannel, String& version, String& firmwareUrl, size_t& imageSize, String& sha256) {
+    const char* metadataUrl = betaChannel ? BETA_METADATA_URL : STABLE_METADATA_URL;
+    const char* expectedFirmwareUrl = betaChannel ? BETA_FIRMWARE_URL : STABLE_FIRMWARE_URL;
     NetworkClientSecure client;
     client.setCACertBundle(rootca_crt_bundle_start,
                            static_cast<size_t>(rootca_crt_bundle_end - rootca_crt_bundle_start));
     HTTPClient http;
     http.setConnectTimeout(12000);
     http.setTimeout(15000);
-    if (!http.begin(client, OFFICIAL_METADATA_URL)) return false;
+    if (!http.begin(client, metadataUrl)) return false;
     const int status = http.GET();
     if (status != HTTP_CODE_OK) {
         log_e("[OTA] Metadata request returned HTTP %d", status);
@@ -220,15 +306,15 @@ bool fetchOfficialMetadataOnce(String& version, String& firmwareUrl, size_t& ima
         !extractJsonString(json, "url", firmwareUrl) || !extractJsonSize(json, "size", imageSize) ||
         !extractJsonString(json, "sha256", sha256)) return false;
     sha256.toLowerCase();
-    int versionParts[3];
-    return board == OFFICIAL_BOARD && firmwareUrl == OFFICIAL_FIRMWARE_URL &&
-           parseVersion(version, versionParts) && isHexDigest(sha256);
+    ParsedVersion parsedVersion;
+    return board == OFFICIAL_BOARD && firmwareUrl == expectedFirmwareUrl &&
+           parseVersion(version, parsedVersion) && isHexDigest(sha256);
 }
 
-bool fetchOfficialMetadata(String& version, String& firmwareUrl, size_t& imageSize, String& sha256) {
+bool fetchOfficialMetadata(bool betaChannel, String& version, String& firmwareUrl, size_t& imageSize, String& sha256) {
     constexpr uint8_t MAX_METADATA_ATTEMPTS = 4;
     for (uint8_t attempt = 0; attempt < MAX_METADATA_ATTEMPTS; ++attempt) {
-        if (fetchOfficialMetadataOnce(version, firmwareUrl, imageSize, sha256)) return true;
+        if (fetchOfficialMetadataOnce(betaChannel, version, firmwareUrl, imageSize, sha256)) return true;
         if (attempt + 1 < MAX_METADATA_ATTEMPTS) {
             const uint32_t delayMs = 750U * static_cast<uint32_t>(attempt + 1);
             log_w("[OTA] Metadata fetch failed; retrying in %u ms (%u/%u)",
@@ -252,6 +338,9 @@ String digestToHex(const uint8_t digest[32]) {
 }
 
 void finishOfficialTask(bool installRequested) {
+    if (installRequested && s_officialState.load(std::memory_order_acquire) != OfficialState::Rebooting) {
+        mqtt_net_resume_after_ota();
+    }
     if (installRequested) {
         vTaskDelete(nullptr);
     } else {
@@ -263,8 +352,10 @@ void finishOfficialTask(bool installRequested) {
 }
 
 void officialUpdateTask(void* parameter) {
-    const bool installRequested =
-        static_cast<OfficialTaskMode>(reinterpret_cast<uintptr_t>(parameter)) == OfficialTaskMode::Install;
+    const uintptr_t taskOptions = reinterpret_cast<uintptr_t>(parameter);
+    const bool installRequested = (taskOptions & 0x01U) != 0;
+    const bool betaChannel = (taskOptions & 0x02U) != 0;
+    const bool automaticCheck = (taskOptions & 0x04U) != 0;
     String version, firmwareUrl, expectedSha256;
     size_t expectedSize = 0;
     s_officialState.store(OfficialState::Checking, std::memory_order_release);
@@ -273,8 +364,10 @@ void officialUpdateTask(void* parameter) {
     setOfficialText(s_latestVersion, sizeof(s_latestVersion), "");
     setOfficialText(s_officialError, sizeof(s_officialError), "");
 
-    if (!fetchOfficialMetadata(version, firmwareUrl, expectedSize, expectedSha256)) {
-        failOfficial("Could not validate the official GitHub release metadata");
+    if (!fetchOfficialMetadata(betaChannel, version, firmwareUrl, expectedSize, expectedSha256)) {
+        failOfficial(betaChannel
+            ? "Could not validate the beta GitHub release metadata"
+            : "Could not validate the stable GitHub release metadata");
         finishOfficialTask(installRequested);
         return;
     }
@@ -292,6 +385,7 @@ void officialUpdateTask(void* parameter) {
         return;
     }
     if (!installRequested) {
+        if (automaticCheck) s_autoInstallPending.store(true, std::memory_order_release);
         s_officialState.store(OfficialState::Available, std::memory_order_release);
         s_updateClaimed.store(false, std::memory_order_release);
         finishOfficialTask(installRequested);
@@ -305,10 +399,9 @@ void officialUpdateTask(void* parameter) {
         return;
     }
 
-    // MQTT and the OTA downloader both require a TLS session and an internal
-    // task stack. Releasing MQTT for the short update window prevents heap
-    // starvation while preserving the stored broker configuration.
-    mqtt_net_pause_for_ota();
+    // MQTT was already released synchronously before this internal-stack task
+    // was created. This delay lets final network callbacks release their
+    // buffers before the download TLS session starts.
     vTaskDelay(pdMS_TO_TICKS(250));
     s_totalBytes.store(static_cast<uint32_t>(expectedSize), std::memory_order_relaxed);
     s_officialState.store(OfficialState::Downloading, std::memory_order_release);
@@ -430,10 +523,92 @@ void officialUpdateTask(void* parameter) {
     if (!scheduleRestart()) failOfficial("Firmware installed, but restart scheduling failed");
     finishOfficialTask(installRequested);
 }
+
+bool startOfficialTask(bool checkOnly, bool betaChannel, bool automaticCheck = false) {
+    bool expected = false;
+    if (!s_updateClaimed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return false;
+
+    if (!checkOnly) {
+        // MQTT and the installer both require internal RAM for TLS and a
+        // cache-safe task stack. Stop MQTT before allocating the OTA task so a
+        // fragmented heap cannot reject the task before it gets a chance to
+        // release MQTT itself.
+        mqtt_net_pause_for_ota();
+    }
+
+    uintptr_t taskOptions = checkOnly ? 0U : 0x01U;
+    if (betaChannel) taskOptions |= 0x02U;
+    if (automaticCheck) taskOptions |= 0x04U;
+    void* taskParameter = reinterpret_cast<void*>(taskOptions);
+    const BaseType_t taskCreated = checkOnly
+        ? xTaskCreateWithCaps(
+            officialUpdateTask,
+            "official-check",
+            8192,
+            taskParameter,
+            2,
+            nullptr,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+        )
+        : xTaskCreate(officialUpdateTask, "official-ota", 10240, taskParameter, 2, nullptr);
+    if (taskCreated == pdPASS) return true;
+
+    s_updateClaimed.store(false, std::memory_order_release);
+    if (!checkOnly) mqtt_net_resume_after_ota();
+    return false;
+}
 #endif
 } // namespace
 
 void ota_update_set_token(const String& token) { s_token = token; }
+
+bool ota_update_is_authorized(AsyncWebServerRequest* request) { return isAuthorized(request); }
+
+void ota_update_set_policy(bool betaEnabled, bool autoUpdateEnabled) {
+    const bool channelChanged = s_betaEnabled.exchange(betaEnabled, std::memory_order_acq_rel) != betaEnabled;
+    s_autoUpdateEnabled.store(autoUpdateEnabled, std::memory_order_release);
+    if (!autoUpdateEnabled) s_autoInstallPending.store(false, std::memory_order_release);
+    if (channelChanged && !ota_update_is_busy()) {
+        s_autoInstallPending.store(false, std::memory_order_release);
+        setOfficialText(s_latestVersion, sizeof(s_latestVersion), "");
+        setOfficialText(s_officialError, sizeof(s_officialError), "");
+        s_officialState.store(OfficialState::Idle, std::memory_order_release);
+    }
+    if (s_autoSchedulerStarted.load(std::memory_order_acquire) && autoUpdateEnabled) {
+        scheduleAutomaticCheck(channelChanged ? 60U * 1000U + deviceJitter(4U * 60U * 1000U)
+                                              : AUTO_INITIAL_DELAY_MS + deviceJitter(AUTO_INITIAL_JITTER_MS));
+    }
+}
+
+void ota_update_start_automatic_checks() {
+    s_autoSchedulerStarted.store(true, std::memory_order_release);
+    scheduleAutomaticCheck(AUTO_INITIAL_DELAY_MS + deviceJitter(AUTO_INITIAL_JITTER_MS));
+}
+
+void ota_update_loop() {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    if (!s_autoSchedulerStarted.load(std::memory_order_acquire) ||
+        !s_autoUpdateEnabled.load(std::memory_order_acquire) ||
+        WiFi.status() != WL_CONNECTED) return;
+    if (ota_update_is_busy()) return;
+    const bool betaChannel = s_betaEnabled.load(std::memory_order_acquire);
+    if (s_autoInstallPending.exchange(false, std::memory_order_acq_rel)) {
+        log_i("[OTA] Installing newer release found by the scheduled %s-channel check",
+              betaChannel ? "beta" : "stable");
+        if (!startOfficialTask(false, betaChannel)) {
+            scheduleAutomaticCheck(AUTO_RETRY_MS + deviceJitter(AUTO_INITIAL_JITTER_MS));
+        }
+        return;
+    }
+    if (static_cast<int32_t>(millis() - s_nextAutoCheckAt.load(std::memory_order_acquire)) < 0) return;
+    log_i("[OTA] Starting scheduled %s-channel metadata check", betaChannel ? "beta" : "stable");
+    if (startOfficialTask(true, betaChannel, true)) {
+        scheduleAutomaticCheck(AUTO_INTERVAL_MS + deviceJitter(AUTO_INITIAL_JITTER_MS));
+    } else {
+        scheduleAutomaticCheck(AUTO_RETRY_MS + deviceJitter(AUTO_INITIAL_JITTER_MS));
+    }
+#endif
+}
 
 bool ota_update_is_busy() {
     return s_updateClaimed.load(std::memory_order_acquire) || Update.isRunning();
@@ -445,6 +620,8 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
     // Child routes must precede /api/ota because ESPAsyncWebServer permits prefix matches.
     server.on("/api/ota/official", HTTP_GET, [](AsyncWebServerRequest* request) {
         const OfficialState state = s_officialState.load(std::memory_order_acquire);
+        const bool betaEnabled = s_betaEnabled.load(std::memory_order_acquire);
+        const bool autoUpdateEnabled = s_autoUpdateEnabled.load(std::memory_order_acquire);
         BoundedStreamResponse* response = new BoundedStreamResponse("application/json");
         response->print("{\"supported\":");
 #ifdef ESP_IDF5_MIGRATION_BUILD
@@ -453,7 +630,11 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
         response->print("false");
 #endif
         response->print(",\"state\":\""); response->print(officialStateName(state));
-        response->print("\",\"busy\":"); response->print(isOfficialBusy(state) ? "true" : "false");
+        response->print("\",\"busy\":"); response->print(ota_update_is_busy() ? "true" : "false");
+        response->print(",\"channel\":\""); response->print(betaEnabled ? "beta" : "stable");
+        response->print("\",\"beta_enabled\":"); response->print(betaEnabled ? "true" : "false");
+        response->print(",\"auto_update_enabled\":"); response->print(autoUpdateEnabled ? "true" : "false");
+        response->print(",\"current_is_prerelease\":"); response->print(isPrereleaseVersion(FIRMWARE_VERSION) ? "true" : "false");
         response->print(",\"current_version\":\""); response->print(FIRMWARE_VERSION);
         response->print("\",\"latest_version\":\""); response->print(utils_escape_json(getOfficialText(s_latestVersion)));
         response->print("\",\"changelog_url\":\""); response->print(OFFICIAL_CHANGELOG_URL);
@@ -469,38 +650,20 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
 #ifdef ESP_IDF5_MIGRATION_BUILD
         const bool checkOnly = request->hasParam("check_only") &&
                                request->getParam("check_only")->value() == "true";
-        bool expected = false;
-        if (!s_updateClaimed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-            request->send(409, "application/json", "{\"success\":false,\"error\":\"Another OTA update is active\"}");
-            return;
-        }
-        void* taskMode = reinterpret_cast<void*>(static_cast<uintptr_t>(
-            checkOnly ? OfficialTaskMode::CheckOnly : OfficialTaskMode::Install));
-        // A metadata-only check never writes flash. Its stack may therefore
-        // live in PSRAM, avoiding an 8 KiB contiguous internal-SRAM
-        // requirement after BLE, MQTTS and Tailscale have fragmented the heap.
-        // The flash-writing installer retains its internal, cache-safe stack.
-        const BaseType_t taskCreated = checkOnly
-            ? xTaskCreateWithCaps(
-                officialUpdateTask,
-                "official-check",
-                8192,
-                taskMode,
-                2,
-                nullptr,
-                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-            )
-            : xTaskCreate(officialUpdateTask, "official-ota", 10240, taskMode, 2, nullptr);
-        if (taskCreated != pdPASS) {
-            s_updateClaimed.store(false, std::memory_order_release);
+        const bool betaChannel = s_betaEnabled.load(std::memory_order_acquire);
+        if (!startOfficialTask(checkOnly, betaChannel)) {
+            if (ota_update_is_busy()) {
+                request->send(409, "application/json", "{\"success\":false,\"error\":\"Another OTA update is active\"}");
+                return;
+            }
             request->send(503, "application/json", checkOnly
                 ? "{\"success\":false,\"error\":\"Could not start the release check\"}"
                 : "{\"success\":false,\"error\":\"Could not start the update task\"}");
             return;
         }
         request->send(202, "application/json", checkOnly
-            ? "{\"success\":true,\"message\":\"Checking the official GitHub release without installing\"}"
-            : "{\"success\":true,\"message\":\"Checking and installing the official GitHub release\"}");
+            ? "{\"success\":true,\"message\":\"Checking the selected GitHub release channel without installing\"}"
+            : "{\"success\":true,\"message\":\"Checking and installing the selected GitHub release channel\"}");
 #else
         s_officialState.store(OfficialState::Unsupported, std::memory_order_release);
         request->send(501, "application/json", "{\"success\":false,\"error\":\"Official updates require the ESP-IDF 5 production build\"}");

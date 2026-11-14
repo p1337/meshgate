@@ -53,7 +53,7 @@ The primary deployment model is deliberately split:
 - Optional classic WireGuard and radio-managed MQTT proxying
 - Persistent 128-message mailbox with received and sent conversation replay
 - Built-in channel chat with unread counters and radio-accepted send status
-- Verified dual-slot OTA from the official release channel
+- Verified dual-slot OTA with automatic stable updates and an admin-only beta channel
 - Redundant configuration storage, watchdog recovery and scheduled restarts
 - Remote status, bounded logs and Prometheus/OpenMetrics diagnostics
 - Self-contained setup portal with no cloud dependency during provisioning
@@ -75,10 +75,12 @@ Edge or Opera on a desktop computer.
 - Wait for **Installation complete**, select **Next**, and allow approximately
   30 seconds for the first boot.
 
-Normal updates do not use the USB flasher. Open the device control page and
-select **Check & Install Latest Release**. MeshGate verifies the release origin,
-board, size and SHA-256 digest before activating the inactive OTA slot. NVS and
-the message mailbox remain intact.
+Normal updates do not use the USB flasher. Automatic stable updates are enabled
+by default and can be disabled in the **System** tab; the same card also allows
+a manual update. An administrator can enroll a test device into the clearly
+marked **Beta firmware · UNSTABLE** channel with its private OTA key. MeshGate
+verifies release origin, board, size and SHA-256 before activating the inactive
+OTA slot. NVS and the message mailbox remain intact.
 
 ### 2. Configure
 
