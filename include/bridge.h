@@ -3,6 +3,10 @@
 
 void bridge_init(const String& ble_name, const String& ble_mac, uint32_t ble_pin);
 void bridge_start();
+// Stops TCP admission and disconnects BLE/TCP clients without changing saved
+// configuration. The bridge tasks remain available for a failure recovery.
+bool bridge_pause_for_ota();
+void bridge_resume_after_ota();
 bool bridge_is_ble_connected();
 bool bridge_enqueue_mqtt_to_ble(const uint8_t* data, size_t len);
 void bridge_clear_mqtt_to_ble_queue();

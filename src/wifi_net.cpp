@@ -33,8 +33,27 @@ static String cachedWifiResultsJson = "[]";
  * Holds the active advertised mDNS hostname.
  */
 static String s_mdns_host = "";
+static String s_mdns_base_host = "";
+static String s_mdns_name = "";
+static String s_mdns_short_name = "";
+static String s_mdns_node_id = "";
+static std::atomic<bool> s_mdns_active{false};
+static std::atomic<bool> s_mdns_paused_for_ota{false};
 
 static std::atomic<bool> s_ap_sta_connecting{false};
+
+static bool startCachedMdnsAdvertisement() {
+    if (s_mdns_base_host.isEmpty()) return false;
+    if (!MDNS.begin(s_mdns_base_host.c_str())) return false;
+    MDNS.setInstanceName(s_mdns_name.c_str());
+    MDNS.addService("meshtastic", "tcp", TCP_PORT);
+    MDNS.addServiceTxt("meshtastic", "tcp", "name", s_mdns_name.c_str());
+    MDNS.addServiceTxt("meshtastic", "tcp", "shortname", s_mdns_short_name.c_str());
+    MDNS.addServiceTxt("meshtastic", "tcp", "id", s_mdns_node_id.c_str());
+    if (s_mdns_host.isEmpty()) s_mdns_host = s_mdns_base_host + ".local";
+    s_mdns_active.store(true, std::memory_order_release);
+    return true;
+}
 
 struct WifiConnectRequest {
     String ssid;
@@ -346,16 +365,30 @@ void wifi_net_start_mdns(const BridgeConfig& cfg) {
     mdns_host = sanitizedHost;
     mdns_host.toLowerCase();
 
-    if (MDNS.begin(mdns_host.c_str())) {
-        MDNS.setInstanceName(mdns_name.c_str());
-        MDNS.addService("meshtastic", "tcp", TCP_PORT);
-        MDNS.addServiceTxt("meshtastic", "tcp", "name", mdns_name.c_str());
-        MDNS.addServiceTxt("meshtastic", "tcp", "shortname", short_name.c_str());
-        MDNS.addServiceTxt("meshtastic", "tcp", "id", node_id.c_str());
-        s_mdns_host = mdns_host + ".local";
+    s_mdns_base_host = mdns_host;
+    s_mdns_name = mdns_name;
+    s_mdns_short_name = short_name;
+    s_mdns_node_id = node_id;
+    if (startCachedMdnsAdvertisement()) {
         log_i("[MDNS] mDNS auto-discovery started (%s as '%s_%s')", s_mdns_host.c_str(), short_name.c_str(), node_id.substring(node_id.length() - 4).c_str());
     } else {
         log_e("[MDNS] Error: Failed to start MDNS advertisement.");
+    }
+}
+
+void wifi_net_pause_mdns_for_ota() {
+    if (!s_mdns_active.exchange(false, std::memory_order_acq_rel)) return;
+    s_mdns_paused_for_ota.store(true, std::memory_order_release);
+    log_i("[OTA] Pausing mDNS discovery service...");
+    MDNS.end();
+}
+
+void wifi_net_resume_mdns_after_ota() {
+    bool expected = true;
+    if (!s_mdns_paused_for_ota.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) return;
+    log_i("[OTA] Restoring mDNS discovery service after failed update...");
+    if (!startCachedMdnsAdvertisement()) {
+        log_w("[MDNS] Could not restore mDNS advertisement after OTA failure");
     }
 }
 

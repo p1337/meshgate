@@ -21,6 +21,7 @@
 #include "lwip/ip.h"
 #include "lwip/netdb.h"
 #include "lwip/netif.h"
+#include "lwip/tcpip.h"
 
 extern "C" {
 #include "wireguard.h"
@@ -35,6 +36,8 @@ constexpr uint16_t WIREGUARD_KEEPALIVE_SECONDS = 25;
 BridgeConfig s_config;
 std::atomic<bool> s_enabled{false};
 std::atomic<bool> s_initialized{false};
+std::atomic<bool> s_pausedForOta{false};
+TaskHandle_t s_wireguardTask = nullptr;
 
 struct netif s_wg_netif_storage = {};
 struct netif* s_wg_netif = nullptr;
@@ -220,33 +223,44 @@ void wireguardTask(void*) {
     configTime(0, 0, "pool.ntp.org", "time.cloudflare.com", "time.google.com");
 
     for (;;) {
+        if (s_pausedForOta.load(std::memory_order_acquire)) {
+            s_wireguardTask = nullptr;
+            vTaskDelete(nullptr);
+            return;
+        }
         if (WiFi.status() != WL_CONNECTED) {
-            vTaskDelay(pdMS_TO_TICKS(5000));
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5000));
             continue;
         }
 
         time_t now = time(nullptr);
         if (now < static_cast<time_t>(VALID_TIME_THRESHOLD)) {
             log_i("[WireGuard] Waiting for NTP time synchronization...");
-            vTaskDelay(pdMS_TO_TICKS(3000));
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(3000));
             continue;
         }
 
         if (initializeTunnel()) {
+            s_wireguardTask = nullptr;
             vTaskDelete(nullptr);
             return;
         }
 
         // DNS, internet or endpoint may be temporarily unavailable. Retry
         // without blocking the BLE/TCP bridge.
-        vTaskDelay(pdMS_TO_TICKS(60000));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(60000));
     }
+}
+
+void shutdownTunnelOnTcpip(void*) {
+    shutdownTunnel();
 }
 
 } // namespace
 
 void wireguard_net_start(const BridgeConfig& cfg) {
     s_config = cfg;
+    s_pausedForOta.store(false, std::memory_order_release);
     s_enabled.store(cfg.wireguard_enabled);
     if (!cfg.wireguard_enabled) {
         log_i("[WireGuard] Disabled");
@@ -260,7 +274,40 @@ void wireguard_net_start(const BridgeConfig& cfg) {
         return;
     }
 
-    xTaskCreatePinnedToCore(wireguardTask, "wireguard_task", 8192, nullptr, 1, nullptr, 0);
+    if (s_initialized.load(std::memory_order_acquire) || s_wireguardTask != nullptr) return;
+    xTaskCreatePinnedToCore(wireguardTask, "wireguard_task", 8192, nullptr, 1, &s_wireguardTask, 0);
+}
+
+bool wireguard_net_pause_for_ota() {
+    if (!s_enabled.load(std::memory_order_acquire)) return true;
+    bool expected = false;
+    if (!s_pausedForOta.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return s_wireguardTask == nullptr && !s_initialized.load(std::memory_order_acquire);
+    }
+    log_i("[OTA] Pausing classic WireGuard service...");
+    TaskHandle_t task = s_wireguardTask;
+    if (task != nullptr) xTaskNotifyGive(task);
+    for (uint16_t attempt = 0; attempt < 1200 && s_wireguardTask != nullptr; ++attempt) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    bool stopped = s_wireguardTask == nullptr;
+    if (s_initialized.load(std::memory_order_acquire)) {
+        const err_t result = tcpip_callback_wait(shutdownTunnelOnTcpip, nullptr);
+        if (result != ERR_OK) {
+            log_w("[OTA] WireGuard shutdown callback failed (%d)", result);
+            stopped = false;
+        }
+    }
+    stopped = stopped && !s_initialized.load(std::memory_order_acquire);
+    if (!stopped) log_e("[OTA] Classic WireGuard did not stop cleanly");
+    return stopped;
+}
+
+void wireguard_net_resume_after_ota() {
+    bool expected = true;
+    if (!s_pausedForOta.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) return;
+    log_i("[OTA] Restoring classic WireGuard service after failed update...");
+    wireguard_net_start(s_config);
 }
 
 bool wireguard_net_is_enabled() {

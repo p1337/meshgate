@@ -10,6 +10,7 @@
 namespace {
 
 std::atomic<bool> s_enabled{false};
+std::atomic<bool> s_pausedForOta{false};
 std::atomic<int> s_state{0};
 std::atomic<uint32_t> s_vpnIp{0};
 std::atomic<int> s_peerCount{0};
@@ -40,6 +41,7 @@ void peerChanged(microlink_t* handle, const microlink_peer_info_t*, void*) {
 } // namespace
 
 void tailscale_net_start(const BridgeConfig& cfg) {
+    s_pausedForOta.store(false, std::memory_order_release);
     s_enabled.store(cfg.tailscale_enabled, std::memory_order_relaxed);
     if (!cfg.tailscale_enabled) {
         log_i("[Tailscale] Disabled");
@@ -85,6 +87,33 @@ void tailscale_net_start(const BridgeConfig& cfg) {
         log_i("[Tailscale] Starting as %s", s_deviceName.c_str());
     }
 #endif
+}
+
+void tailscale_net_pause_for_ota() {
+    if (!s_enabled.load(std::memory_order_acquire)) return;
+    bool expected = false;
+    if (!s_pausedForOta.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return;
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    if (s_microlink != nullptr) {
+        log_i("[OTA] Pausing Tailscale control, DERP and WireGuard services...");
+        microlink_t* handle = s_microlink;
+        s_microlink = nullptr;
+        microlink_destroy(handle);
+    }
+#endif
+    s_state.store(0, std::memory_order_relaxed);
+    s_vpnIp.store(0, std::memory_order_relaxed);
+    s_peerCount.store(0, std::memory_order_relaxed);
+}
+
+void tailscale_net_resume_after_ota() {
+    bool expected = true;
+    if (!s_pausedForOta.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) return;
+    log_i("[OTA] Restoring Tailscale service after failed update...");
+    BridgeConfig cfg = {};
+    cfg.tailscale_enabled = true;
+    cfg.tailscale_device_name = s_deviceName;
+    tailscale_net_start(cfg);
 }
 
 bool tailscale_net_is_enabled() {

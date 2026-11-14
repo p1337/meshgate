@@ -23,6 +23,7 @@ constexpr uint32_t HTTP_TIMEOUT_MS = 12000;
 
 std::atomic<uint32_t> s_node_num{0};
 std::atomic<bool> s_requested{false};
+std::atomic<bool> s_paused_for_ota{false};
 char s_device_id[33] = {0};
 uint32_t s_next_attempt_ms = 0;
 bool s_started = false;
@@ -148,7 +149,7 @@ void device_presence_start() {
 
 void device_presence_loop() {
 #ifdef ESP_IDF5_MIGRATION_BUILD
-    if (!s_started) {
+    if (!s_started || s_paused_for_ota.load(std::memory_order_acquire)) {
         return;
     }
 
@@ -162,6 +163,18 @@ void device_presence_loop() {
         s_boot_sent = true;
     }
     s_next_attempt_ms = millis() + (sent ? PRESENCE_INTERVAL_MS : RETRY_INTERVAL_MS);
+#endif
+}
+
+void device_presence_pause_for_ota() {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    s_paused_for_ota.store(true, std::memory_order_release);
+#endif
+}
+
+void device_presence_resume_after_ota() {
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    s_paused_for_ota.store(false, std::memory_order_release);
 #endif
 }
 

@@ -118,6 +118,8 @@ static SemaphoreHandle_t tcpClientsMutex = NULL; // Mutex to protect tcpClients 
 static StaticSemaphore_t tcpClientsMutexStorage;
 static std::atomic<size_t> connectedClientsCount{0};
 static bool bridgeRunning = false;
+static std::atomic<bool> s_pausedForOta{false};
+static std::atomic<bool> s_blePausedForOta{false};
 static String targetBleName = "";
 static String targetBleMac = "";
 static uint8_t targetBleAddressType = BLE_ADDR_PUBLIC;
@@ -284,7 +286,8 @@ bool bridge_http_phoneapi_is_active() {
 }
 
 bool bridge_enqueue_http_to_ble(const uint8_t* data, size_t len) {
-    if (!tcp_to_ble_queue || !data || len == 0 || len > sizeof(BridgePacket::data)) {
+    if (s_pausedForOta.load(std::memory_order_acquire) ||
+        !tcp_to_ble_queue || !data || len == 0 || len > sizeof(BridgePacket::data)) {
         s_http_invalid_count.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -356,6 +359,11 @@ size_t bridge_dequeue_http_from_ble(uint8_t* data, size_t capacity) {
 
 // TCP callbacks
 static void onClientConnected(void* arg, AsyncClient* client) {
+    if (s_pausedForOta.load(std::memory_order_acquire)) {
+        client->onDisconnect([](void*, AsyncClient* c) { delete c; }, nullptr);
+        client->close();
+        return;
+    }
     size_t clientSlot = MAX_TCP_CLIENTS;
     ClientContext* ctx = nullptr;
 
@@ -687,6 +695,18 @@ static void bridgeBleTask(void* parameter) {
     uint32_t failedConnectAttempts = 0;
 
     while (bridgeRunning) {
+        if (s_pausedForOta.load(std::memory_order_acquire)) {
+            if (!s_blePausedForOta.load(std::memory_order_acquire)) {
+                clearBleClient();
+                pendingRadioRead = false;
+                s_ble_connected.store(false, std::memory_order_relaxed);
+                s_blePausedForOta.store(true, std::memory_order_release);
+                log_i("[OTA] BLE bridge paused");
+            }
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+            continue;
+        }
+        s_blePausedForOta.store(false, std::memory_order_release);
         /**
          * If not connected to the BLE device yet, attempt to connect.
          * Blink the status LED appropriately to indicate no BLE connection is active.
@@ -952,6 +972,10 @@ static void bridgeNetTask(void* parameter) {
     log_i("[Bridge-Net] Network broadcasting Task started on Core 0");
 
     while (bridgeRunning) {
+        if (s_pausedForOta.load(std::memory_order_acquire)) {
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+            continue;
+        }
         BridgePacket packet;
         uint8_t frame[MESHTASTIC_MAX_PACKET_SIZE + 4];
         const TickType_t liveWait = mailbox_capture_queue && uxQueueMessagesWaiting(mailbox_capture_queue) > 0
@@ -1075,7 +1099,7 @@ static void bridgeNetTask(void* parameter) {
  * @return bool true on successful queueing, false if unable to queue.
  */
 bool bridge_enqueue_mqtt_to_ble(const uint8_t* data, size_t len) {
-    if (!mqtt_to_ble_queue || !data || len == 0) {
+    if (s_pausedForOta.load(std::memory_order_acquire) || !mqtt_to_ble_queue || !data || len == 0) {
         return false;
     }
     if (len > sizeof(BridgePacket::data)) {
@@ -1199,6 +1223,43 @@ void bridge_start() {
     // can therefore trigger esp_task_stack_is_sane_cache_disabled assertions.
     xTaskCreatePinnedToCore(bridgeBleTask, "bridge_ble", 8192, NULL, 1, &bridgeBleTaskHandle, 1);
     xTaskCreatePinnedToCore(bridgeNetTask, "bridge_net", 4096, NULL, 1, &bridgeNetTaskHandle, 0);
+}
+
+bool bridge_pause_for_ota() {
+    bool expected = false;
+    if (!s_pausedForOta.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return s_blePausedForOta.load(std::memory_order_acquire);
+    }
+    log_i("[OTA] Pausing Meshtastic BLE and TCP 4403 services...");
+    if (tcpServer) tcpServer->end();
+    AsyncClient* clientsToClose[MAX_TCP_CLIENTS] = {};
+    if (tcpClientsMutex && xSemaphoreTake(tcpClientsMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        for (size_t i = 0; i < MAX_TCP_CLIENTS; ++i) {
+            if (tcpClients[i]) clientsToClose[i] = tcpClients[i]->client;
+        }
+        xSemaphoreGive(tcpClientsMutex);
+    }
+    for (AsyncClient* client : clientsToClose) {
+        if (client) client->close();
+    }
+    if (bridgeBleTaskHandle) xTaskNotifyGive(bridgeBleTaskHandle);
+    if (bridgeNetTaskHandle) xTaskNotifyGive(bridgeNetTaskHandle);
+    for (uint16_t attempt = 0; attempt < 1000 &&
+         !s_blePausedForOta.load(std::memory_order_acquire); ++attempt) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    const bool paused = s_blePausedForOta.load(std::memory_order_acquire);
+    if (!paused) log_e("[OTA] BLE bridge did not acknowledge its pause");
+    return paused;
+}
+
+void bridge_resume_after_ota() {
+    bool expected = true;
+    if (!s_pausedForOta.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) return;
+    log_i("[OTA] Restoring Meshtastic BLE and TCP 4403 services after failed update...");
+    if (tcpServer) tcpServer->begin();
+    if (bridgeBleTaskHandle) xTaskNotifyGive(bridgeBleTaskHandle);
+    if (bridgeNetTaskHandle) xTaskNotifyGive(bridgeNetTaskHandle);
 }
 
 /**

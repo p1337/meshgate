@@ -98,8 +98,11 @@ Complete the applicable checks before promoting a public-beta build:
       and retains NVS plus mailbox data.
 - [ ] A device without beta enrollment sees only stable metadata; changing beta
       enrollment fails without the OTA administrator key and succeeds with it.
-- [ ] Automatic OTA defaults on, respects opt-out, never runs in setup AP mode,
-      and releases MQTT before allocating the internal installer task.
+- [ ] Automatic OTA defaults on, respects opt-out and never runs in setup AP
+      mode. Manual and automatic paths stop no service when current; when an
+      image is required they quiesce nonessential services before allocating
+      the internal installer task, restore them on failure and reboot only
+      after complete verification.
 - [ ] Manual reboot returns `202` and restores critical services.
 - [ ] Queue-drop counters remain zero during the standard pressure scenario.
 - [ ] TCP churn returns heap to its pre-test range after connection cleanup.

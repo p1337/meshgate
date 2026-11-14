@@ -55,3 +55,8 @@ void config_ui_start_server();
 
 // Stop the Async Web Server
 void config_ui_stop_server();
+
+// Temporarily closes the HTTP control/PhoneAPI listener during an official OTA
+// download. Registered routes remain intact and can be reopened on failure.
+void config_ui_pause_for_ota();
+void config_ui_resume_after_ota();

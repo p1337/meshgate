@@ -2,23 +2,30 @@
 
 #include <Update.h>
 #include <atomic>
+#include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <WiFi.h>
 
 #ifdef ESP_IDF5_MIGRATION_BUILD
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
-#include <esp_heap_caps.h>
 #include <freertos/idf_additions.h>
 #include <mbedtls/sha256.h>
 #endif
 
 #include "build_options.h"
 #include "bounded_stream_response.h"
+#include "bridge.h"
+#include "config_ui.h"
+#include "device_presence.h"
+#include "diag_telemetry.h"
 #include "mqtt_net.h"
 #include "reliability_manager.h"
+#include "tailscale_net.h"
 #include "utils.h"
 #include "web_log.h"
+#include "wifi_net.h"
+#include "wireguard_net.h"
 
 namespace {
 enum class RequestState : uintptr_t { None = 0, Unauthorized, Busy, Invalid, Uploading, Failed, Success };
@@ -40,7 +47,12 @@ AsyncWebServerRequest* s_activeRequest = nullptr;
 std::atomic<bool> s_updateClaimed{false};
 std::atomic<bool> s_betaEnabled{false};
 std::atomic<bool> s_autoUpdateEnabled{true};
-std::atomic<bool> s_autoInstallPending{false};
+std::atomic<bool> s_installPending{false};
+std::atomic<bool> s_runtimeQuiescing{false};
+std::atomic<bool> s_runtimePausedForOta{false};
+std::atomic<bool> s_resumeRuntimePending{false};
+std::atomic<bool> s_channelReconcilePending{false};
+std::atomic<uint32_t> s_installNotBefore{0};
 std::atomic<OfficialState> s_officialState{OfficialState::Idle};
 std::atomic<uint32_t> s_downloadedBytes{0};
 std::atomic<uint32_t> s_totalBytes{0};
@@ -111,7 +123,38 @@ void failOfficial(const String& reason) {
     setOfficialText(s_officialError, sizeof(s_officialError), reason);
     s_officialState.store(OfficialState::Failed, std::memory_order_release);
     s_updateClaimed.store(false, std::memory_order_release);
+}
+
+bool pauseRuntimeForOfficialOta() {
+    bool expected = false;
+    if (!s_runtimePausedForOta.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return true;
+    log_i("[OTA] Update available; stopping nonessential runtime services before download");
+    device_presence_pause_for_ota();
+    diag_telemetry_pause_for_ota();
+    config_ui_pause_for_ota();
+    wifi_net_pause_mdns_for_ota();
+    mqtt_net_pause_for_ota();
+    const bool bridgePaused = bridge_pause_for_ota();
+    tailscale_net_pause_for_ota();
+    const bool wireguardPaused = wireguard_net_pause_for_ota();
+    vTaskDelay(pdMS_TO_TICKS(250));
+    log_i("[OTA] Runtime quiesced (free heap %u, largest internal block %u)",
+          static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+    return bridgePaused && wireguardPaused;
+}
+
+void resumeRuntimeAfterOfficialOta() {
+    bool expected = true;
+    if (!s_runtimePausedForOta.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) return;
+    wireguard_net_resume_after_ota();
+    tailscale_net_resume_after_ota();
+    bridge_resume_after_ota();
     mqtt_net_resume_after_ota();
+    diag_telemetry_resume_after_ota();
+    device_presence_resume_after_ota();
+    wifi_net_resume_mdns_after_ota();
+    config_ui_resume_after_ota();
 }
 
 void failUpload(AsyncWebServerRequest* request, const char* reason) {
@@ -339,7 +382,7 @@ String digestToHex(const uint8_t digest[32]) {
 
 void finishOfficialTask(bool installRequested) {
     if (installRequested && s_officialState.load(std::memory_order_acquire) != OfficialState::Rebooting) {
-        mqtt_net_resume_after_ota();
+        s_resumeRuntimePending.store(true, std::memory_order_release);
     }
     if (installRequested) {
         vTaskDelete(nullptr);
@@ -355,7 +398,7 @@ void officialUpdateTask(void* parameter) {
     const uintptr_t taskOptions = reinterpret_cast<uintptr_t>(parameter);
     const bool installRequested = (taskOptions & 0x01U) != 0;
     const bool betaChannel = (taskOptions & 0x02U) != 0;
-    const bool automaticCheck = (taskOptions & 0x04U) != 0;
+    const bool installAfterCheck = (taskOptions & 0x04U) != 0;
     String version, firmwareUrl, expectedSha256;
     size_t expectedSize = 0;
     s_officialState.store(OfficialState::Checking, std::memory_order_release);
@@ -373,7 +416,8 @@ void officialUpdateTask(void* parameter) {
     }
     setOfficialText(s_latestVersion, sizeof(s_latestVersion), version);
     const int versionOrder = compareVersions(FIRMWARE_VERSION, version);
-    if (versionOrder <= 0 && versionOrder != -2) {
+    const bool reconcileChannel = s_channelReconcilePending.load(std::memory_order_acquire);
+    if (versionOrder <= 0 && versionOrder != -2 && !reconcileChannel) {
         s_officialState.store(OfficialState::Current, std::memory_order_release);
         s_updateClaimed.store(false, std::memory_order_release);
         finishOfficialTask(installRequested);
@@ -385,7 +429,10 @@ void officialUpdateTask(void* parameter) {
         return;
     }
     if (!installRequested) {
-        if (automaticCheck) s_autoInstallPending.store(true, std::memory_order_release);
+        if (installAfterCheck) {
+            s_installNotBefore.store(millis() + 750U, std::memory_order_release);
+            s_installPending.store(true, std::memory_order_release);
+        }
         s_officialState.store(OfficialState::Available, std::memory_order_release);
         s_updateClaimed.store(false, std::memory_order_release);
         finishOfficialTask(installRequested);
@@ -518,27 +565,20 @@ void officialUpdateTask(void* parameter) {
         finishOfficialTask(installRequested);
         return;
     }
+    s_channelReconcilePending.store(false, std::memory_order_release);
     log_i("[OTA] Official MeshGate %s verified and activated", version.c_str());
     s_officialState.store(OfficialState::Rebooting, std::memory_order_release);
     if (!scheduleRestart()) failOfficial("Firmware installed, but restart scheduling failed");
     finishOfficialTask(installRequested);
 }
 
-bool startOfficialTask(bool checkOnly, bool betaChannel, bool automaticCheck = false) {
+bool startOfficialTask(bool checkOnly, bool betaChannel, bool installAfterCheck = false) {
     bool expected = false;
     if (!s_updateClaimed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return false;
 
-    if (!checkOnly) {
-        // MQTT and the installer both require internal RAM for TLS and a
-        // cache-safe task stack. Stop MQTT before allocating the OTA task so a
-        // fragmented heap cannot reject the task before it gets a chance to
-        // release MQTT itself.
-        mqtt_net_pause_for_ota();
-    }
-
     uintptr_t taskOptions = checkOnly ? 0U : 0x01U;
     if (betaChannel) taskOptions |= 0x02U;
-    if (automaticCheck) taskOptions |= 0x04U;
+    if (installAfterCheck) taskOptions |= 0x04U;
     void* taskParameter = reinterpret_cast<void*>(taskOptions);
     const BaseType_t taskCreated = checkOnly
         ? xTaskCreateWithCaps(
@@ -554,7 +594,6 @@ bool startOfficialTask(bool checkOnly, bool betaChannel, bool automaticCheck = f
     if (taskCreated == pdPASS) return true;
 
     s_updateClaimed.store(false, std::memory_order_release);
-    if (!checkOnly) mqtt_net_resume_after_ota();
     return false;
 }
 #endif
@@ -564,12 +603,15 @@ void ota_update_set_token(const String& token) { s_token = token; }
 
 bool ota_update_is_authorized(AsyncWebServerRequest* request) { return isAuthorized(request); }
 
-void ota_update_set_policy(bool betaEnabled, bool autoUpdateEnabled) {
+void ota_update_set_policy(bool betaEnabled, bool autoUpdateEnabled, bool authorizedChannelChange) {
     const bool channelChanged = s_betaEnabled.exchange(betaEnabled, std::memory_order_acq_rel) != betaEnabled;
     s_autoUpdateEnabled.store(autoUpdateEnabled, std::memory_order_release);
-    if (!autoUpdateEnabled) s_autoInstallPending.store(false, std::memory_order_release);
+    if (!autoUpdateEnabled) s_installPending.store(false, std::memory_order_release);
+    if (authorizedChannelChange) {
+        s_channelReconcilePending.store(true, std::memory_order_release);
+    }
     if (channelChanged && !ota_update_is_busy()) {
-        s_autoInstallPending.store(false, std::memory_order_release);
+        s_installPending.store(false, std::memory_order_release);
         setOfficialText(s_latestVersion, sizeof(s_latestVersion), "");
         setOfficialText(s_officialError, sizeof(s_officialError), "");
         s_officialState.store(OfficialState::Idle, std::memory_order_release);
@@ -587,19 +629,49 @@ void ota_update_start_automatic_checks() {
 
 void ota_update_loop() {
 #ifdef ESP_IDF5_MIGRATION_BUILD
+    if (s_resumeRuntimePending.exchange(false, std::memory_order_acq_rel)) {
+        resumeRuntimeAfterOfficialOta();
+    }
+    if (s_installPending.load(std::memory_order_acquire) && WiFi.status() != WL_CONNECTED) {
+        s_installPending.store(false, std::memory_order_release);
+        setOfficialText(s_officialError, sizeof(s_officialError),
+                        "Wi-Fi disconnected before the verified installation could start");
+        s_officialState.store(OfficialState::Failed, std::memory_order_release);
+        scheduleAutomaticCheck(AUTO_RETRY_MS + deviceJitter(AUTO_INITIAL_JITTER_MS));
+        return;
+    }
+    if (s_installPending.load(std::memory_order_acquire) &&
+        WiFi.status() == WL_CONNECTED &&
+        !s_runtimeQuiescing.load(std::memory_order_acquire) &&
+        !s_updateClaimed.load(std::memory_order_acquire) && !Update.isRunning() &&
+        static_cast<int32_t>(millis() - s_installNotBefore.load(std::memory_order_acquire)) >= 0) {
+        s_installPending.store(false, std::memory_order_release);
+        s_runtimeQuiescing.store(true, std::memory_order_release);
+        const bool betaChannel = s_betaEnabled.load(std::memory_order_acquire);
+        if (!pauseRuntimeForOfficialOta()) {
+            setOfficialText(s_officialError, sizeof(s_officialError),
+                            "Could not stop all nonessential services safely");
+            s_officialState.store(OfficialState::Failed, std::memory_order_release);
+            s_resumeRuntimePending.store(true, std::memory_order_release);
+            s_runtimeQuiescing.store(false, std::memory_order_release);
+            scheduleAutomaticCheck(AUTO_RETRY_MS + deviceJitter(AUTO_INITIAL_JITTER_MS));
+            return;
+        }
+        if (!startOfficialTask(false, betaChannel)) {
+            setOfficialText(s_officialError, sizeof(s_officialError),
+                            "Could not start the update task after stopping runtime services");
+            s_officialState.store(OfficialState::Failed, std::memory_order_release);
+            s_resumeRuntimePending.store(true, std::memory_order_release);
+            scheduleAutomaticCheck(AUTO_RETRY_MS + deviceJitter(AUTO_INITIAL_JITTER_MS));
+        }
+        s_runtimeQuiescing.store(false, std::memory_order_release);
+        return;
+    }
     if (!s_autoSchedulerStarted.load(std::memory_order_acquire) ||
         !s_autoUpdateEnabled.load(std::memory_order_acquire) ||
         WiFi.status() != WL_CONNECTED) return;
     if (ota_update_is_busy()) return;
     const bool betaChannel = s_betaEnabled.load(std::memory_order_acquire);
-    if (s_autoInstallPending.exchange(false, std::memory_order_acq_rel)) {
-        log_i("[OTA] Installing newer release found by the scheduled %s-channel check",
-              betaChannel ? "beta" : "stable");
-        if (!startOfficialTask(false, betaChannel)) {
-            scheduleAutomaticCheck(AUTO_RETRY_MS + deviceJitter(AUTO_INITIAL_JITTER_MS));
-        }
-        return;
-    }
     if (static_cast<int32_t>(millis() - s_nextAutoCheckAt.load(std::memory_order_acquire)) < 0) return;
     log_i("[OTA] Starting scheduled %s-channel metadata check", betaChannel ? "beta" : "stable");
     if (startOfficialTask(true, betaChannel, true)) {
@@ -611,7 +683,9 @@ void ota_update_loop() {
 }
 
 bool ota_update_is_busy() {
-    return s_updateClaimed.load(std::memory_order_acquire) || Update.isRunning();
+    return s_installPending.load(std::memory_order_acquire) ||
+           s_runtimeQuiescing.load(std::memory_order_acquire) ||
+           s_updateClaimed.load(std::memory_order_acquire) || Update.isRunning();
 }
 
 void ota_update_register(AsyncWebServer& server, const String& token) {
@@ -634,6 +708,8 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
         response->print(",\"channel\":\""); response->print(betaEnabled ? "beta" : "stable");
         response->print("\",\"beta_enabled\":"); response->print(betaEnabled ? "true" : "false");
         response->print(",\"auto_update_enabled\":"); response->print(autoUpdateEnabled ? "true" : "false");
+        response->print(",\"channel_reconcile_pending\":");
+        response->print(s_channelReconcilePending.load(std::memory_order_acquire) ? "true" : "false");
         response->print(",\"current_is_prerelease\":"); response->print(isPrereleaseVersion(FIRMWARE_VERSION) ? "true" : "false");
         response->print(",\"current_version\":\""); response->print(FIRMWARE_VERSION);
         response->print("\",\"latest_version\":\""); response->print(utils_escape_json(getOfficialText(s_latestVersion)));
@@ -641,6 +717,8 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
         response->print("\",\"downloaded_bytes\":"); response->print(s_downloadedBytes.load(std::memory_order_relaxed));
         response->print(",\"total_bytes\":"); response->print(s_totalBytes.load(std::memory_order_relaxed));
         response->print(",\"error\":\""); response->print(utils_escape_json(getOfficialText(s_officialError)));
+        response->print("\",\"message\":\"");
+        if (state == OfficialState::Current) response->print("NO UPDATE NEEDED");
         response->print("\"}");
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
@@ -651,19 +729,19 @@ void ota_update_register(AsyncWebServer& server, const String& token) {
         const bool checkOnly = request->hasParam("check_only") &&
                                request->getParam("check_only")->value() == "true";
         const bool betaChannel = s_betaEnabled.load(std::memory_order_acquire);
-        if (!startOfficialTask(checkOnly, betaChannel)) {
+        if (!startOfficialTask(true, betaChannel, !checkOnly)) {
             if (ota_update_is_busy()) {
                 request->send(409, "application/json", "{\"success\":false,\"error\":\"Another OTA update is active\"}");
                 return;
             }
             request->send(503, "application/json", checkOnly
                 ? "{\"success\":false,\"error\":\"Could not start the release check\"}"
-                : "{\"success\":false,\"error\":\"Could not start the update task\"}");
+                : "{\"success\":false,\"error\":\"Could not start the release check before installation\"}");
             return;
         }
         request->send(202, "application/json", checkOnly
             ? "{\"success\":true,\"message\":\"Checking the selected GitHub release channel without installing\"}"
-            : "{\"success\":true,\"message\":\"Checking and installing the selected GitHub release channel\"}");
+            : "{\"success\":true,\"message\":\"Checking the selected channel; services stop only if an installation is needed\"}");
 #else
         s_officialState.store(OfficialState::Unsupported, std::memory_order_release);
         request->send(501, "application/json", "{\"success\":false,\"error\":\"Official updates require the ESP-IDF 5 production build\"}");

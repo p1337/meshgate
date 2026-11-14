@@ -339,6 +339,10 @@ The reliability supervisor suppresses scheduled, link-failure, low-memory and
 manual restart requests while OTA owns the update path. Only the successful OTA
 completion path may request its final reboot, after the complete inactive-slot
 image has passed size and digest validation and `Update.end()` has activated it.
+There is no preparatory reboot or boot-time OTA maintenance mode. Metadata is
+checked first. Only a required install quiesces nonessential services in the
+current runtime; failure resumes them, while success performs one ordinary
+post-install reboot.
 
 ---
 ## 7. Logging & Debugging

@@ -19,7 +19,8 @@ bool ota_update_is_authorized(AsyncWebServerRequest* request);
 // Applies the persistent release policy. Stable is the default channel;
 // automatic installation is opt-out. Changing the channel resets cached
 // release metadata and schedules a fresh automatic check when enabled.
-void ota_update_set_policy(bool betaEnabled, bool autoUpdateEnabled);
+void ota_update_set_policy(bool betaEnabled, bool autoUpdateEnabled,
+                           bool authorizedChannelChange = false);
 
 // Enables the background update scheduler after normal-mode networking and
 // critical services have started. Setup/captive-portal mode never calls this.

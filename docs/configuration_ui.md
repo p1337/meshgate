@@ -40,6 +40,10 @@ footer so the two destinations cannot diverge.
     flash message store is created.
   * Remains visible beside the cards on desktop and becomes a drawer on small
     screens.
+  * Shows an immediate, allocation-free CSS loading spinner in the reserved
+    desktop column while the serialized page bootstrap reads radio metadata and
+    retained mailbox pages. It changes to a clear retry/error message instead
+    of leaving the column blank when initialization is delayed or unavailable.
   * Lists the enabled channels learned from the radio configuration, unread
     counts, retained incoming/outgoing text, timestamps, and sender links.
   * Identifies the standard public channel as `Public (AQ==)` while never
@@ -113,8 +117,11 @@ footer so the two destinations cannot diverge.
     once a release version is known, the same value opens the changelog.
   * Provides one manual **Check & Install** action for the selected channel with
     visible state and download progress; it never accepts a firmware file or
-    arbitrary URL. The administrator key field appears only for a pending beta
-    enrollment change.
+    arbitrary URL. It checks metadata before changing runtime services. A
+    current release reports `NO UPDATE NEEDED` without interruption or reboot;
+    an available release pauses the nonessential services, installs into the
+    inactive slot and performs one ordinary reboot. The administrator key field
+    appears only for a pending beta enrollment change.
   * Downloads only the production ESP32-S3 image named by the official release
     metadata and verifies TLS, board identity, size and SHA-256 before activation.
 * **Community Card:**
@@ -220,12 +227,16 @@ footer so the two destinations cannot diverge.
      changing beta enrollment additionally requires `X-OTA-Key`.
    * **`GET /api/ota/official`**: Reports official update support, current and
      latest version, selected channel, automatic-update policy, technical
-     changelog URL, lifecycle state, byte progress and a bounded error string.
+     changelog URL, channel-reconciliation state, lifecycle state, byte
+     progress and a bounded error string. State `current` includes the explicit
+     result `NO UPDATE NEEDED`.
    * **`POST /api/ota/official`**: Starts the background official-release
-     download and install task. It accepts no URL, file or credential from the
-     browser, so it cannot be used to install arbitrary firmware.
-     `check_only=true` runs the same fixed-metadata validation but stops at
-     `current` or `available` without downloading or installing an image.
+     metadata check. It accepts no URL, file or credential from the browser, so
+     it cannot be used to install arbitrary firmware. Without `check_only`, an
+     available or administrator-authorized channel-reconciliation result is
+     handed to the runtime quiescer and internal installer; a current result
+     stops there. `check_only=true` always stops at `current` or `available`
+     without downloading or installing an image.
 
 All scheduled, link-recovery, low-memory, manual reboot and factory-reset
 paths are suppressed while an OTA operation owns the inactive slot. Only a

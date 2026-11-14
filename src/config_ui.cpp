@@ -32,6 +32,8 @@ Preferences backupPreferences;
  * Webserver for Captive Portal/Setup UI.
  */
 AsyncWebServer server(80);
+static std::atomic<bool> s_serverListening{false};
+static std::atomic<bool> s_serverPausedForOta{false};
 
 // Official MeshGate logo. PlatformIO embeds the exact shared SVG used by the
 // repository and Web Flasher, so the captive portal never needs the internet.
@@ -488,6 +490,13 @@ const char index_html[] PROGMEM = R"rawliteral(
   .chat-heading { color:var(--accent); font:700 14px var(--mono); letter-spacing:1px; text-transform:uppercase; }
   .chat-identity { color:var(--dim); font:10px var(--mono); text-align:right; max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .chat-close { display:none; width:auto; margin:0; padding:4px 8px; color:var(--text); background:transparent; }
+  .chat-loading { display:none; flex:1 1 auto; min-height:240px; align-items:center; justify-content:center; flex-direction:column; gap:12px; padding:28px; color:var(--dim); font:12px/1.5 var(--mono); text-align:center; }
+  .chat-panel.loading .chat-loading { display:flex; }
+  .chat-panel.loading .chat-channels,.chat-panel.loading .chat-state,.chat-panel.loading .chat-messages,.chat-panel.loading .chat-composer { display:none; }
+  .chat-loading-spinner { width:34px; height:34px; border:3px solid rgba(94,237,151,.16); border-top-color:var(--accent); border-radius:50%; animation:chat-loading-spin .8s linear infinite; }
+  .chat-loading.error .chat-loading-spinner { display:none; }
+  .chat-loading.error { color:var(--yellow); }
+  @keyframes chat-loading-spin { to { transform:rotate(360deg); } }
   .chat-channels { display:flex; gap:6px; padding:10px 0; overflow-x:auto; scrollbar-width:thin; }
   .chat-channel { position:relative; flex:0 0 auto; width:auto; min-width:78px; margin:0; padding:7px 24px 7px 9px; border-color:var(--border); color:var(--dim); background:var(--panel); text-align:left; font-size:11px; }
   .chat-channel.active { color:#07110b; border-color:var(--accent); background:var(--accent); }
@@ -513,6 +522,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   .chat-toggle { position:fixed; left:12px; bottom:12px; z-index:34; display:none; width:auto; min-width:108px; padding:10px 13px; color:#07110b; border-color:var(--accent); background:var(--accent); box-shadow:0 8px 24px rgba(0,0,0,.38); }
   @media (min-width:1100px) {
     body { margin-left:420px; margin-right:auto; }
+    .chat-panel.loading { display:flex; flex-direction:column; }
   }
   @media (max-width:1099px) {
     .chat-panel.ready { display:flex; width:min(390px,92vw); transform:translateX(-102%); transition:transform .2s ease; }
@@ -625,10 +635,14 @@ const char index_html[] PROGMEM = R"rawliteral(
 </style>
 </head>
 <body>
-  <aside id="chat-panel" class="chat-panel" aria-label="Meshtastic channel chat">
+  <aside id="chat-panel" class="chat-panel loading" aria-label="Meshtastic channel chat">
     <div class="chat-header">
       <div><div class="chat-heading">Mesh messages</div><div id="chat-identity" class="chat-identity">Waiting for radio configuration</div></div>
       <button type="button" class="chat-close" onclick="toggleChat(false)" aria-label="Close chat">×</button>
+    </div>
+    <div id="chat-loading" class="chat-loading" role="status" aria-live="polite">
+      <span class="chat-loading-spinner" aria-hidden="true"></span>
+      <span id="chat-loading-text">Chat wird geladen …</span>
     </div>
     <div id="chat-channels" class="chat-channels" role="tablist" aria-label="Meshtastic channels"></div>
     <div id="chat-state" class="chat-state">Loading retained messages…</div>
@@ -1220,6 +1234,17 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (panel) panel.classList.toggle('open', !!open);
     }
 
+    function setChatLoadingState(state, message) {
+      const panel = document.getElementById('chat-panel');
+      const loading = document.getElementById('chat-loading');
+      const text = document.getElementById('chat-loading-text');
+      if (!panel || !loading || !text) return;
+      const active = state !== 'ready';
+      panel.classList.toggle('loading', active);
+      loading.classList.toggle('error', state === 'error');
+      if (message) text.innerText = message;
+    }
+
     function chatUtf8Length(value) {
       if (window.TextEncoder) return new TextEncoder().encode(value).length;
       return unescape(encodeURIComponent(value)).length;
@@ -1373,6 +1398,8 @@ const char index_html[] PROGMEM = R"rawliteral(
           chatInitialLoadComplete = true;
           document.getElementById('chat-state').innerText = 'Retained mailbox · ' + Number(data.count || 0) + ' / ' + Number(data.capacity || 0);
           renderChatMessages(true);
+          setChatLoadingState(chatChannels.length ? 'ready' : 'loading',
+            chatChannels.length ? '' : 'Warte auf die Funkgerät-Konfiguration …');
         });
     }
 
@@ -1385,6 +1412,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           else chatCursor = Math.max(chatCursor, Number(data.next_sequence || 1) - 1);
           addChatMessages(messages, chatInitialLoadComplete);
           document.getElementById('chat-state').innerText = 'Retained mailbox · ' + Number(data.count || 0) + ' / ' + Number(data.capacity || 0);
+          if (chatChannels.length && chatInitialLoadComplete) setChatLoadingState('ready');
         })
         .catch(() => { document.getElementById('chat-state').innerText = 'Mailbox temporarily unavailable'; })
         .finally(() => { chatPollTimer = setTimeout(pollChatMailbox, 5000); });
@@ -1413,8 +1441,10 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
         renderChatChannels();
         renderChatMessages(false);
+        if (available && chatInitialLoadComplete) setChatLoadingState('ready');
       }).catch(() => {
         document.getElementById('chat-state').innerText = 'Radio metadata temporarily unavailable';
+        if (!chatInitialLoadComplete) setChatLoadingState('error', 'Chat ist vorübergehend nicht verfügbar. Neuer Versuch läuft …');
       }).finally(() => { chatMetaTimer = setTimeout(refreshChatMetadata, 15000); });
     }
 
@@ -1473,6 +1503,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         .catch(() => {
           chatInitialLoadComplete = true;
           document.getElementById('chat-state').innerText = 'Mailbox temporarily unavailable';
+          setChatLoadingState('error', 'Chatverlauf konnte nicht geladen werden. Neuer Versuch läuft …');
         })
         .finally(pollChatMailbox);
     }
@@ -2672,7 +2703,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       const btn = document.getElementById('btn-ota-update');
       const bar = document.getElementById('ota-progress-bar');
       const labels = {
-        idle: 'Ready', checking: 'Checking GitHub', current: 'Up to date',
+        idle: 'Ready', checking: 'Checking GitHub', current: 'NO UPDATE NEEDED',
         available: 'Update available',
         downloading: 'Downloading', verifying: 'Verifying', installing: 'Installing',
         rebooting: 'Rebooting', failed: 'Failed', unsupported: 'Unsupported'
@@ -2703,8 +2734,10 @@ const char index_html[] PROGMEM = R"rawliteral(
       bar.style.width = (status.state === 'verifying' || status.state === 'installing' || status.state === 'rebooting' ? 100 : percent) + '%';
       bar.className = 'progress-fill ' + (status.state === 'failed' ? 'progress-red' : 'progress-green');
       if (status.state === 'failed') showAlert('ota-alert', 'error', status.error || 'Official update failed.');
-      if (status.state === 'current') showAlert('ota-alert', 'success', 'MeshGate is already running the latest release in the selected channel.');
-      if (status.state === 'available') showAlert('ota-alert', 'warning', 'A newer official MeshGate release is available. Select its version to read the technical changelog before installing.');
+      if (status.state === 'current') showAlert('ota-alert', 'success', 'NO UPDATE NEEDED — MeshGate already runs the selected channel release. No service was stopped and no reboot is required.');
+      if (status.state === 'available') showAlert('ota-alert', 'warning', status.channel_reconcile_pending
+        ? 'The authorized Stable/Beta channel change requires the selected channel image. Services will now pause for installation.'
+        : 'A newer official MeshGate release is available. Nonessential services will now pause for installation.');
       if (status.state === 'rebooting') showAlert('ota-alert', 'success', 'Official release verified and installed. MeshGate is rebooting now.');
     }
 
@@ -2862,6 +2895,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         .then(() => initChat())
         .catch(error => {
           showAlert('ota-alert', 'error', error.message || 'MeshGate startup data is temporarily unavailable.');
+          setChatLoadingState('error', 'Chat konnte beim Seitenstart nicht geladen werden.');
         });
     };
 
@@ -3398,7 +3432,11 @@ void config_ui_start_server() {
             return;
         }
 
-        ota_update_set_policy(betaEnabled, autoUpdateEnabled);
+        ota_update_set_policy(
+            betaEnabled,
+            autoUpdateEnabled,
+            betaEnabled != current.ota_beta_enabled
+        );
         log_i("[OTA] Policy saved: channel=%s, automatic_updates=%s",
               betaEnabled ? "beta" : "stable", autoUpdateEnabled ? "enabled" : "disabled");
         AsyncWebServerResponse* response = request->beginResponse(200, "application/json", "{\"success\":true}");
@@ -3922,6 +3960,7 @@ void config_ui_start_server() {
     });
 
     server.begin();
+    s_serverListening.store(true, std::memory_order_release);
 }
 
 /**
@@ -3929,4 +3968,27 @@ void config_ui_start_server() {
  */
 void config_ui_stop_server() {
     server.end();
+    s_serverListening.store(false, std::memory_order_release);
+}
+
+void config_ui_pause_for_ota() {
+    bool expected = false;
+    if (!s_serverPausedForOta.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+    if (s_serverListening.exchange(false, std::memory_order_acq_rel)) {
+        log_i("[OTA] Pausing HTTP control, chat and PhoneAPI service...");
+        server.end();
+    }
+}
+
+void config_ui_resume_after_ota() {
+    bool expected = true;
+    if (!s_serverPausedForOta.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
+        return;
+    }
+    if (!s_serverListening.exchange(true, std::memory_order_acq_rel)) {
+        log_i("[OTA] Restoring HTTP control, chat and PhoneAPI service...");
+        server.begin();
+    }
 }

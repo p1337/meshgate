@@ -59,3 +59,5 @@ void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& o
  * Logs heap, stack watermarks, queue occupancies, and network stats every 15 seconds.
  */
 void diag_telemetry_start();
+void diag_telemetry_pause_for_ota();
+void diag_telemetry_resume_after_ota();

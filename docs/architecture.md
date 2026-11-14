@@ -157,15 +157,24 @@ when a firmware tag has no matching heading and publishes that technical entry
 as the GitHub Release body. Documentation-only and promotional edits are not
 firmware changelog entries.
 
-The production updater pauses and destroys the active MQTT client before it
-allocates the internal, cache-safe installer task and opens its TLS stream. This
-is required on the Nano ESP32 because a live
-DERP session, MQTTS and OTA TLS otherwise exhausted internal heap during a
-real 1.8 MB download (observed minimum: 300 bytes) and repeatedly closed the
-stream near 400 KiB. Stored MQTT configuration is never changed and is restored
-if the OTA attempt fails. The downloader also resumes an interrupted HTTPS
-transfer with validated byte ranges, while one SHA-256 context spans every
-connection; only the complete verified image can be activated.
+Both manual and scheduled installation requests first run only the metadata
+lookup on a PSRAM-backed task. If the selected channel is already current, the
+updater reports `NO UPDATE NEEDED`; it does not stop services or reboot. A real
+update, or an administrator-authorized Stable/Beta channel reconciliation,
+then pauses HTTP/chat/PhoneAPI, TCP 4403, BLE, MQTT, the configured VPN, mDNS,
+telemetry and installation-presence traffic before allocating the internal,
+cache-safe installer task and opening its TLS stream. Wi-Fi remains active for
+HTTPS and the reliability supervisor remains active for the sole permitted
+post-install restart. This is required on the Nano ESP32 because live DERP,
+MQTTS and OTA TLS otherwise exhausted internal heap during a real 1.8 MB
+download (observed minimum: 300 bytes) and repeatedly closed the stream near
+400 KiB. Persisted configuration is never changed; all paused services are
+restored if the attempt fails. A successful, size- and SHA-256-verified image
+is activated and followed by exactly one normal reboot, which starts every
+configured service through the ordinary boot path. The downloader also resumes
+an interrupted HTTPS transfer with validated byte ranges, while one SHA-256
+context spans every connection; only the complete verified image can be
+activated.
 
 ### 2. Key Libraries
 *   **BLE:** `h2zero/NimBLE-Arduino`. NimBLE is a highly optimized, low-RAM Bluetooth stack. It is much more stable and resource-efficient than the standard Bluedroid stack, and it fully supports secure pairing and PIN codes.

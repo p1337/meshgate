@@ -6,6 +6,12 @@
 #include "utils.h"
 #include <WiFi.h>
 #include <Arduino.h>
+#include <atomic>
+
+namespace {
+std::atomic<bool> s_diagPausedForOta{false};
+TaskHandle_t s_diagTaskHandle = nullptr;
+}
 
 SystemTelemetrySnapshot diag_telemetry_get_snapshot() {
     SystemTelemetrySnapshot s;
@@ -356,19 +362,36 @@ void diag_telemetry_format_prometheus(const SystemTelemetrySnapshot& s, Print& o
 
 static void diagTelemetryTask(void* parameter) {
     // Initial delay before first report to allow boot sequence to settle
-    vTaskDelay(pdMS_TO_TICKS(10000));
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10000));
 
-    while (true) {
+    while (!s_diagPausedForOta.load(std::memory_order_acquire)) {
         SystemTelemetrySnapshot s = diag_telemetry_get_snapshot();
         char buf[512];
         diag_telemetry_format_serial(s, buf, sizeof(buf));
         Serial.printf("[ %7lu][I][diag] %s\n", millis(), buf);
 
-        vTaskDelay(pdMS_TO_TICKS(15000));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(15000));
     }
+    s_diagTaskHandle = nullptr;
+    vTaskDelete(nullptr);
 }
 
 void diag_telemetry_start() {
+    if (s_diagTaskHandle != nullptr) return;
+    s_diagPausedForOta.store(false, std::memory_order_release);
     // Run at low priority (1) pinned to Core 0 with a 3KB stack
-    xTaskCreatePinnedToCore(diagTelemetryTask, "diag_telemetry", 3072, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(diagTelemetryTask, "diag_telemetry", 3072, NULL, 1, &s_diagTaskHandle, 0);
+}
+
+void diag_telemetry_pause_for_ota() {
+    s_diagPausedForOta.store(true, std::memory_order_release);
+    TaskHandle_t task = s_diagTaskHandle;
+    if (task != nullptr) xTaskNotifyGive(task);
+    for (uint8_t attempt = 0; attempt < 50 && s_diagTaskHandle != nullptr; ++attempt) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void diag_telemetry_resume_after_ota() {
+    if (s_diagTaskHandle == nullptr) diag_telemetry_start();
 }

@@ -4,6 +4,25 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.25-beta.1] - 2026-11-14
+
+- Changed manual and automatic official OTA to check metadata on a PSRAM-backed
+  task before stopping any service. A current device now reports
+  `NO UPDATE NEEDED` without a service interruption or reboot.
+- When an image is required, MeshGate pauses HTTP/chat/PhoneAPI, TCP 4403, BLE,
+  MQTT, VPN, mDNS discovery, telemetry and presence traffic before creating the
+  internal flash-writer task. Wi-Fi and the recovery supervisor remain active; a failed
+  attempt restores the paused services, while a verified image causes exactly
+  one normal reboot.
+- Made an administrator-authorized Stable/Beta channel change reconcile the
+  selected channel image even when normal SemVer advancement would reject an
+  equal or older candidate.
+- Added an immediate loading indicator to the reserved desktop chat column, so
+  the serialized low-memory page startup no longer looks like a missing or
+  failed status page while radio metadata and mailbox history are loading.
+- Added explicit waiting and retry/error states for delayed radio configuration
+  or mailbox responses without introducing another request or polling path.
+
 ## [v0.7.24] - 2026-11-14
 
 - Added a persistent stable/beta OTA channel selector in the System tab. Beta
