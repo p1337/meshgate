@@ -24,6 +24,10 @@
     a { color:var(--accent); }
     .notice { margin:22px 0; padding:14px 16px; border-left:3px solid var(--yellow); background:rgba(255,214,10,.05); color:var(--text); }
     .notice strong { color:var(--yellow); }
+    .first-flash { border:1px solid var(--yellow); border-left:5px solid var(--yellow); background:rgba(255,214,10,.08); }
+    .first-flash ol { margin:10px 0 0; padding-left:24px; }
+    .first-flash li + li { margin-top:5px; }
+    .first-flash code { color:var(--yellow); font-family:var(--mono); font-weight:700; }
     h2 { margin:34px 0 14px; color:var(--text); font:700 17px var(--mono); letter-spacing:.08em; text-transform:uppercase; }
     .grid { display:grid; grid-template-columns:minmax(0,560px); gap:14px; }
     .card { display:flex; flex-direction:column; min-height:230px; padding:20px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(135deg,var(--panel),var(--panel2)); }
@@ -57,6 +61,17 @@
     <div class="notice"><strong>Do not disconnect early:</strong> wait for <strong>Installation complete</strong>, then select <strong>Next</strong> to release the serial connection and start MeshGate. The installer waits another 30 seconds for startup. The Nano RGB LED must then turn off; if it remains purple, press <strong>RST once</strong>. Do not hold B1.</div>
 
     <h2>Factory install / USB recovery</h2>
+    <div class="notice first-flash">
+      <strong>Required for the very first flash:</strong> put the Arduino Nano ESP32 into ROM download mode before starting the Web Flasher.
+      <ol>
+        <li>Connect the board to the computer with USB-C.</li>
+        <li>Temporarily bridge the <code>B1</code> pin to a <code>GND</code> pin.</li>
+        <li>While the bridge is in place, press and release <code>RST</code>.</li>
+        <li>Remove the B1-to-GND bridge.</li>
+        <li>Only now select <strong>Connect &amp; install / recover</strong>.</li>
+      </ol>
+      This is required only to enter download mode for the first USB installation or recovery. Do not leave B1 connected to GND during normal startup.
+    </div>
     <section class="grid">
       <article class="card primary">
         <span class="badge">Production · IDF 5</span>

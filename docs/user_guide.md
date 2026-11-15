@@ -1,5 +1,21 @@
 # User Guide
 
+## First USB installation
+
+The Arduino Nano ESP32 must be placed in ESP32-S3 ROM download mode before its
+very first MeshGate USB flash:
+
+1. Connect the board to the computer with USB-C.
+2. Temporarily bridge the **B1** pin to a **GND** pin.
+3. While the bridge is in place, press and release **RST**.
+4. Remove the B1-to-GND bridge.
+5. In the MeshGate Web Flasher, select **Connect & install / recover**.
+
+This B1-to-GND bridge is required only to enter download mode for the first USB
+installation or recovery. Do not leave B1 connected to GND during normal
+startup. For an already configured MeshGate, leave **Erase device** unchecked
+unless you deliberately intend to remove all saved configuration.
+
 ## Status LED Indicators
 
 On Arduino Nano ESP32, a red-and-blue (purple) RGB light immediately after a

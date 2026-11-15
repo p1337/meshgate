@@ -71,6 +71,11 @@ history over LoRa.
 Open the [MeshGate Web Flasher](https://p1337.github.io/meshgate/) in Chrome,
 Edge or Opera on a desktop computer.
 
+- **Very first USB flash:** connect the Arduino Nano ESP32 over USB-C,
+  temporarily bridge its **B1** pin to **GND**, press and release **RST** while
+  that bridge is in place, and then remove the bridge. Only then select
+  **Connect & install / recover** in the Web Flasher. Do not leave B1 connected
+  to GND during normal startup.
 - **New installation:** erase the device when prompted.
 - **Existing configured device:** leave **Erase device** unchecked. Erasing
   permanently removes saved Wi-Fi, BLE, VPN and MQTT configuration.
