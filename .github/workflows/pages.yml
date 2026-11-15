@@ -1,6 +1,11 @@
 name: Deploy Web Flasher to GitHub Pages
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
   release:
     types: [published]
   workflow_run:
