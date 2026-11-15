@@ -43,8 +43,29 @@
     .support { align-items:center; min-height:0; text-align:center; }
     .install { margin-top:14px; }
     .install button { width:100%; padding:10px 14px; border:1px solid var(--accent); border-radius:3px; background:var(--accent); color:#07110b; cursor:pointer; font:700 12px var(--mono); letter-spacing:.05em; text-transform:uppercase; }
+    .flash-preflight { width:min(720px,calc(100% - 28px)); max-height:calc(100vh - 28px); padding:0; overflow:auto; border:1px solid var(--accent); border-radius:5px; background:var(--panel2); color:var(--text); box-shadow:0 24px 80px rgba(0,0,0,.72); }
+    .flash-preflight::backdrop { background:rgba(2,5,8,.86); backdrop-filter:blur(3px); }
+    .preflight-content { padding:22px; }
+    .preflight-content h2 { margin:8px 0 10px; color:var(--accent); }
+    .preflight-content p { margin:0 0 14px; color:var(--text); }
+    .preflight-image { display:block; width:100%; height:auto; margin:14px 0; border-radius:3px; background:#fff; }
+    .preflight-steps { margin:14px 0 0; padding-left:24px; }
+    .preflight-steps li + li { margin-top:7px; }
+    .preflight-steps code { color:var(--yellow); font-family:var(--mono); font-weight:700; }
+    .preflight-warning { margin-top:16px; padding:11px 13px; border-left:3px solid var(--yellow); background:rgba(255,214,10,.07); color:var(--text); }
+    .preflight-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; margin-top:20px; }
+    .preflight-actions button { min-height:42px; padding:10px 14px; border-radius:3px; cursor:pointer; font:700 11px var(--mono); letter-spacing:.04em; text-transform:uppercase; }
+    .preflight-cancel { border:1px solid var(--muted); background:transparent; color:var(--text); }
+    .preflight-actions esp-web-install-button { flex:1 1 310px; }
+    .preflight-continue { width:100%; border:1px solid var(--accent); background:var(--accent); color:#07110b; }
     .links { display:flex; flex-wrap:wrap; gap:10px 18px; margin-top:24px; font:500 12px var(--mono); }
     footer { margin-top:34px; padding-top:16px; border-top:1px solid var(--border); color:var(--muted); font:11px var(--mono); }
+    @media (max-width:560px) {
+      .preflight-content { padding:16px; }
+      .preflight-actions { flex-direction:column-reverse; }
+      .preflight-actions button, .preflight-actions esp-web-install-button { width:100%; }
+      .preflight-actions esp-web-install-button { flex-basis:auto; }
+    }
   </style>
 </head>
 <body>
@@ -78,7 +99,9 @@
         <h3>Arduino Nano ESP32 · ESP32-S3</h3>
         <p>ESP32-S3 production build with MicroLink/Tailscale, secure OTA, BLE-to-TCP and MQTT proxy support.</p>
         <div class="meta">Arduino Core 3.3.9 · ESP-IDF 5.5.4</div>
-        <div class="install"><esp-web-install-button manifest="manifest_arduino_nano_esp32_idf5.json"><button slot="activate">Connect &amp; install / recover</button></esp-web-install-button></div>
+        <div class="install">
+          <button id="open-flash-preflight" type="button">Connect &amp; install / recover</button>
+        </div>
         <p style="margin-top:14px;"><strong>Finished?</strong> Wait for <strong>Installation complete</strong>, select <strong>Next</strong>, and allow 30 seconds for startup. Do not unplug the board while the installer is open.</p>
       </article>
     </section>
@@ -133,5 +156,43 @@
     </nav>
     <footer>MeshGate extensions &copy; 2026 Robert Stefanowicz (p1337). GPL-3.0-only; source, license, notices and no-warranty terms are available on GitHub. Meshtastic&reg; is a trademark of Meshtastic LLC; MeshGate is not affiliated with or endorsed by Meshtastic LLC.</footer>
   </main>
+
+  <dialog id="flash-preflight" class="flash-preflight" aria-labelledby="flash-preflight-title">
+    <div class="preflight-content">
+      <span class="badge">Required before connection</span>
+      <h2 id="flash-preflight-title">Prepare the Arduino Nano ESP32</h2>
+      <p>For the first USB flash or recovery, place the board in ROM download mode before opening the installer:</p>
+      <img class="preflight-image" src="assets/arduino-nano-esp32-first-flash.png" width="634" height="399" alt="Arduino Nano ESP32 showing the B1-to-GND bridge, RST button and release sequence">
+      <ol class="preflight-steps">
+        <li>Connect the board to the computer with USB-C.</li>
+        <li>Temporarily bridge <code>B1</code> to <code>GND</code>.</li>
+        <li>While bridged, press and release <code>RST</code>.</li>
+        <li>Release and remove the B1-to-GND bridge.</li>
+        <li>Then continue to the WebSerial installer.</li>
+      </ol>
+      <div class="preflight-warning"><strong>Important:</strong> never leave B1 connected to GND during normal startup. For an existing configured MeshGate, leave <em>Erase device</em> unchecked unless you deliberately want to delete all saved settings.</div>
+      <div class="preflight-actions">
+        <button id="cancel-flash-preflight" class="preflight-cancel" type="button">Cancel</button>
+        <esp-web-install-button manifest="manifest_arduino_nano_esp32_idf5.json"><button id="continue-to-installer" class="preflight-continue" type="button" slot="activate">Board is ready — open installer</button></esp-web-install-button>
+      </div>
+    </div>
+  </dialog>
+  <script>
+    (() => {
+      const preflight = document.getElementById('flash-preflight');
+      const openButton = document.getElementById('open-flash-preflight');
+      const cancelButton = document.getElementById('cancel-flash-preflight');
+      const continueButton = document.getElementById('continue-to-installer');
+
+      openButton.addEventListener('click', () => preflight.showModal());
+      cancelButton.addEventListener('click', () => preflight.close());
+      preflight.addEventListener('click', event => {
+        if (event.target === preflight) preflight.close();
+      });
+      continueButton.addEventListener('click', () => {
+        preflight.close();
+      });
+    })();
+  </script>
 </body>
 </html>
