@@ -1012,13 +1012,13 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
     <div id="mqtt-edit" style="display:none;">
       <div class="alert alert-info" style="display:block; margin-bottom: 12px;">
-        The bridge automatically queries your radio for its MQTT settings (hostname, credentials, and root topic) and connects
-        to that server.<br/>
+        In automatic mode MeshGate writes the complete MeshRadar MQTT profile to the currently paired Meshtastic node over Bluetooth and verifies
+        every required value before connecting.<br/>
         <br/>
         The factory standard is <strong>meshradar.pl:8883</strong>, TLS enabled, root <strong>msh</strong>.
-        A complete custom broker configuration received from the radio replaces it.<br/>
+        Choose the manual checklist instead if you deliberately use a custom broker.<br/>
         <br/>
-        <strong>NOTE</strong>: Make sure your radio has both <strong>MQTT Enabled</strong> and <strong>MQTT Proxy Enabled</strong> configured.
+        <strong>Automatic mode</strong> configures the radio itself. Manual mode leaves the radio unchanged and shows the required checklist.
       </div>
 
       <div style="margin: 10px 0 6px;">
@@ -1048,9 +1048,10 @@ const char index_html[] PROGMEM = R"rawliteral(
             <li>Enable the radio's MQTT module.</li>
             <li>Enable <strong>Proxy to Client</strong> so MeshGate provides the internet connection over BLE.</li>
             <li>Enable <strong>LoRa OK to MQTT</strong>.</li>
+            <li>Write <strong>meshradar.pl:8883</strong>, TLS, encrypted packets and root topic <strong>msh</strong> to the radio.</li>
             <li>Enable uplink/downlink only for the channels selected below.</li>
           </ol>
-          Channel names, keys, broker credentials and all unrelated radio settings are preserved. The update is committed as one transaction and read back for verification.
+          MeshGate temporarily disconnects other PhoneAPI clients during this transaction so they cannot replace its configuration request. Channel names, keys and all unrelated radio settings are preserved. Every requested value is read back before completion.
           <div id="mqtt-radio-channel-list" style="margin-top:12px;">Waiting for radio channels…</div>
         </div>
 
@@ -2399,7 +2400,7 @@ const char index_html[] PROGMEM = R"rawliteral(
               else statusPill.className = 'status-pill error';
             }
 
-            document.getElementById('view-mqtt-radio-proxy').innerText = m.radio_proxy_enabled ? 'Enabled (Ready)' : (m.radio_server ? 'Disabled on Radio' : '(Waiting for radio)');
+            document.getElementById('view-mqtt-radio-proxy').innerText = !m.radio_config_received ? '(Radio not verified)' : (m.radio_proxy_enabled ? 'Enabled (Ready)' : 'Disabled on Radio');
             const setupRow = document.getElementById('view-mqtt-radio-setup-row');
             const setupPill = document.getElementById('view-mqtt-radio-setup');
             const setupDetail = document.getElementById('view-mqtt-radio-setup-detail');
@@ -2423,10 +2424,10 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
             if (m.active_server) {
               document.getElementById('view-mqtt-broker').innerText = m.active_server + ':' + m.active_port + (m.active_tls ? ' (TLS)' : '');
-            } else if (m.radio_server) {
+            } else if (m.radio_config_received && m.radio_server) {
               document.getElementById('view-mqtt-broker').innerText = m.radio_server + ':' + m.radio_port + (m.radio_tls ? ' (TLS)' : '');
             } else {
-              document.getElementById('view-mqtt-broker').innerText = '(Waiting for radio)';
+              document.getElementById('view-mqtt-broker').innerText = 'Gateway preset (radio not verified)';
             }
             document.getElementById('view-mqtt-root').innerText = m.active_root || m.radio_root || 'msh';
             const mqttTx = document.getElementById('view-mqtt-tx');
@@ -3179,10 +3180,31 @@ const char index_html[] PROGMEM = R"rawliteral(
           const btnReset = document.getElementById('btn-reset');
           btnReboot.disabled = true;
           btnReset.disabled = true;
-          showAlert('system-alert', 'info', 'Bridge is rebooting... Connect to your local WiFi to use.');
-          fetch('/reboot', { method: 'POST' });
+          showAlert('system-alert', 'info', 'Restarting / reconnecting… MeshGate is bringing WiFi, remote access, MQTT and Bluetooth back online. This page reconnects automatically.');
+          fetch('/reboot', { method: 'POST' })
+            .then(r => {
+              if (!r.ok) throw new Error('HTTP ' + r.status);
+              setTimeout(pollAfterManualReboot, 3000);
+            })
+            .catch(err => {
+              btnReboot.disabled = false;
+              btnReset.disabled = false;
+              showAlert('system-alert', 'error', 'Restart request failed: ' + err.message);
+            });
         }
       );
+    }
+
+    function pollAfterManualReboot() {
+      fetch('/status?reconnect=' + Date.now(), { cache: 'no-store' })
+        .then(r => {
+          if (!r.ok) throw new Error('not ready');
+          window.location.reload();
+        })
+        .catch(() => {
+          showAlert('system-alert', 'info', 'Restarting / reconnecting… Waiting for MeshGate services to return.');
+          setTimeout(pollAfterManualReboot, 1500);
+        });
     }
 
     function resetBridge() {
@@ -4045,12 +4067,6 @@ void config_ui_start_server() {
         mcfg.tls_insecure = fullCfg.mqtt_tls_insecure;
         mcfg.custom_ca = fullCfg.mqtt_custom_ca;
 
-        // Only apply live configuration to the runtime subsystem if operating in Normal mode.
-        // In AP / Setup mode, settings are safely stored in NVS and applied on normal boot.
-        if (!wifi_net_is_ap_mode()) {
-            mqtt_net_apply_config(mcfg);
-        }
-
         if (automaticRadioSetup && wifi_net_is_ap_mode()) {
             request->send(
                 409,
@@ -4063,6 +4079,9 @@ void config_ui_start_server() {
         if (automaticRadioSetup) {
             String setupError;
             if (!mqtt_net_request_radio_setup(uplinkMask, downlinkMask, setupError)) {
+                // The gateway preference is already durable. Apply it live
+                // even when the optional node transaction could not start.
+                mqtt_net_apply_config(mcfg);
                 setupError.replace("\\", "\\\\");
                 setupError.replace("\"", "\\\"");
                 request->send(
@@ -4072,6 +4091,14 @@ void config_ui_start_server() {
                 );
                 return;
             }
+        }
+
+        // Only apply live configuration to the runtime subsystem if operating
+        // in Normal mode. A successful automatic setup already owns the radio
+        // transaction, so mqtt_net_apply_config() keeps the broker stopped
+        // until the complete node read-back succeeds.
+        if (!wifi_net_is_ap_mode()) {
+            mqtt_net_apply_config(mcfg);
         }
 
         request->send(200, "application/json", automaticRadioSetup

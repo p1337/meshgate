@@ -6,7 +6,7 @@ This document details the architectural plan, feasibility analysis, protocol det
 
 ### Goals
 * **Optional with Public Default:** The feature is enabled by default with MeshRadar's published shared uplink profile and can be disabled at any time. Existing TCP bridging remains independent.
-* **Auto-Sync from Radio:** A complete custom broker address, port, credentials, encryption (TLS), and root topic received from the connected Meshtastic radio's `ModuleConfig.mqtt` payload replaces the public standard. This eliminates configuration drift for private brokers.
+* **Verified automatic radio setup:** With explicit owner approval, MeshGate writes the complete public MeshRadar profile and every required proxy/uplink switch to the connected radio, then verifies a full read-back. Manual mode leaves custom broker settings untouched.
 * **3-Tier TLS Security Architecture:**
   * **Tier 1 (Public CA):** Built-in Mozilla Root CA bundle for zero-config public brokers (`mqtt.meshtastic.org`, AWS IoT, HiveMQ, etc.).
   * **Tier 2 (Custom / Private CA):** Upload / paste custom CA root certificates in PEM format for private/enterprise brokers.
@@ -38,15 +38,14 @@ This document details the architectural plan, feasibility analysis, protocol det
 
 ---
 
-## 3. Configuration Architecture: Radio Auto-Sync
+## 3. Configuration Architecture: Verified Radio Setup
 
-### 3.1 Why Auto-Sync is the Native Architecture
-In the Meshtastic ecosystem, the **physical radio** is the authoritative source of truth for MQTT topics, encryption keys, and channel hashes. When the radio formats a `MqttClientProxyMessage`, the topic string (e.g. `msh/US/2/e/...` or `ptp/commons/...`) is constructed internally based on its own `ModuleConfig.mqtt.root` configuration.
-
-By using Auto-Sync:
-1. **Zero Configuration Drift:** The user configures MQTT once inside the standard Meshtastic App / CLI. The bridge automatically adapts.
-2. **No Topic Rewriting Complexity:** Avoids error-prone dynamic prefix rewriting across complex mesh channels.
-3. **Identical to Official Mobile Apps:** The bridge operates identically to the official Android/iOS apps when proxying.
+### 3.1 Why MeshGate writes the currently paired radio
+The **physical radio** constructs `MqttClientProxyMessage` topics and envelopes
+from its own `ModuleConfig.mqtt`, LoRa consent and channel settings. A broker
+fallback held only by MeshGate cannot cause the radio to emit proxy envelopes.
+Automatic mode therefore writes the complete displayed MeshRadar profile to
+the radio. Manual mode remains the explicit choice for custom brokers.
 
 ### 3.2 Radio MQTT Settings & Setup Checklist
 
@@ -64,22 +63,19 @@ In the Meshtastic App (or Web UI / CLI), navigate to **Radio Configuration ➔ M
 6. **`Root Topic` (`root`):** Root topic prefix for your mesh (e.g. `msh` or `msh/US`).
 7. **Channel Uplink / Downlink:** In **Channels ➔ [Channel Name] ➔ Module Settings**, ensure **Uplink Enabled** and/or **Downlink Enabled** is toggled ON for the channel(s) you wish to bridge to MQTT.
 
-MeshGate `v0.7.26-beta.5` can perform items 1, 2, LoRa
-`config_ok_to_mqtt`, and the explicitly selected channel flags itself over the
-existing BLE PhoneAPI path. The owner must select automatic mode in the MQTT
-card after reviewing the displayed plan. MeshGate first captures the complete
-radio configuration, uses the radio's short-lived admin session key, applies a
-single settings transaction, and verifies a fresh read-back. Manual mode keeps
-the checklist and performs no radio write.
+MeshGate performs the complete checklist itself over the existing BLE PhoneAPI
+path when the owner selects automatic mode. It temporarily disconnects and
+rejects competing PhoneAPI writers, captures the complete radio configuration,
+uses the radio's short-lived admin session key, writes the MeshRadar address,
+published credentials, TLS, encrypted packets, root topic, MQTT/proxy switches,
+LoRa consent and selected channel flags as one transaction, and verifies a
+fresh read-back. Manual mode keeps the checklist and performs no radio write.
 
-Before the first radio configuration arrives, the bridge uses the public
+Before the first radio configuration arrives, the bridge may hold the public
 MeshRadar preset (`meshradar.pl:8883`, user/password `meshradar`, TLS enabled,
-root `msh`). The untouched Meshtastic public default
-(`mqtt.meshtastic.org` with its published standard credentials) is also
-recognized as a factory profile and mapped to this MeshRadar preset. During the
-initial BLE connection, the bridge sends a `want_config_id` packet and receives
-`FromRadio.moduleConfig.mqtt`. A genuinely custom radio configuration then
-becomes authoritative.
+root `msh`) as a gateway fallback. The UI labels it as unverified until an
+actual `FromRadio.moduleConfig.mqtt` arrives. Automatic setup writes that preset
+to the radio; a custom configuration remains authoritative only in manual mode.
 
 ---
 
@@ -209,9 +205,9 @@ flowchart TD
 ```
 
 #### Detailed Lifecycle & State Transition Rules:
-1. **Remote-First Broker Startup & Radio Query:**
-   * The factory-standard MeshRadar broker profile can connect before Bluetooth. If Tailscale is enabled, broker startup waits until DERP is ready so remote administration keeps priority; otherwise it follows Wi-Fi immediately.
-   * When Bluetooth connects, the bridge sends `want_config_id` and a complete radio `ModuleConfig.mqtt` replaces the factory standard. The radio still controls whether proxy envelopes and channel uplinks are emitted.
+1. **Verified Broker Startup & Radio Query:**
+   * The factory-standard MeshRadar profile remains only a labeled gateway fallback until an actual radio `ModuleConfig.mqtt` is received. It does not start the broker by itself.
+   * Automatic setup writes and verifies the complete radio profile before broker startup. If Tailscale is enabled, startup also waits until DERP is ready so remote administration keeps priority.
 2. **Bluetooth Disconnect Grace Period (Default: 60 Seconds):**
    * If Bluetooth drops, the bridge starts a 60-second grace timer (`MQTT_BLE_GRACE_PERIOD_SECONDS`).
    * The MQTT broker TCP/TLS socket **remains open**, allowing up to 16 incoming downlink packets to buffer in `mqtt_to_ble_queue`.
@@ -246,13 +242,13 @@ flowchart TD
 | `MQTT_BLE_GRACE_PERIOD_SECONDS` | `60` | Duration to keep MQTT broker alive during transient Bluetooth disconnects |
 
 ### 5.3 WebUI Design & Components
-A dedicated **MQTT Gateway (Auto-Sync from Radio)** card added to the captive portal:
+A dedicated **MQTT Gateway** card provides verified automatic radio setup or a manual checklist:
 * **Toggle Switch:** "Enable MQTT Gateway" (master toggle).
 * **Live Radio Sync Information Panel:**
   * *Radio Proxy Enabled:* `Yes` / `No`
-  * *Detected Broker:* `mqtt.meshtastic.org:8883 (TLS)`
-  * *Username:* `meshdev`
-  * *Root Topic:* `msh/US`
+  * *Detected Broker:* shown only after a radio configuration was actually received
+  * *Radio Proxy:* verified enabled/disabled state
+  * *Root Topic:* the radio read-back value
 * **TLS & Security Overrides (Bridge-Specific):**
   * *Skip Certificate Validation Checkbox:* Bypasses trust chain check for self-signed or local IP brokers.
   * *Custom CA Certificate (PEM Text Area):* Allows uploading / pasting custom root CA public certificates for secure private TLS.
@@ -306,10 +302,11 @@ message MQTTConfig {
 ```
 
 ### 6.2 Routing & Auto-Sync Logic
-1. **Config Discovery (Auto Mode):**
-   * Listen for incoming configuration packets (`FromRadio` containing `MQTTConfig` or `AdminMessage`).
-   * Extract `address`, `username`, `password`, `encryption_enabled`/`tls_enabled`, and `root`.
-   * Initialize or update the MQTT client connection parameters dynamically.
+1. **Configuration and verification (Automatic Mode):**
+   * Reserve PhoneAPI-to-BLE and collect a complete radio snapshot.
+   * Write the displayed MeshRadar profile and required radio switches in one admin transaction.
+   * Read back address, credentials, encryption, TLS, root, proxy, LoRa consent and selected channels.
+   * Start the MQTT client only from the verified result.
 2. **Uplink (Radio $\to$ MQTT):**
    * Read packet from `FromRadio`.
    * Decode protobuf. If field 14 is present:

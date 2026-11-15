@@ -120,6 +120,7 @@ static std::atomic<size_t> connectedClientsCount{0};
 static bool bridgeRunning = false;
 static std::atomic<bool> s_pausedForOta{false};
 static std::atomic<bool> s_blePausedForOta{false};
+static std::atomic<bool> s_radioControlActive{false};
 static String targetBleName = "";
 static String targetBleMac = "";
 static uint8_t targetBleAddressType = BLE_ADDR_PUBLIC;
@@ -265,6 +266,9 @@ static void enqueueMailboxCapture(
 }
 
 void bridge_http_phoneapi_mark_active() {
+    if (s_radioControlActive.load(std::memory_order_acquire)) {
+        return;
+    }
     const uint32_t now = millis();
     const uint32_t previous = s_http_last_activity_ms.exchange(now, std::memory_order_relaxed);
 
@@ -280,6 +284,9 @@ void bridge_http_phoneapi_mark_active() {
 }
 
 bool bridge_http_phoneapi_is_active() {
+    if (s_radioControlActive.load(std::memory_order_acquire)) {
+        return false;
+    }
     const uint32_t last = s_http_last_activity_ms.load(std::memory_order_relaxed);
     return last != 0 &&
            static_cast<uint32_t>(millis() - last) <= HTTP_PHONEAPI_ACTIVE_TIMEOUT_MS;
@@ -287,6 +294,7 @@ bool bridge_http_phoneapi_is_active() {
 
 bool bridge_enqueue_http_to_ble(const uint8_t* data, size_t len) {
     if (s_pausedForOta.load(std::memory_order_acquire) ||
+        s_radioControlActive.load(std::memory_order_acquire) ||
         !tcp_to_ble_queue || !data || len == 0 || len > sizeof(BridgePacket::data)) {
         s_http_invalid_count.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -312,7 +320,8 @@ bool bridge_enqueue_http_to_ble(const uint8_t* data, size_t len) {
 }
 
 size_t bridge_dequeue_http_from_ble(uint8_t* data, size_t capacity) {
-    if (!ble_to_http_queue || !data || capacity == 0) {
+    if (s_radioControlActive.load(std::memory_order_acquire) ||
+        !ble_to_http_queue || !data || capacity == 0) {
         return 0;
     }
 
@@ -359,7 +368,8 @@ size_t bridge_dequeue_http_from_ble(uint8_t* data, size_t capacity) {
 
 // TCP callbacks
 static void onClientConnected(void* arg, AsyncClient* client) {
-    if (s_pausedForOta.load(std::memory_order_acquire)) {
+    if (s_pausedForOta.load(std::memory_order_acquire) ||
+        s_radioControlActive.load(std::memory_order_acquire)) {
         client->onDisconnect([](void*, AsyncClient* c) { delete c; }, nullptr);
         client->close();
         return;
@@ -415,6 +425,11 @@ static void onClientConnected(void* arg, AsyncClient* client) {
     client->onData([](void* arg, AsyncClient* c, void* data, size_t len) {
         ClientContext* ctx = (ClientContext*)arg;
         uint8_t* buf = (uint8_t*)data;
+
+        if (s_radioControlActive.load(std::memory_order_acquire)) {
+            c->close();
+            return;
+        }
 
         log_d("[Bridge-TCP] RX %zu bytes from %s", len, c->remoteIP().toString().c_str());
 
@@ -1275,6 +1290,56 @@ void bridge_resume_after_ota() {
     if (tcpServer) tcpServer->begin();
     if (bridgeBleTaskHandle) xTaskNotifyGive(bridgeBleTaskHandle);
     if (bridgeNetTaskHandle) xTaskNotifyGive(bridgeNetTaskHandle);
+}
+
+bool bridge_begin_radio_control() {
+    if (s_pausedForOta.load(std::memory_order_acquire)) {
+        return false;
+    }
+
+    bool expected = false;
+    if (!s_radioControlActive.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return false;
+    }
+
+    log_i("[Bridge-Control] Reserving PhoneAPI -> BLE for the radio configuration transaction");
+    if (tcpServer) tcpServer->end();
+
+    // Remove any app request queued before the transaction's own
+    // want_config_id. A stale nonce can otherwise replace the setup nonce on
+    // the radio and make the verified read-back time out.
+    if (tcp_to_ble_queue) xQueueReset(tcp_to_ble_queue);
+    if (ble_to_http_queue) xQueueReset(ble_to_http_queue);
+    s_http_last_activity_ms.store(0, std::memory_order_relaxed);
+    s_http_requested_config_id.store(0, std::memory_order_relaxed);
+    s_http_replay_active.store(false, std::memory_order_relaxed);
+
+    AsyncClient* clientsToClose[MAX_TCP_CLIENTS] = {};
+    if (tcpClientsMutex && xSemaphoreTake(tcpClientsMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        for (size_t i = 0; i < MAX_TCP_CLIENTS; ++i) {
+            if (tcpClients[i]) clientsToClose[i] = tcpClients[i]->client;
+        }
+        xSemaphoreGive(tcpClientsMutex);
+    }
+    for (AsyncClient* client : clientsToClose) {
+        if (client) client->close();
+    }
+    return true;
+}
+
+void bridge_end_radio_control() {
+    bool expected = true;
+    if (!s_radioControlActive.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
+        return;
+    }
+    if (tcpServer && !s_pausedForOta.load(std::memory_order_acquire)) {
+        tcpServer->begin();
+    }
+    log_i("[Bridge-Control] Radio transaction finished; PhoneAPI clients may reconnect");
+}
+
+bool bridge_radio_control_active() {
+    return s_radioControlActive.load(std::memory_order_acquire);
 }
 
 /**

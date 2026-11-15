@@ -102,14 +102,15 @@ profiles keep their original queue and peer sizing.
 
 The MQTT gateway is enabled by default with MeshRadar's public shared uplink
 profile (`meshradar.pl:8883`, TLS, root `msh`). Those published service values
-are the factory standard. A complete custom `ModuleConfig.mqtt` received from the radio
-replaces the broker, port, credentials, TLS mode and root topic. The radio must
-still enable MQTT proxy-to-client and channel uplink for packets to reach the
-bridge; a default broker connection cannot manufacture radio proxy envelopes.
-BLE is not required for broker startup. If Tailscale is enabled, MQTT enters
-`Waiting for Remote Access` until the DERP data channel is ready; MQTT/TLS then
-starts without endangering the primary remote-administration path. Without
-Tailscale, the standard broker session starts immediately after Wi-Fi.
+are the factory standard. In user-approved automatic setup, MeshGate writes
+that complete profile plus MQTT enablement, proxy-to-client, encrypted packet
+transport, LoRa MQTT consent and the selected channel flags to the attached
+radio. Manual mode performs no radio write and remains available for custom
+brokers. A gateway fallback must never be presented as a radio-detected value.
+The broker client starts only after a real radio configuration has confirmed
+the proxy state; the local fallback alone is insufficient. If Tailscale is
+enabled, MQTT additionally enters `Waiting for Remote Access` until the DERP
+data channel is ready so MQTT/TLS cannot endanger the primary remote path.
 
 ESP-IDF 5 also enforces lwIP core locking. MicroLink's WireGuard manager
 registers its raw `netif` and UDP PCB while holding `LOCK_TCPIP_CORE`; direct
@@ -221,13 +222,16 @@ attached Meshtastic radio for MQTT onboarding and device telemetry. Physical
 BLE ownership is not treated as permission for silent mutation: the control
 page first displays the exact operation and the owner explicitly starts it.
 
-The runtime requests a complete `want_config_id` snapshot, obtains the radio's
+The runtime temporarily reserves PhoneAPI-to-BLE so another TCP/HTTP client
+cannot replace the transaction's configuration nonce. It requests a complete
+`want_config_id` snapshot, obtains the radio's
 short-lived admin session key, sends `begin_edit_settings`, the minimum
 `set_config` / `set_module_config` / `set_channel` messages, and one
 `commit_edit_settings`. It then requests a second complete snapshot and marks
-the operation successful only when every requested field is present. Full
-radio structures are copied before individual fields are changed, preserving
-channel keys, broker credentials and unrelated sensor settings. Admin and
+the operation successful only when every requested field is present. MQTT
+automatic setup deliberately writes the complete MeshRadar broker profile
+shown in its plan; channel keys, names and unrelated sensor settings are
+preserved. Admin and
 `ToRadio` protobuf buffers are statically allocated and use the existing
 high-priority BLE queue so this path adds no page-sized or transaction-sized
 runtime heap allocation.

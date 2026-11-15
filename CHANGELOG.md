@@ -4,6 +4,21 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.27-beta.1] - 2026-11-15
+
+- Automatic MQTT setup now reserves the Bluetooth PhoneAPI transaction and
+  writes the complete MeshRadar profile to the currently paired Meshtastic
+  node: MQTT enabled, Proxy to Client enabled, encrypted TLS transport, root
+  topic, LoRa MQTT consent and the selected channel uplink/downlink flags.
+- Starts the MeshGate MQTT gateway only after a complete radio read-back has
+  verified every required value, and distinguishes an unverified local preset
+  from configuration actually received from the paired node.
+- Temporarily disconnects competing TCP/HTTP PhoneAPI clients during radio
+  configuration so another app cannot replace the setup nonce, then restores
+  client admission after completion or error.
+- Keeps the manual reboot page in a visible reconnecting state and reloads it
+  automatically only after MeshGate's status endpoint is available again.
+
 ## [v0.7.26] - 2026-11-15
 
 - Added read-back-verified one-click radio preparation for client-proxied MQTT

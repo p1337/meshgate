@@ -52,7 +52,7 @@ The primary deployment model is deliberately split:
 - Keyless, browser-approved Tailscale enrollment with DERP fallback
 - Optional classic WireGuard and radio-managed MQTT proxying with guided or
   automatic BLE radio preparation
-- One-click, read-back-verified device telemetry activation for the attached radio
+- One-click, read-back-verified device telemetry activation for the currently paired radio
 - Persistent 128-message mailbox with received and sent conversation replay
 - Built-in channel chat with unread counters and radio-accepted send status
 - Verified dual-slot OTA with automatic updates and user-selectable Stable/Beta channels

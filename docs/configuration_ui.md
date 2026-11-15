@@ -66,15 +66,15 @@ footer so the two destinations cannot diverge.
   * Displays feature enable/disable toggle, live radio sync status, active broker address/port/TLS mode, Client Status pill, and live MQTT **Traffic** counters (sent, received, invalid).
   * In Edit mode, offers:
     * **Enable MQTT Gateway** toggle.
-    * An explicit **automatic Bluetooth radio setup** or **manual checklist** choice. Automatic mode shows every planned radio-side change and lets the owner select channel uplink/downlink flags before a transactional, verified write.
+    * An explicit **automatic Bluetooth radio setup** or **manual checklist** choice. Automatic mode shows the complete MeshRadar profile and every planned radio-side change, lets the owner select channel uplink/downlink flags, temporarily excludes competing PhoneAPI writers, then performs one transactional, verified write.
     * **Skip Certificate Validation** toggle (for self-signed / local LAN brokers).
     * **Custom CA Root Certificate** textarea for uploading private PEM certificates.
   * Independent **Save MQTT Settings** button persists settings to NVS and applies them immediately.
-  * Treats the untouched Meshtastic public-broker profile as a factory default
-    and uses the MeshRadar TLS preset; genuinely custom radio broker settings
-    remain authoritative.
+  * Never labels the built-in MeshRadar fallback as radio-detected. Automatic
+    mode writes that complete preset to the radio; manual mode leaves a
+    genuinely custom radio broker configuration untouched.
 * **Radio Device Telemetry Card:**
-  * Enables the attached node's built-in device metrics at a selected 15/30/60-minute interval with one click.
+  * Enables the currently paired node's built-in device metrics at a selected 15/30/60-minute interval with one click.
   * The radio broadcasts these packets over LoRa. When LoRa MQTT consent, the
     selected channel uplink and client proxy are enabled, MeshGate forwards the
     node's own and other received LoRa telemetry to the broker; MQTT downlink is
@@ -224,7 +224,7 @@ footer so the two destinations cannot diverge.
    * **`GET /test_ble_status`**: Polls the test task state and returns result JSON (`{"status":"done","success":true,"message":"..."}`).
    * **`POST /save_wifi`**: Saves `wifi_ssid` and `wifi_pass` to NVS.
    * **`POST /save_ble`**: Saves `ble_name`, `ble_mac`, and a validated six-digit `ble_pin` to NVS. An empty PIN preserves the stored value.
-   * **`POST /save_mqtt`**: Saves `mqtt_enabled`, `mqtt_tls_insec`, and `mqtt_custom_ca` to NVS and applies changes live if in Normal mode.
+   * **`POST /save_mqtt`**: Saves `mqtt_enabled`, `mqtt_tls_insec`, and `mqtt_custom_ca` to NVS and applies changes live if in Normal mode. With `radio_setup=auto`, it temporarily reserves PhoneAPI-to-BLE, writes and verifies the complete displayed radio profile, and restores client admission after success or failure.
    * **`POST /save_tailscale`**: Saves `enabled` and `device_name` redundantly. A reboot starts browser enrollment or reconnects the persistent identity.
    * **`GET /tailscale_status`**: Reports `enabled`, `connected`, state name, assigned VPN IP, peer count and a pending RAM-only `auth_url` while browser approval is required.
    * **`POST /save_system`**: Saves `debug_logs` boolean flag to NVS.
@@ -232,7 +232,9 @@ footer so the two destinations cannot diverge.
      allocation-free restart request to the persistent recovery supervisor.
      `202` confirms that the request was accepted. `409` means OTA is active
      and the restart was deliberately blocked; `503` means the supervisor is
-     unavailable. No temporary reboot task or heap allocation is required.
+     unavailable. No temporary reboot task or heap allocation is required. The
+     control page visibly remains in `Restarting / reconnecting` and reloads
+     only after `/status` is reachable again.
    * **`POST /reset`**: Erases all stored NVS configurations and reboots the ESP32 into Setup Mode.
    * **`POST /save`**: Full-form save endpoint for backward compatibility.
    * **`GET /api/ota`**: Reports OTA readiness, firmware/board identity, active and next application partitions, and maximum image size. It never returns the OTA token.

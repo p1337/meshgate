@@ -218,11 +218,13 @@ overrides it.
 2. In the **MQTT Gateway** card, toggle **Enable MQTT Gateway** ON.
 3. Choose one radio setup mode:
    - **Configure the radio automatically over Bluetooth** reads the complete
-     radio configuration, enables MQTT, Proxy to Client and LoRa MQTT consent,
-     and enables uplink/downlink only on the channels selected in the card.
-     MeshGate preserves channel keys, names, broker credentials and all
-     unrelated fields, commits the changes as one transaction, and reads them
-     back for verification.
+     radio configuration; writes the displayed MeshRadar server, credentials,
+     TLS, encrypted-packet and root-topic profile; enables MQTT, Proxy to Client
+     and LoRa MQTT consent; and enables uplink/downlink only on the channels
+     selected in the card. MeshGate temporarily disconnects other PhoneAPI
+     clients so their configuration requests cannot collide. Channel keys,
+     names and unrelated fields are preserved. Every requested value is read
+     back before the operation reports completion.
    - **I will configure the radio myself** performs no radio write and displays
      the complete checklist for the Meshtastic app.
 4. If using a private broker with a self-signed certificate, check **Skip
@@ -230,7 +232,10 @@ overrides it.
    Prefer a valid public or private CA over the insecure bypass.
 5. Click **Save MQTT**.
 
-The bridge will automatically discover the radio's MQTT configuration over Bluetooth and maintain an active broker connection.
+After a verified automatic setup, the bridge uses the profile read back from
+the radio and maintains the broker connection. Before that verification, the
+UI labels the built-in broker only as a gateway preset, never as a detected
+radio value.
 
 ### One-click radio device telemetry
 

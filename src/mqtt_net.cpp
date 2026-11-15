@@ -125,7 +125,9 @@ static MqttConfig currentConfig;
  */
 static MqttStatus makeDefaultMqttStatus() {
     MqttStatus status;
-    status.radio_proxy_enabled = true;
+    // The broker profile is only a local fallback until a real radio
+    // ModuleConfig arrives. Never assume the radio proxy is enabled.
+    status.radio_proxy_enabled = false;
     status.radio_server = MQTT_DEFAULT_SERVER;
     status.radio_port = MQTT_DEFAULT_PORT;
     status.radio_tls = MQTT_DEFAULT_TLS;
@@ -273,6 +275,9 @@ void setRadioSetupState(RadioSetupPhase phase, const char* detail) {
     currentStatus.radio_setup_detail = detail ? detail : "";
     currentStatus.radio_setup_uplink_mask = s_radio_setup_uplink_mask;
     currentStatus.radio_setup_downlink_mask = s_radio_setup_downlink_mask;
+    if (phase == RadioSetupPhase::Complete || phase == RadioSetupPhase::Error) {
+        bridge_end_radio_control();
+    }
 }
 } // namespace
 
@@ -386,8 +391,18 @@ static bool queueRadioSetupStep() {
             s_radio_setup_admin.which_payload_variant = meshtastic_AdminMessage_set_module_config_tag;
             s_radio_setup_admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_mqtt_tag;
             s_radio_setup_admin.set_module_config.payload_variant.mqtt = s_radio_setup_mqtt;
-            s_radio_setup_admin.set_module_config.payload_variant.mqtt.enabled = true;
-            s_radio_setup_admin.set_module_config.payload_variant.mqtt.proxy_to_client_enabled = true;
+            {
+                auto& mqtt = s_radio_setup_admin.set_module_config.payload_variant.mqtt;
+                mqtt.enabled = true;
+                snprintf(mqtt.address, sizeof(mqtt.address), "%s", MQTT_DEFAULT_SERVER);
+                snprintf(mqtt.username, sizeof(mqtt.username), "%s", MQTT_DEFAULT_USER);
+                snprintf(mqtt.password, sizeof(mqtt.password), "%s", MQTT_DEFAULT_PASSWORD);
+                mqtt.encryption_enabled = true;
+                mqtt.json_enabled = false;
+                mqtt.tls_enabled = MQTT_DEFAULT_TLS;
+                snprintf(mqtt.root, sizeof(mqtt.root), "%s", MQTT_DEFAULT_ROOT);
+                mqtt.proxy_to_client_enabled = true;
+            }
             s_radio_setup_admin.session_passkey = s_radio_setup_session_key;
             return queueRadioSetupAdmin(s_radio_setup_admin);
 
@@ -1092,12 +1107,14 @@ void mqtt_net_apply_config(const MqttConfig& cfg) {
     s_mqtt_enabled.store(cfg.enabled, std::memory_order_relaxed);
     bool hasRadioServer = false;
     bool radioProxyEnabled = false;
+    bool setupInProgress = false;
     String radioServer;
     uint16_t radioPort = 1883;
     String radioRoot;
     {
         MqttLockGuard lock;
         currentConfig = cfg;
+        setupInProgress = radioSetupActive();
         hasRadioServer = !currentStatus.radio_server.isEmpty();
         radioProxyEnabled = currentStatus.radio_proxy_enabled;
         radioServer = currentStatus.radio_server;
@@ -1110,6 +1127,15 @@ void mqtt_net_apply_config(const MqttConfig& cfg) {
         log_i("[MQTT] Feature disabled in configuration, shutting down mqtt client...");
         mqtt_net_stop_client();
         bridge_clear_mqtt_to_ble_queue();
+        return;
+    }
+
+    if (setupInProgress) {
+        s_start_deferred.store(false, std::memory_order_relaxed);
+        mqtt_net_stop_client();
+        bridge_clear_mqtt_to_ble_queue();
+        mqtt_net_set_state(MQTT_STATE_WAITING_RADIO_CONFIG,
+                           "Verifying paired node configuration");
         return;
     }
 
@@ -1159,6 +1185,10 @@ bool mqtt_net_request_radio_setup(uint8_t uplink_mask, uint8_t downlink_mask, St
         error = "Select at least one channel for MQTT uplink or downlink.";
         return false;
     }
+    if (!bridge_begin_radio_control()) {
+        error = "PhoneAPI is busy with another maintenance operation; try again.";
+        return false;
+    }
 
     s_radio_setup_uplink_mask = uplink_mask;
     s_radio_setup_downlink_mask = downlink_mask;
@@ -1198,6 +1228,10 @@ bool mqtt_net_request_radio_telemetry_setup(uint32_t interval_seconds, String& e
     }
     if (interval_seconds < 60 || interval_seconds > 86400) {
         error = "Telemetry interval must be between 60 and 86400 seconds.";
+        return false;
+    }
+    if (!bridge_begin_radio_control()) {
+        error = "PhoneAPI is busy with another maintenance operation; try again.";
         return false;
     }
 
@@ -1271,6 +1305,22 @@ void mqtt_net_on_ble_connected() {
     // The same Meshtastic configuration response supplies the attached node
     // number used by the installation-presence worker. Request it even
     // when the optional MQTT gateway itself is disabled.
+    {
+        MqttLockGuard lock;
+        if (radioSetupActive()) {
+            // A reconnect invalidates an in-flight complete-config stream. The
+            // transaction owns PhoneAPI, so issue one fresh nonce instead of
+            // racing the normal background discovery request.
+            if (s_radio_setup_phase == RadioSetupPhase::WaitingConfig) {
+                resetRadioSetupSnapshot();
+                s_radio_setup_config_id = mqtt_net_request_radio_config();
+                s_radio_setup_deadline = millis() + RADIO_SETUP_CONFIG_TIMEOUT_MS;
+                currentStatus.radio_setup_detail =
+                    "Bluetooth reconnected; reading a fresh radio configuration snapshot.";
+            }
+            return;
+        }
+    }
     mqtt_net_request_radio_config();
 
     // Fast wait-free check: no broker work if MQTT Gateway is disabled.
@@ -1364,6 +1414,7 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
         // Not a valid FromRadio packet or decoding failed
         return false;
     }
+    bool startVerifiedMqttClient = false;
 
     if (radio_msg.which_payload_variant == meshtastic_FromRadio_my_info_tag) {
         device_presence_set_meshtastic_node(radio_msg.my_info.my_node_num);
@@ -1461,6 +1512,13 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
                     verified = s_radio_setup_have_mqtt &&
                         s_radio_setup_mqtt.enabled &&
                         s_radio_setup_mqtt.proxy_to_client_enabled &&
+                        String(s_radio_setup_mqtt.address).equalsIgnoreCase(MQTT_DEFAULT_SERVER) &&
+                        String(s_radio_setup_mqtt.username) == MQTT_DEFAULT_USER &&
+                        String(s_radio_setup_mqtt.password) == MQTT_DEFAULT_PASSWORD &&
+                        s_radio_setup_mqtt.encryption_enabled &&
+                        !s_radio_setup_mqtt.json_enabled &&
+                        s_radio_setup_mqtt.tls_enabled == MQTT_DEFAULT_TLS &&
+                        String(s_radio_setup_mqtt.root) == MQTT_DEFAULT_ROOT &&
                         s_radio_setup_have_lora &&
                         s_radio_setup_lora.config_ok_to_mqtt &&
                         channelsReady;
@@ -1475,6 +1533,8 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
                     }
                 }
                 if (verified) {
+                    startVerifiedMqttClient =
+                        s_radio_setup_operation == RadioSetupOperation::Mqtt;
                     setRadioSetupState(
                         RadioSetupPhase::Complete,
                         s_radio_setup_operation == RadioSetupOperation::DeviceTelemetry
@@ -1493,6 +1553,9 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
                 }
             }
         }
+    }
+    if (startVerifiedMqttClient) {
+        mqtt_net_start_or_defer();
     }
 
     // 1. Check for ModuleConfig.mqtt packets (Auto-Sync from Radio)
@@ -1513,10 +1576,12 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
             const char* stopReason = nullptr;
             {
                 MqttLockGuard lock;
-                if (radioSetupActive()) {
+                const bool setupInProgress = radioSetupActive();
+                if (setupInProgress) {
                     s_radio_setup_mqtt = mqtt_cfg;
                     s_radio_setup_have_mqtt = true;
                 }
+                currentStatus.radio_config_received = true;
                 String rawAddress = String(mqtt_cfg.address);
                 const String rawUser = String(mqtt_cfg.username);
                 const String rawPassword = String(mqtt_cfg.password);
@@ -1553,32 +1618,34 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
                 currentStatus.radio_server = server;
                 currentStatus.radio_port = port;
 
-                if (!currentStatus.radio_proxy_enabled) {
-                    shouldStop = true;
-                    stopReason = !mqtt_cfg.enabled
-                        ? "MQTT Disabled on Radio (Enable 'MQTT' in App)"
-                        : "Radio Proxy Disabled (Enable 'Proxy to Client' in App)";
-                } else if (currentConfig.enabled && bridge_is_ble_connected()) {
-                    currentStatus.active_root = currentStatus.radio_root;
+                if (!setupInProgress) {
+                    if (!currentStatus.radio_proxy_enabled) {
+                        shouldStop = true;
+                        stopReason = !mqtt_cfg.enabled
+                            ? "MQTT Disabled on Radio (Enable 'MQTT' in App)"
+                            : "Radio Proxy Disabled (Enable 'Proxy to Client' in App)";
+                    } else if (currentConfig.enabled && bridge_is_ble_connected()) {
+                        currentStatus.active_root = currentStatus.radio_root;
 
-                    bool configChanged = (!currentSession.is_active ||
-                                          currentSession.server != currentStatus.radio_server ||
-                                          currentSession.port != currentStatus.radio_port ||
-                                          currentSession.user != currentStatus.radio_user ||
-                                          currentSession.pass != radioPassword ||
-                                          currentSession.root != currentStatus.active_root ||
-                                          currentSession.tls != currentStatus.radio_tls ||
-                                          currentSession.tls_insecure != currentConfig.tls_insecure ||
-                                          currentSession.custom_ca != currentConfig.custom_ca);
+                        bool configChanged = (!currentSession.is_active ||
+                                              currentSession.server != currentStatus.radio_server ||
+                                              currentSession.port != currentStatus.radio_port ||
+                                              currentSession.user != currentStatus.radio_user ||
+                                              currentSession.pass != radioPassword ||
+                                              currentSession.root != currentStatus.active_root ||
+                                              currentSession.tls != currentStatus.radio_tls ||
+                                              currentSession.tls_insecure != currentConfig.tls_insecure ||
+                                              currentSession.custom_ca != currentConfig.custom_ca);
 
-                    if (configChanged || !mqttClient) {
-                        if (currentSession.is_active) {
-                            log_i("[MQTT] Radio configuration changed while connected. Reconnecting broker...");
-                            bridge_clear_mqtt_to_ble_queue();
+                        if (configChanged || !mqttClient) {
+                            if (currentSession.is_active) {
+                                log_i("[MQTT] Radio configuration changed while connected. Reconnecting broker...");
+                                bridge_clear_mqtt_to_ble_queue();
+                            }
+                            shouldStart = true;
+                        } else {
+                            log_d("[MQTT] Received identical radio ModuleConfig.mqtt - maintaining existing session.");
                         }
-                        shouldStart = true;
-                    } else {
-                        log_d("[MQTT] Received identical radio ModuleConfig.mqtt - maintaining existing session.");
                     }
                 }
             }

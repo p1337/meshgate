@@ -32,6 +32,7 @@ struct MqttStatus {
     String state_str = "Disabled";
 
     // MQTT settings stored on the radio (cached)
+    bool radio_config_received = false;
     bool radio_proxy_enabled = false;
     String radio_server = "";
     uint16_t radio_port = 1883;
@@ -45,7 +46,7 @@ struct MqttStatus {
     String active_root = "msh";
     bool active_tls = false;
 
-    // Optional, user-triggered preparation of the attached radio. This never
+    // Optional, user-triggered preparation of the currently paired radio. This never
     // runs silently: the Web UI must request it explicitly and shows the
     // planned MQTT/LoRa/channel changes before doing so.
     String radio_setup_state = "Idle";
@@ -134,7 +135,7 @@ bool mqtt_net_publish(const char* topic, const uint8_t* payload, size_t len, boo
  */
 bool mqtt_net_request_radio_setup(uint8_t uplink_mask, uint8_t downlink_mask, String& error);
 
-/** Enable the attached node's built-in device telemetry over the same
+/** Enable the currently paired node's built-in device telemetry over the same
  * transactional, verified local BLE admin path. Existing sensor telemetry
  * configuration is preserved. */
 bool mqtt_net_request_radio_telemetry_setup(uint32_t interval_seconds, String& error);

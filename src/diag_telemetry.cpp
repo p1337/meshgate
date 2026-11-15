@@ -173,6 +173,8 @@ void diag_telemetry_format_json(const SystemTelemetrySnapshot& s, Print& out) {
     utils_escape_json_print(out, s.mqtt.state_str);
     out.print("\",\"radio_proxy_enabled\":");
     out.print(s.mqtt.radio_proxy_enabled ? "true" : "false");
+    out.print(",\"radio_config_received\":");
+    out.print(s.mqtt.radio_config_received ? "true" : "false");
     out.print(",\"radio_setup_state\":\"");
     utils_escape_json_print(out, s.mqtt.radio_setup_state);
     out.print("\",\"radio_setup_operation\":\"");

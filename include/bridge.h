@@ -7,6 +7,12 @@ void bridge_start();
 // configuration. The bridge tasks remain available for a failure recovery.
 bool bridge_pause_for_ota();
 void bridge_resume_after_ota();
+// Gives a local, user-approved radio configuration transaction exclusive
+// ownership of PhoneAPI -> BLE. Existing TCP clients are disconnected and new
+// TCP/HTTP writes are rejected until the transaction finishes; BLE stays up.
+bool bridge_begin_radio_control();
+void bridge_end_radio_control();
+bool bridge_radio_control_active();
 bool bridge_is_ble_connected();
 bool bridge_enqueue_mqtt_to_ble(const uint8_t* data, size_t len);
 // Queues a local control-plane packet (for example an AdminMessage) on the
