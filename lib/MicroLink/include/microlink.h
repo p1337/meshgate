@@ -137,7 +137,7 @@ esp_err_t microlink_stop(microlink_t *ml);
  * @brief Destroy MicroLink instance and free all resources
  * @param ml Handle (NULL-safe)
  */
-void microlink_destroy(microlink_t *ml);
+esp_err_t microlink_destroy(microlink_t *ml);
 
 /**
  * @brief Get current connection state

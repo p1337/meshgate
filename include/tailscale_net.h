@@ -4,7 +4,7 @@
 #include "config_ui.h"
 
 void tailscale_net_start(const BridgeConfig& cfg);
-void tailscale_net_pause_for_ota();
+bool tailscale_net_pause_for_ota();
 void tailscale_net_resume_after_ota();
 bool tailscale_net_is_enabled();
 bool tailscale_net_is_connected();

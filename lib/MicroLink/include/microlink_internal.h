@@ -181,6 +181,12 @@ typedef struct {
 #define ML_EVT_SHUTDOWN_REQUEST     BIT6
 #define ML_EVT_DERP_RECONNECT       BIT7
 #define ML_EVT_DERP_CONNECT_REQ     BIT8
+#define ML_EVT_NET_IO_STOPPED       BIT9
+#define ML_EVT_DERP_STOPPED         BIT10
+#define ML_EVT_COORD_STOPPED        BIT11
+#define ML_EVT_WG_MGR_STOPPED       BIT12
+#define ML_EVT_ALL_TASKS_STOPPED    (ML_EVT_NET_IO_STOPPED | ML_EVT_DERP_STOPPED | \
+                                     ML_EVT_COORD_STOPPED | ML_EVT_WG_MGR_STOPPED)
 
 /* ============================================================================
  * Queue Message Types

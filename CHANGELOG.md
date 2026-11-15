@@ -4,6 +4,14 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.26-beta.7] - 2026-11-15
+
+- Fixed a reset before official OTA downloads when Tailscale/MicroLink was
+  stopped for installation. Each networking task now confirms its own exit;
+  shared queues and state are released only after every active task has stopped.
+- Treats a bounded network shutdown timeout as an OTA failure instead of
+  freeing live task resources and rebooting unexpectedly.
+
 ## [v0.7.26-beta.6] - 2026-11-15
 
 - Gives immediate, persistent visual feedback after **Check & Install**: the

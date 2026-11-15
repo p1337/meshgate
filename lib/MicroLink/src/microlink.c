@@ -308,6 +308,7 @@ esp_err_t microlink_start(microlink_t *ml) {
         return ESP_ERR_INVALID_STATE;
     }
 
+    xEventGroupClearBits(ml->events, ML_EVT_SHUTDOWN_REQUEST | ML_EVT_ALL_TASKS_STOPPED);
     ml->state = ML_STATE_WIFI_WAIT;
 
     /* Set WiFi TX power if configured */
@@ -526,20 +527,32 @@ rebind_wg_update:
 esp_err_t microlink_stop(microlink_t *ml) {
     if (!ml) return ESP_ERR_INVALID_ARG;
 
+    EventBits_t expected = 0;
+    if (ml->net_io_task) expected |= ML_EVT_NET_IO_STOPPED;
+    if (ml->derp_tx_task) expected |= ML_EVT_DERP_STOPPED;
+    if (ml->coord_task) expected |= ML_EVT_COORD_STOPPED;
+    if (ml->wg_mgr_task) expected |= ML_EVT_WG_MGR_STOPPED;
+
+    if (expected == 0) {
+        ml->state = ML_STATE_IDLE;
+        return ESP_OK;
+    }
+
     ESP_LOGI(TAG, "Stopping...");
     xEventGroupSetBits(ml->events, ML_EVT_SHUTDOWN_REQUEST);
 
-    /* Wait for tasks to exit (they check ML_EVT_SHUTDOWN_REQUEST).
-     * Tasks call vTaskDelete(NULL) to self-delete, so we must NOT call
-     * vTaskDelete() on them again — that causes a crash in uxListRemove
-     * because the task's list node is already invalid. Just wait and
-     * NULL the handles. */
-    vTaskDelay(pdMS_TO_TICKS(3000));
-
-    ml->net_io_task = NULL;
-    ml->derp_tx_task = NULL;
-    ml->coord_task = NULL;
-    ml->wg_mgr_task = NULL;
+    /* Every task acknowledges its own exit before self-deleting. Never free
+     * shared queues or the event group based on a fixed delay: a TLS or
+     * control-plane operation may legitimately need several seconds to
+     * unwind. Destroying those objects while a task still owns them causes
+     * use-after-free resets, especially during OTA service quiescing. */
+    const EventBits_t stopped = xEventGroupWaitBits(
+        ml->events, expected, pdFALSE, pdTRUE, pdMS_TO_TICKS(15000));
+    if ((stopped & expected) != expected) {
+        ESP_LOGE(TAG, "Stop timed out (expected=0x%lx stopped=0x%lx)",
+                 (unsigned long)expected, (unsigned long)(stopped & expected));
+        return ESP_ERR_TIMEOUT;
+    }
 
     /* Stop HTTP config server */
     if (ml->config_httpd) {
@@ -561,10 +574,14 @@ esp_err_t microlink_stop(microlink_t *ml) {
     return ESP_OK;
 }
 
-void microlink_destroy(microlink_t *ml) {
-    if (!ml) return;
+esp_err_t microlink_destroy(microlink_t *ml) {
+    if (!ml) return ESP_OK;
 
-    microlink_stop(ml);
+    const esp_err_t stop_result = microlink_stop(ml);
+    if (stop_result != ESP_OK) {
+        ESP_LOGE(TAG, "Not destroying active context: %s", esp_err_to_name(stop_result));
+        return stop_result;
+    }
 
     /* Deinitialize peer NVS */
     ml_peer_nvs_deinit();
@@ -593,6 +610,7 @@ void microlink_destroy(microlink_t *ml) {
 
     free(ml);
     ESP_LOGI(TAG, "Destroyed");
+    return ESP_OK;
 }
 
 /* ============================================================================

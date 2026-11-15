@@ -89,27 +89,43 @@ void tailscale_net_start(const BridgeConfig& cfg) {
 #endif
 }
 
-void tailscale_net_pause_for_ota() {
-    if (!s_enabled.load(std::memory_order_acquire)) return;
+bool tailscale_net_pause_for_ota() {
+    if (!s_enabled.load(std::memory_order_acquire)) return true;
     bool expected = false;
-    if (!s_pausedForOta.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return;
+    if (!s_pausedForOta.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return true;
 #ifdef ESP_IDF5_MIGRATION_BUILD
     if (s_microlink != nullptr) {
         log_i("[OTA] Pausing Tailscale control, DERP and WireGuard services...");
         microlink_t* handle = s_microlink;
+        const esp_err_t result = microlink_destroy(handle);
+        if (result != ESP_OK) {
+            log_e("[OTA] Tailscale did not stop safely: %s", esp_err_to_name(result));
+            return false;
+        }
         s_microlink = nullptr;
-        microlink_destroy(handle);
     }
 #endif
     s_state.store(0, std::memory_order_relaxed);
     s_vpnIp.store(0, std::memory_order_relaxed);
     s_peerCount.store(0, std::memory_order_relaxed);
+    return true;
 }
 
 void tailscale_net_resume_after_ota() {
     bool expected = true;
     if (!s_pausedForOta.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) return;
     log_i("[OTA] Restoring Tailscale service after failed update...");
+#ifdef ESP_IDF5_MIGRATION_BUILD
+    if (s_microlink != nullptr) {
+        const esp_err_t result = microlink_destroy(s_microlink);
+        if (result != ESP_OK) {
+            log_e("[OTA] Tailscale recovery is waiting for a clean restart: %s", esp_err_to_name(result));
+            s_pausedForOta.store(true, std::memory_order_release);
+            return;
+        }
+        s_microlink = nullptr;
+    }
+#endif
     BridgeConfig cfg = {};
     cfg.tailscale_enabled = true;
     cfg.tailscale_device_name = s_deviceName;
@@ -228,8 +244,12 @@ bool tailscale_net_peer_direct(int index) {
 void tailscale_net_factory_reset() {
 #ifdef ESP_IDF5_MIGRATION_BUILD
     if (s_microlink != nullptr) {
-        microlink_stop(s_microlink);
-        microlink_destroy(s_microlink);
+        const esp_err_t result = microlink_destroy(s_microlink);
+        if (result != ESP_OK) {
+            log_e("[Tailscale] Factory reset deferred because shutdown was incomplete: %s",
+                  esp_err_to_name(result));
+            return;
+        }
         s_microlink = nullptr;
     }
     microlink_factory_reset();

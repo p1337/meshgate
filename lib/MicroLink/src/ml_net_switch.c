@@ -297,8 +297,9 @@ static esp_err_t vpn_start(void)
     esp_err_t err = microlink_start(s_ctx.ml);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "microlink_start failed: %s", esp_err_to_name(err));
-        microlink_destroy(s_ctx.ml);
-        s_ctx.ml = NULL;
+        if (microlink_destroy(s_ctx.ml) == ESP_OK) {
+            s_ctx.ml = NULL;
+        }
         return err;
     }
 
@@ -321,18 +322,18 @@ static esp_err_t vpn_start(void)
     }
 
     ESP_LOGW(TAG, "VPN connection timeout (%ds)", timeout_secs);
-    microlink_stop(s_ctx.ml);
-    microlink_destroy(s_ctx.ml);
-    s_ctx.ml = NULL;
+    if (microlink_destroy(s_ctx.ml) == ESP_OK) {
+        s_ctx.ml = NULL;
+    }
     return ESP_ERR_TIMEOUT;
 }
 
 static void vpn_stop(void)
 {
     if (s_ctx.ml) {
-        microlink_stop(s_ctx.ml);
-        microlink_destroy(s_ctx.ml);
-        s_ctx.ml = NULL;
+        if (microlink_destroy(s_ctx.ml) == ESP_OK) {
+            s_ctx.ml = NULL;
+        }
     }
 }
 

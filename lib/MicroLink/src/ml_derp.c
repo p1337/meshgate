@@ -524,7 +524,10 @@ void ml_derp_tx_task(void *arg) {
             if ((bits & ML_EVT_DERP_CONNECT_REQ) && !ml->derp.connected) {
                 xEventGroupClearBits(ml->events, ML_EVT_DERP_CONNECT_REQ);
                 /* Retry up to 3 times with 2s backoff */
-                for (int attempt = 0; attempt < 3 && !ml->derp.connected; attempt++) {
+                for (int attempt = 0;
+                     attempt < 3 && !ml->derp.connected &&
+                     !(xEventGroupGetBits(ml->events) & ML_EVT_SHUTDOWN_REQUEST);
+                     attempt++) {
                     if (attempt > 0) {
                         ESP_LOGW(TAG, "DERP connect retry %d/3 in 2s...", attempt + 1);
                         vTaskDelay(pdMS_TO_TICKS(2000));
@@ -547,7 +550,10 @@ void ml_derp_tx_task(void *arg) {
                 verbose_phase = false;
                 /* Auto-reconnect after disconnect */
                 vTaskDelay(pdMS_TO_TICKS(1000));
-                for (int attempt = 0; attempt < 3 && !ml->derp.connected; attempt++) {
+                for (int attempt = 0;
+                     attempt < 3 && !ml->derp.connected &&
+                     !(xEventGroupGetBits(ml->events) & ML_EVT_SHUTDOWN_REQUEST);
+                     attempt++) {
                     if (attempt > 0) {
                         ESP_LOGW(TAG, "DERP reconnect retry %d/3 in 2s...", attempt + 1);
                         vTaskDelay(pdMS_TO_TICKS(2000));
@@ -630,7 +636,10 @@ void ml_derp_tx_task(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
+    ml_derp_disconnect(ml);
     ESP_LOGI(TAG, "DERP I/O task exiting");
+    ml->derp_tx_task = NULL;
+    xEventGroupSetBits(ml->events, ML_EVT_DERP_STOPPED);
 #ifdef MICROLINK_DERP_STACK_PSRAM
     vTaskDeleteWithCaps(NULL);
 #else

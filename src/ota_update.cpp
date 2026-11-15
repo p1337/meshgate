@@ -135,13 +135,13 @@ bool pauseRuntimeForOfficialOta() {
     wifi_net_pause_mdns_for_ota();
     mqtt_net_pause_for_ota();
     const bool bridgePaused = bridge_pause_for_ota();
-    tailscale_net_pause_for_ota();
+    const bool tailscalePaused = tailscale_net_pause_for_ota();
     const bool wireguardPaused = wireguard_net_pause_for_ota();
     vTaskDelay(pdMS_TO_TICKS(250));
     log_i("[OTA] Runtime quiesced (free heap %u, largest internal block %u)",
           static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
-    return bridgePaused && wireguardPaused;
+    return bridgePaused && tailscalePaused && wireguardPaused;
 }
 
 void resumeRuntimeAfterOfficialOta() {
