@@ -201,8 +201,10 @@ To use the bridge as an autonomous 24/7 MQTT gateway for your Bluetooth radio:
 
 MeshGate starts with MeshRadar's public preset: broker `meshradar.pl`, port
 `8883`, username and password `meshradar`, TLS enabled, and root topic `msh`.
-These values are published by the service. A complete custom broker
-configuration stored on the radio overrides the preset.
+These values are published by the service. An untouched Meshtastic public
+broker profile is recognized as another factory default and still uses the
+MeshRadar preset; a genuinely custom broker configuration stored on the radio
+overrides it.
 
 ### Enable on the Bridge Web UI
 1. Connect to the bridge's Web UI (in Setup Mode or by navigating to `http://<bridge-name>.local`).

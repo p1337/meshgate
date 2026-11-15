@@ -70,6 +70,9 @@ footer so the two destinations cannot diverge.
     * **Skip Certificate Validation** toggle (for self-signed / local LAN brokers).
     * **Custom CA Root Certificate** textarea for uploading private PEM certificates.
   * Independent **Save MQTT Settings** button persists settings to NVS and applies them immediately.
+  * Treats the untouched Meshtastic public-broker profile as a factory default
+    and uses the MeshRadar TLS preset; genuinely custom radio broker settings
+    remain authoritative.
 * **Radio Device Telemetry Card:**
   * Enables the attached node's built-in device metrics at a selected 15/30/60-minute interval with one click.
   * The radio broadcasts these packets over LoRa. When LoRa MQTT consent, the

@@ -4,6 +4,14 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.26-beta.5] - 2026-11-15
+
+- Recognizes the untouched Meshtastic public broker profile as a factory
+  default and uses MeshGate's `meshradar.pl:8883` TLS preset instead of
+  misclassifying it as a deliberate custom broker.
+- Keeps genuinely custom radio broker profiles authoritative and leaves the
+  radio's credentials, channel keys and unrelated settings unchanged.
+
 ## [v0.7.26-beta.4] - 2026-11-15
 
 - Fixed a lock inversion in the live MQTT client lifecycle that could block

@@ -29,6 +29,9 @@ static constexpr const char* MQTT_DEFAULT_USER = "meshradar";
 static constexpr const char* MQTT_DEFAULT_PASSWORD = "meshradar";
 static constexpr const char* MQTT_DEFAULT_ROOT = "msh";
 static constexpr bool MQTT_DEFAULT_TLS = true;
+static constexpr const char* MESHTASTIC_PUBLIC_SERVER = "mqtt.meshtastic.org";
+static constexpr const char* MESHTASTIC_PUBLIC_USER = "meshdev";
+static constexpr const char* MESHTASTIC_PUBLIC_PASSWORD = "large4cats";
 static constexpr size_t TLS_PSRAM_THRESHOLD = 4096;
 
 #ifdef ESP_IDF5_MIGRATION_BUILD
@@ -1515,7 +1518,18 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
                     s_radio_setup_have_mqtt = true;
                 }
                 String rawAddress = String(mqtt_cfg.address);
-                const bool useMeshRadarPreset = rawAddress.isEmpty() || rawAddress.equalsIgnoreCase(MQTT_DEFAULT_SERVER);
+                const String rawUser = String(mqtt_cfg.username);
+                const String rawPassword = String(mqtt_cfg.password);
+                const bool meshtasticPublicDefaults =
+                    rawAddress.equalsIgnoreCase(MESHTASTIC_PUBLIC_SERVER) &&
+                    (rawUser.isEmpty() || rawUser == MESHTASTIC_PUBLIC_USER) &&
+                    (rawPassword.isEmpty() || rawPassword == MESHTASTIC_PUBLIC_PASSWORD);
+                const bool useMeshRadarPreset = rawAddress.isEmpty() ||
+                    rawAddress.equalsIgnoreCase(MQTT_DEFAULT_SERVER) ||
+                    meshtasticPublicDefaults;
+                if (meshtasticPublicDefaults) {
+                    log_i("[MQTT] Meshtastic public broker defaults detected; using the MeshRadar gateway preset.");
+                }
                 currentStatus.radio_proxy_enabled = (mqtt_cfg.enabled && mqtt_cfg.proxy_to_client_enabled);
                 currentStatus.radio_root = useMeshRadarPreset ? MQTT_DEFAULT_ROOT : (String(mqtt_cfg.root).isEmpty() ? "msh" : String(mqtt_cfg.root));
                 currentStatus.radio_tls = useMeshRadarPreset ? MQTT_DEFAULT_TLS : mqtt_cfg.tls_enabled;
