@@ -4,6 +4,17 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.26-beta.4] - 2026-11-15
+
+- Fixed a lock inversion in the live MQTT client lifecycle that could block
+  **Save MQTT**, reset the HTTP connection and trigger the 30-second watchdog
+  instead of starting the requested radio setup.
+- Serialized MQTT client start/stop operations without holding the state mutex
+  while ESP-IDF waits for final MQTT callbacks.
+- Added a visible spinner to every in-progress radio setup phase and clarified
+  that device telemetry is broadcast over LoRa and reaches map services through
+  the selected channel uplink and MQTT proxy.
+
 ## [v0.7.26-beta.3] - 2026-11-15
 
 - Fixed a bounded-response end-block bug that left the final response fragment

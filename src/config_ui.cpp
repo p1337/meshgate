@@ -587,6 +587,8 @@ const char index_html[] PROGMEM = R"rawliteral(
   .status-pill.waiting { background:rgba(255,214,10,.08); color:var(--yellow); }
   .status-pill.connecting { background:rgba(94,237,151,.08); color:var(--accent); }
   .status-pill.error { background:rgba(255,56,96,.08); color:var(--red); }
+  .status-pill.working { display:inline-flex; align-items:center; gap:6px; }
+  .status-pill.working::before { content:""; width:10px; height:10px; flex:0 0 10px; border:2px solid rgba(255,214,10,.24); border-top-color:currentColor; border-radius:50%; animation:chat-loading-spin .75s linear infinite; }
   .progress-track { width:100%; background:var(--border); border-radius:2px; height:6px; overflow:hidden; margin-top:4px; }
   .progress-fill { height: 100%; border-radius: 4px; transition: width 0.3s ease, background-color 0.3s ease; }
   .progress-green { background-color:var(--green); }
@@ -1101,7 +1103,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <span id="view-radio-telemetry-status" class="status-pill disabled">Not requested</span>
     </div>
     <div class="alert alert-info" style="display:block; margin-bottom:12px;">
-      One click configures the connected Meshtastic node over Bluetooth to broadcast its built-in device metrics (battery, voltage, channel utilization and uptime). MeshGate first reads the current Telemetry configuration, preserves all environment, air-quality, health and power-sensor settings, commits one change transaction and verifies the result.
+      One click configures the connected Meshtastic node over Bluetooth to broadcast its built-in device metrics (battery, voltage, channel utilization and uptime) over LoRa. With the public channel uplink and MQTT proxy enabled, MeshGate forwards the node's own and other received LoRa telemetry to the broker for services such as MeshRadar. MeshGate first reads the current Telemetry configuration, preserves all environment, air-quality, health and power-sensor settings, commits one change transaction and verifies the result.
     </div>
     <label for="input-radio-telemetry-interval">Device telemetry interval</label>
     <select id="input-radio-telemetry-interval" style="width:100%; margin-bottom:10px;">
@@ -2378,7 +2380,7 @@ const char index_html[] PROGMEM = R"rawliteral(
               const setupState = m.radio_setup_state || 'Idle';
               setupRow.style.display = setupState === 'Idle' || m.radio_setup_operation === 'Device telemetry' ? 'none' : 'flex';
               setupPill.innerText = setupState;
-              setupPill.className = 'status-pill ' + (setupState === 'Complete' ? 'connected' : (setupState === 'Error' ? 'error' : 'waiting'));
+              setupPill.className = 'status-pill ' + (setupState === 'Complete' ? 'connected' : (setupState === 'Error' ? 'error' : 'waiting working'));
               setupDetail.innerText = m.radio_setup_detail || '';
             }
             const telemetryPill = document.getElementById('view-radio-telemetry-status');
@@ -2388,7 +2390,7 @@ const char index_html[] PROGMEM = R"rawliteral(
               const telemetryOperation = m.radio_setup_operation === 'Device telemetry';
               const telemetryState = telemetryOperation ? (m.radio_setup_state || 'Idle') : 'Not requested';
               telemetryPill.innerText = telemetryState;
-              telemetryPill.className = 'status-pill ' + (telemetryState === 'Complete' ? 'connected' : (telemetryState === 'Error' ? 'error' : (telemetryState === 'Not requested' ? 'disabled' : 'waiting')));
+              telemetryPill.className = 'status-pill ' + (telemetryState === 'Complete' ? 'connected' : (telemetryState === 'Error' ? 'error' : (telemetryState === 'Not requested' ? 'disabled' : 'waiting working')));
               telemetryDetail.innerText = telemetryOperation ? (m.radio_setup_detail || '') : '';
               telemetryButton.disabled = telemetryOperation && !['Complete', 'Error', 'Idle'].includes(telemetryState);
             }

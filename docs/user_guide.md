@@ -230,7 +230,11 @@ node's built-in battery, voltage, utilization and uptime broadcasts at a 15,
 30 or 60 minute interval. This action also uses the local BLE admin session,
 preserves environment, air-quality, health and power-sensor settings, commits
 once, and verifies the read-back. It does not fabricate readings for sensors
-that are not physically installed.
+that are not physically installed. These device-metrics packets are periodic
+LoRa broadcasts. With LoRa MQTT consent, channel uplink and the client proxy
+enabled, MeshGate forwards both the attached node's own packets and telemetry
+received from other LoRa nodes to the selected broker. Channel downlink is not
+required for map display; it permits broker traffic to enter the LoRa mesh.
 
 ---
 

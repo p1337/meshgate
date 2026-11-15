@@ -72,6 +72,10 @@ footer so the two destinations cannot diverge.
   * Independent **Save MQTT Settings** button persists settings to NVS and applies them immediately.
 * **Radio Device Telemetry Card:**
   * Enables the attached node's built-in device metrics at a selected 15/30/60-minute interval with one click.
+  * The radio broadcasts these packets over LoRa. When LoRa MQTT consent, the
+    selected channel uplink and client proxy are enabled, MeshGate forwards the
+    node's own and other received LoRa telemetry to the broker; MQTT downlink is
+    not required for map display.
   * Reads and preserves the complete Telemetry module configuration, changes only `device_telemetry_enabled` and `device_update_interval`, then verifies the radio read-back.
 * **Tailscale Card (IDF-5 Nano build):**
   * Displays enablement, live connection state, device name, assigned VPN IPv4 address, known peer count, and enrollment state.

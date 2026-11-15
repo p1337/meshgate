@@ -150,6 +150,10 @@ static ActiveBrokerSession currentSession;
  * Internal State & Recursive Mutex
  */
 static SemaphoreHandle_t mqttMutex = NULL;
+// Serializes the comparatively slow ESP-IDF client start/stop lifecycle.
+// MQTT event callbacks never take this mutex, so esp_mqtt_client_stop() may
+// wait for them without deadlocking against mqttMutex.
+static SemaphoreHandle_t mqttLifecycleMutex = NULL;
 static esp_mqtt_client_handle_t mqttClient = NULL;
 static MqttDownlinkCallback downlinkCallback = nullptr;
 
@@ -290,6 +294,23 @@ public:
     ~MqttLockGuard() {
         if (mqttMutex && acquired) {
             xSemaphoreGiveRecursive(mqttMutex);
+        }
+    }
+    bool is_locked() const { return acquired; }
+private:
+    bool acquired = false;
+};
+
+class MqttLifecycleGuard {
+public:
+    MqttLifecycleGuard() {
+        if (mqttLifecycleMutex) {
+            acquired = (xSemaphoreTake(mqttLifecycleMutex, portMAX_DELAY) == pdTRUE);
+        }
+    }
+    ~MqttLifecycleGuard() {
+        if (mqttLifecycleMutex && acquired) {
+            xSemaphoreGive(mqttLifecycleMutex);
         }
     }
     bool is_locked() const { return acquired; }
@@ -612,7 +633,10 @@ static void mqtt_event_handler_idf5(void*, esp_event_base_t, int32_t, void* even
 /**
  * Safely stops and destroys the active ESP-IDF MQTT client handle.
  */
-static void mqtt_net_destroy_client() {
+// Caller owns mqttLifecycleMutex. The handle is detached while holding the
+// state mutex, but ESP-IDF stop/destroy deliberately runs without mqttMutex:
+// the MQTT task can emit a final event whose callback also needs mqttMutex.
+static void mqtt_net_destroy_client_with_lifecycle_lock() {
     esp_mqtt_client_handle_t clientToDestroy = NULL;
     {
         MqttLockGuard lock;
@@ -630,17 +654,39 @@ static void mqtt_net_destroy_client() {
 
 // Client starter (releases lock before starting MQTT task to prevent deadlocks)
 static void mqtt_net_start_client(const String& server, uint16_t port, const String& user, const String& pass, bool tls, bool tls_insecure, const String& custom_ca) {
+    MqttLifecycleGuard lifecycleLock;
+    if (!lifecycleLock.is_locked()) {
+        mqtt_net_set_state(MQTT_STATE_ERROR, "MQTT lifecycle lock unavailable");
+        return;
+    }
+
+    // Re-check after taking the lifecycle mutex. Two callers may decide to
+    // start at the same time (for example DERP readiness and BLE reconnect),
+    // but the second one must not tear down the matching client just started
+    // by the first.
+    {
+        MqttLockGuard lock;
+        const String desiredRoot = currentStatus.radio_root.isEmpty() ? "msh" : currentStatus.radio_root;
+        if (mqttClient && currentSession.is_active &&
+            currentSession.server == server &&
+            currentSession.port == port &&
+            currentSession.user == user &&
+            currentSession.pass == pass &&
+            currentSession.root == desiredRoot &&
+            currentSession.tls == tls &&
+            currentSession.tls_insecure == tls_insecure &&
+            currentSession.custom_ca == custom_ca) {
+            log_d("[MQTT] Matching broker client won the lifecycle race; keeping it.");
+            return;
+        }
+    }
+
+    mqtt_net_destroy_client_with_lifecycle_lock();
+
     esp_mqtt_client_config_t mqtt_cfg = {};
     esp_mqtt_client_handle_t newClient = NULL;
     {
         MqttLockGuard lock;
-
-        /**
-         * If we already have a client... destroy it first...
-         */
-        if (mqttClient) {
-            mqtt_net_destroy_client();
-        }
 
         // Sanity check config.
         if (server.isEmpty()) {
@@ -776,13 +822,18 @@ static void mqtt_net_start_client(const String& server, uint16_t port, const Str
  * Stops and destroys the connected client and updates all relevant state.
  */
 static void mqtt_net_stop_client() {
+    MqttLifecycleGuard lifecycleLock;
+    if (!lifecycleLock.is_locked()) {
+        return;
+    }
     {
         MqttLockGuard lock;
         currentSession.is_active = false;
         mqtt_net_reset_grace_timer();
         mqtt_net_set_state(MQTT_STATE_DISABLED);
     }
-    mqtt_net_destroy_client();
+    mqtt_net_destroy_client_with_lifecycle_lock();
+    mqtt_net_set_state(MQTT_STATE_DISABLED);
 }
 
 // Starts or restarts the MQTT client using the active synced radio configuration
@@ -794,6 +845,7 @@ static void mqtt_net_start_synced_client() {
     bool tls = false;
     bool tls_insec = false;
     String custom_ca = "";
+    bool matchingClientActive = false;
 
     {
         MqttLockGuard lock;
@@ -812,8 +864,21 @@ static void mqtt_net_start_synced_client() {
         tls = currentStatus.radio_tls;
         tls_insec = currentConfig.tls_insecure;
         custom_ca = currentConfig.custom_ca;
+        matchingClientActive = mqttClient && currentSession.is_active &&
+            currentSession.server == server &&
+            currentSession.port == port &&
+            currentSession.user == user &&
+            currentSession.pass == pass &&
+            currentSession.root == currentStatus.radio_root &&
+            currentSession.tls == tls &&
+            currentSession.tls_insecure == tls_insec &&
+            currentSession.custom_ca == custom_ca;
     }
 
+    if (matchingClientActive) {
+        log_d("[MQTT] Matching broker client is already active; keeping the existing lifecycle.");
+        return;
+    }
     mqtt_net_start_client(server, port, user, pass, tls, tls_insec, custom_ca);
 }
 
@@ -841,6 +906,9 @@ void mqtt_net_init() {
 
     if (!mqttMutex) {
         mqttMutex = xSemaphoreCreateRecursiveMutex();
+    }
+    if (!mqttLifecycleMutex) {
+        mqttLifecycleMutex = xSemaphoreCreateMutex();
     }
 #ifdef ESP_IDF5_MIGRATION_BUILD
     const int allocatorResult = mbedtls_platform_set_calloc_free(tls_psram_calloc, tls_psram_free);
@@ -971,15 +1039,20 @@ void mqtt_net_loop() {
     /*
      * Lock acquired only on expiration to serialize against simultaneous BLE reconnect
      */
-    MqttLockGuard lock;
-    if (s_in_grace_period.load(std::memory_order_relaxed) && !bridge_is_ble_connected()) {
-        if (millis() - s_ble_disconnected_at.load(std::memory_order_relaxed) >= (uint32_t)MQTT_BLE_GRACE_PERIOD_SECONDS * 1000) {
+    bool graceExpired = false;
+    {
+        MqttLockGuard lock;
+        if (s_in_grace_period.load(std::memory_order_relaxed) && !bridge_is_ble_connected() &&
+            millis() - s_ble_disconnected_at.load(std::memory_order_relaxed) >= (uint32_t)MQTT_BLE_GRACE_PERIOD_SECONDS * 1000) {
             log_w("[MQTT] BLE device has been disconnected for longer than grace period (%ds). Disconnecting from MQTT broker and clearing queue.", MQTT_BLE_GRACE_PERIOD_SECONDS);
             mqtt_net_reset_grace_timer();
-            mqtt_net_stop_client();
-            bridge_clear_mqtt_to_ble_queue();
-            mqtt_net_set_state(MQTT_STATE_WAITING_BLE, "BLE disconnected (grace expired)");
+            graceExpired = true;
         }
+    }
+    if (graceExpired) {
+        mqtt_net_stop_client();
+        bridge_clear_mqtt_to_ble_queue();
+        mqtt_net_set_state(MQTT_STATE_WAITING_BLE, "BLE disconnected (grace expired)");
     }
 }
 
@@ -1014,10 +1087,22 @@ static uint32_t mqtt_net_request_radio_config() {
 void mqtt_net_apply_config(const MqttConfig& cfg) {
     mqtt_net_init();
     s_mqtt_enabled.store(cfg.enabled, std::memory_order_relaxed);
-    MqttLockGuard lock;
-    currentConfig = cfg;
+    bool hasRadioServer = false;
+    bool radioProxyEnabled = false;
+    String radioServer;
+    uint16_t radioPort = 1883;
+    String radioRoot;
+    {
+        MqttLockGuard lock;
+        currentConfig = cfg;
+        hasRadioServer = !currentStatus.radio_server.isEmpty();
+        radioProxyEnabled = currentStatus.radio_proxy_enabled;
+        radioServer = currentStatus.radio_server;
+        radioPort = currentStatus.radio_port;
+        radioRoot = currentStatus.radio_root;
+    }
 
-    if (!currentConfig.enabled) {
+    if (!cfg.enabled) {
         s_start_deferred.store(false, std::memory_order_relaxed);
         log_i("[MQTT] Feature disabled in configuration, shutting down mqtt client...");
         mqtt_net_stop_client();
@@ -1028,13 +1113,13 @@ void mqtt_net_apply_config(const MqttConfig& cfg) {
     // The public MeshRadar standard is preloaded, so a fresh installation can
     // start without duplicating those shared values in the Web UI. A radio
     // ModuleConfig received later remains authoritative.
-    if (currentStatus.radio_server.isEmpty()) {
+    if (!hasRadioServer) {
         log_i("[MQTT] Enabled. Waiting for radio ModuleConfig.mqtt packets over Bluetooth...");
         mqtt_net_set_state(MQTT_STATE_WAITING_RADIO_CONFIG);
         if (bridge_is_ble_connected()) {
             mqtt_net_request_radio_config();
         }
-    } else if (!currentStatus.radio_proxy_enabled) {
+    } else if (!radioProxyEnabled) {
         s_start_deferred.store(false, std::memory_order_relaxed);
         log_w("[MQTT] Radio configuration detected, but MQTT proxy is inactive on the radio.");
         mqtt_net_stop_client();
@@ -1043,7 +1128,7 @@ void mqtt_net_apply_config(const MqttConfig& cfg) {
     } else if (bridge_is_ble_connected()) {
         log_i(
             "[MQTT] Applying Auto-Sync MQTT configuration -> %s:%u (Root: %s)",
-            currentStatus.radio_server.c_str(), currentStatus.radio_port, currentStatus.radio_root.c_str()
+            radioServer.c_str(), radioPort, radioRoot.c_str()
         );
         mqtt_net_start_or_defer();
     } else {
@@ -1190,21 +1275,31 @@ void mqtt_net_on_ble_connected() {
         return;
     }
 
-    MqttLockGuard lock;
-    mqtt_net_reset_grace_timer();
+    bool preserveSession = false;
+    bool shouldStart = false;
+    String server;
+    uint16_t port = 1883;
+    {
+        MqttLockGuard lock;
+        mqtt_net_reset_grace_timer();
+        preserveSession = mqttClient && currentSession.is_active;
+        shouldStart = !preserveSession && currentStatus.radio_proxy_enabled &&
+            !currentStatus.radio_server.isEmpty() && !mqttClient;
+        server = currentStatus.radio_server;
+        port = currentStatus.radio_port;
+    }
 
     // If we are already connected to the broker (during grace period) and session is active, keep it!
-    if (mqttClient && currentSession.is_active) {
+    if (preserveSession) {
         log_i("[MQTT] Bluetooth radio reconnected within grace period! Preserving active broker session.");
-    } else if (currentStatus.radio_proxy_enabled && !currentStatus.radio_server.isEmpty() && !mqttClient) {
+    } else if (shouldStart) {
         // Connect to broker if radio configuration is ready and proxy is enabled
         log_i(
             "[MQTT] Bluetooth radio connected! Connecting to Synced MQTT broker -> %s:%u",
-            currentStatus.radio_server.c_str(), currentStatus.radio_port
+            server.c_str(), port
         );
         mqtt_net_start_or_defer();
     }
-
 }
 
 /**
@@ -1380,7 +1475,7 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
                     setRadioSetupState(
                         RadioSetupPhase::Complete,
                         s_radio_setup_operation == RadioSetupOperation::DeviceTelemetry
-                            ? "Radio verified: device telemetry is enabled and broadcasting at the selected interval."
+                            ? "Radio verified: device telemetry is enabled for periodic LoRa broadcasts at the selected interval."
                             : "Radio verified: MQTT, client proxy, LoRa consent and selected channels are ready."
                     );
                     log_i("[Radio Setup] Radio read-back verified successfully");
@@ -1411,6 +1506,8 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
             );
 
             bool shouldStart = false;
+            bool shouldStop = false;
+            const char* stopReason = nullptr;
             {
                 MqttLockGuard lock;
                 if (radioSetupActive()) {
@@ -1443,15 +1540,11 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
                 currentStatus.radio_port = port;
 
                 if (!currentStatus.radio_proxy_enabled) {
-                    const char* reason = !mqtt_cfg.enabled ? "MQTT Disabled on Radio (Enable 'MQTT' in App)" : "Radio Proxy Disabled (Enable 'Proxy to Client' in App)";
-                    log_w("[MQTT] Radio MQTT proxy is inactive (%s). Stopping client.", reason);
-                    mqtt_net_stop_client();
-                    bridge_clear_mqtt_to_ble_queue();
-                    mqtt_net_set_state(MQTT_STATE_DISABLED, reason);
-                    return false;
-                }
-
-                if (currentConfig.enabled && bridge_is_ble_connected()) {
+                    shouldStop = true;
+                    stopReason = !mqtt_cfg.enabled
+                        ? "MQTT Disabled on Radio (Enable 'MQTT' in App)"
+                        : "Radio Proxy Disabled (Enable 'Proxy to Client' in App)";
+                } else if (currentConfig.enabled && bridge_is_ble_connected()) {
                     currentStatus.active_root = currentStatus.radio_root;
 
                     bool configChanged = (!currentSession.is_active ||
@@ -1476,7 +1569,13 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
                 }
             }
 
-            if (shouldStart) {
+            if (shouldStop) {
+                log_w("[MQTT] Radio MQTT proxy is inactive (%s). Stopping client.", stopReason);
+                mqtt_net_stop_client();
+                bridge_clear_mqtt_to_ble_queue();
+                mqtt_net_set_state(MQTT_STATE_DISABLED, stopReason);
+                return false;
+            } else if (shouldStart) {
                 mqtt_net_start_or_defer();
             }
         }
