@@ -11,16 +11,11 @@ void ota_update_register(AsyncWebServer& server, const String& token);
 // provisioned through the local setup AP. Persistence is owned by config_ui.
 void ota_update_set_token(const String& token);
 
-// Checks an administrator request against the write-only OTA key. This is
-// used for dangerous update-channel changes without exposing the key through
-// the configuration API or embedding it in the browser application.
-bool ota_update_is_authorized(AsyncWebServerRequest* request);
-
 // Applies the persistent release policy. Stable is the default channel;
 // automatic installation is opt-out. Changing the channel resets cached
 // release metadata and schedules a fresh automatic check when enabled.
 void ota_update_set_policy(bool betaEnabled, bool autoUpdateEnabled,
-                           bool authorizedChannelChange = false);
+                           bool channelChangeRequested = false);
 
 // Enables the background update scheduler after normal-mode networking and
 // critical services have started. Setup/captive-portal mode never calls this.

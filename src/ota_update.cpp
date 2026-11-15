@@ -601,13 +601,11 @@ bool startOfficialTask(bool checkOnly, bool betaChannel, bool installAfterCheck 
 
 void ota_update_set_token(const String& token) { s_token = token; }
 
-bool ota_update_is_authorized(AsyncWebServerRequest* request) { return isAuthorized(request); }
-
-void ota_update_set_policy(bool betaEnabled, bool autoUpdateEnabled, bool authorizedChannelChange) {
+void ota_update_set_policy(bool betaEnabled, bool autoUpdateEnabled, bool channelChangeRequested) {
     const bool channelChanged = s_betaEnabled.exchange(betaEnabled, std::memory_order_acq_rel) != betaEnabled;
     s_autoUpdateEnabled.store(autoUpdateEnabled, std::memory_order_release);
     if (!autoUpdateEnabled) s_installPending.store(false, std::memory_order_release);
-    if (authorizedChannelChange) {
+    if (channelChangeRequested) {
         s_channelReconcilePending.store(true, std::memory_order_release);
     }
     if (channelChanged && !ota_update_is_busy()) {

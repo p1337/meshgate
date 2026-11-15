@@ -158,18 +158,18 @@ Automatic stable updates are enabled by default. To opt out or update manually:
    selected GitHub Pages channel, validates TLS, board identity, image size and
    SHA-256, writes the inactive slot and reboots.
 
-Stable is the default channel. **Beta firmware · UNSTABLE** is intended only
-for administrator test devices. Changing beta enrollment requires the device's
-64-character OTA administrator key; ordinary users cannot enable it. The public
-USB Web Flasher remains stable-only. A beta-enrolled device follows the highest
+Stable is the default channel. Every device owner may enable or disable
+**Beta firmware · UNSTABLE** directly in the System tab; no administrator key
+is required. Beta and release-candidate firmware may contain untested changes,
+so enabling Beta requires an explicit warning confirmation. The public USB Web
+Flasher remains stable-only. A beta-enrolled device follows the highest
 available candidate, including the final stable release when it supersedes a
 beta or release candidate.
 
-Stable and manual updates request no local firmware file or key. The beta
-enrollment key is requested only while changing that administrator setting and
-is cleared from the form afterward. The authenticated raw endpoint used by
-`tools/upload_ota.ps1` remains available for developers and recovery, but is
-not shown in the normal Web UI.
+Stable, Beta and manual official updates request no local firmware file or key.
+The separately authenticated raw endpoint used by `tools/upload_ota.ps1`
+remains available for developers and recovery, but is not shown in the normal
+Web UI and is unrelated to release-channel selection.
 
 The one-click OTA path writes only the inactive application partition and does
 not erase NVS. Wi-Fi credentials, BLE pairing data, Tailscale/WireGuard keys,

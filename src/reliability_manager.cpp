@@ -30,6 +30,7 @@ constexpr const char* DEPLOYMENT_TIMEZONE = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 bool s_wireguardExpected = false;
 bool s_tailscaleExpected = false;
+bool s_runtimeSupervisionEnabled = false;
 TaskHandle_t s_reliabilityTask = nullptr;
 std::atomic<bool> s_restartRequested{false};
 std::atomic<bool> s_restartAllowedDuringOta{false};
@@ -83,6 +84,22 @@ void reliabilityTask(void*) {
                 controlledRestart("allocation-free remote restart request");
             }
         }
+
+        if (!s_runtimeSupervisionEnabled) {
+            uint32_t waitMs = CHECK_INTERVAL_MS;
+            if (s_restartRequested.load(std::memory_order_acquire)) {
+                const uint32_t nowMs = millis();
+                const uint32_t restartAt = s_restartAtMs.load(std::memory_order_relaxed);
+                if (static_cast<int32_t>(restartAt - nowMs) > 0) {
+                    waitMs = min(waitMs, restartAt - nowMs);
+                } else {
+                    waitMs = 1;
+                }
+            }
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(waitMs));
+            continue;
+        }
+
         uint32_t uptimeSeconds = millis() / 1000UL;
 
         bool wifiOk = WiFi.status() == WL_CONNECTED;
@@ -166,9 +183,11 @@ void reliabilityTask(void*) {
 
 } // namespace
 
-void reliability_manager_start(const BridgeConfig& cfg) {
+void reliability_manager_start(const BridgeConfig& cfg,
+                               bool enableRuntimeSupervision) {
     s_tailscaleExpected = cfg.tailscale_enabled;
     s_wireguardExpected = cfg.wireguard_enabled && !cfg.tailscale_enabled;
+    s_runtimeSupervisionEnabled = enableRuntimeSupervision;
     // Keep the stack internal: the task participates in flash-backed logging
     // and must remain runnable while the external-memory cache is disabled.
     if (xTaskCreatePinnedToCore(

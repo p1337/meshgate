@@ -443,7 +443,7 @@ Follow these steps to trigger the CI/CD pipeline:
    matching entry is missing and uses that entry as the GitHub Release body.
 4. **Tag the release**: Create the identical SemVer Git tag. Use `v1.2.0` for a
    stable release or a pre-release identifier such as `v1.3.0-beta.1` for an
-   administrator test build, then push it to GitHub:
+   unstable test build, then push it to GitHub:
    ```bash
    git tag v1.2.0
    git push origin v1.2.0
@@ -460,8 +460,9 @@ Follow these steps to trigger the CI/CD pipeline:
      `latest_beta_ota.json` feeds with fixed image URLs, exact byte lengths and
      SHA-256 digests. The candidate is the highest SemVer across stable and
      pre-releases. `tools/select_release_channels.py` owns this selection rule.
-   * The public Web Flasher and ordinary devices always remain on the stable
-     release. Only administrator-enrolled devices consume the beta feed.
+   * The public Web Flasher always remains on the stable release. Devices whose
+     owners explicitly select **Beta firmware · UNSTABLE** consume the candidate
+     feed instead.
    * The web flasher will instantly update to show "Firmware Version: v1.2.0".
 
 ### License-complete release assets

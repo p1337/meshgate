@@ -107,6 +107,10 @@ void setup() {
 
     if (forceSetup) {
         // Enter Setup mode.
+        // The persistent supervisor also owns allocation-free Web UI reboot
+        // requests. Start it without link/maintenance monitoring so a newly
+        // configured device can leave Setup Mode without a USB reset.
+        reliability_manager_start(cfg, false);
         wifi_net_start_ap();
         // If WiFi was already saved, connect it immediately while keeping the
         // setup AP available for unfinished Bluetooth/WireGuard configuration.
@@ -151,7 +155,7 @@ void setup() {
             } else {
                 wireguard_net_start(cfg);
             }
-            reliability_manager_start(cfg);
+            reliability_manager_start(cfg, true);
 
             // MQTT is deliberately applied after remote access startup. Its
             // TLS allocation is deferred until Tailscale DERP is established.
@@ -167,6 +171,7 @@ void setup() {
             ota_update_start_automatic_checks();
         } else {
             log_i("[BOOT] WiFi Connection Failed! Falling back to Setup Mode.");
+            reliability_manager_start(cfg, false);
             wifi_net_start_ap();
         }
     }

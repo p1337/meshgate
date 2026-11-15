@@ -4,6 +4,21 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.25] - 2026-11-15
+
+- Made Stable/Beta release-channel selection a normal device-owner setting.
+  Enabling the clearly marked `UNSTABLE` channel still requires explicit
+  confirmation, but no OTA administrator key.
+- Started the persistent restart supervisor in Setup Mode with runtime link
+  monitoring disabled, so the Web UI can reliably reboot into the configured
+  bridge without creating a temporary task or losing saved settings.
+- Added a bounded two-minute Tailscale enrollment wait and visible errors when
+  the setup reboot cannot be scheduled, instead of leaving an empty waiting
+  tab open indefinitely.
+- Promoted the metadata-first OTA and service-quiesce flow tested in the
+  v0.7.25 beta: current devices keep all services running, while an available
+  verified image pauses nonessential services only for download and install.
+
 ## [v0.7.25-beta.1] - 2026-11-14
 
 - Changed manual and automatic official OTA to check metadata on a PSRAM-backed

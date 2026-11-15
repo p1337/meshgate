@@ -108,9 +108,9 @@ footer so the two destinations cannot diverge.
   * Enables automatic stable updates by default and provides an opt-out.
     Scheduling belongs to the firmware rather than the browser, uses
     deterministic per-device jitter, and is disabled in setup AP mode.
-  * Offers an administrator-only **Beta firmware · UNSTABLE** enrollment. A
-    channel change requires the write-only OTA key; the browser neither receives
-    nor retains it.
+  * Allows every device owner to select **Beta firmware · UNSTABLE** without a
+    key. Enabling Beta requires an explicit warning confirmation because beta
+    and release-candidate firmware may contain untested changes.
   * Makes both version values link to the newest-first technical changelog in
     the MeshGate repository.
   * Selecting **Not checked** starts an explicit metadata-only release check;
@@ -120,8 +120,7 @@ footer so the two destinations cannot diverge.
     arbitrary URL. It checks metadata before changing runtime services. A
     current release reports `NO UPDATE NEEDED` without interruption or reboot;
     an available release pauses the nonessential services, installs into the
-    inactive slot and performs one ordinary reboot. The administrator key field
-    appears only for a pending beta enrollment change.
+    inactive slot and performs one ordinary reboot.
   * Downloads only the production ESP32-S3 image named by the official release
     metadata and verifies TLS, board identity, size and SHA-256 before activation.
 * **Community Card:**
@@ -223,8 +222,8 @@ footer so the two destinations cannot diverge.
      namespaces and applies it immediately. It is accepted only in setup mode
      from the setup AP's own subnet, never from LAN or VPN clients.
    * **`POST /api/ota/settings`**: Persists `beta_enabled` and
-     `auto_update_enabled` redundantly. Auto-update is a normal opt-out setting;
-     changing beta enrollment additionally requires `X-OTA-Key`.
+     `auto_update_enabled` redundantly. Both are normal user settings and do
+     not require an OTA key.
    * **`GET /api/ota/official`**: Reports official update support, current and
      latest version, selected channel, automatic-update policy, technical
      changelog URL, channel-reconciliation state, lifecycle state, byte
@@ -233,7 +232,7 @@ footer so the two destinations cannot diverge.
    * **`POST /api/ota/official`**: Starts the background official-release
      metadata check. It accepts no URL, file or credential from the browser, so
      it cannot be used to install arbitrary firmware. Without `check_only`, an
-     available or administrator-authorized channel-reconciliation result is
+     available or user-selected channel-reconciliation result is
      handed to the runtime quiescer and internal installer; a current result
      stops there. `check_only=true` always stops at `current` or `available`
      without downloading or installing an image.

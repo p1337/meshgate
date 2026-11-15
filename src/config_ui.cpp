@@ -1063,7 +1063,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       MeshGate downloads only the selected official release channel from GitHub, verifies board, size and SHA-256, installs into the inactive slot and reboots. WiFi, BLE, VPN, MQTT and mailbox data are preserved.
     </div>
     <div id="ota-beta-warning" class="alert alert-warning" style="margin-bottom:12px;">
-      <strong>UNSTABLE:</strong> This device follows beta and release-candidate firmware intended for administrator testing.
+      <strong>UNSTABLE:</strong> This device follows beta and release-candidate firmware that may contain untested changes.
     </div>
     <div class="input-group" style="display:flex; justify-content:space-between; align-items:center; margin:10px 0 12px;">
       <label for="ota-auto-update" style="margin-bottom:0;">Install official updates automatically</label>
@@ -1071,15 +1071,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
     <div class="input-group" style="display:flex; justify-content:space-between; align-items:center; margin:10px 0 12px;">
       <label for="ota-beta-enabled" style="margin-bottom:0; color:var(--yellow);">Beta firmware · UNSTABLE</label>
-      <input type="checkbox" id="ota-beta-enabled" onchange="updateOtaAdminKeyVisibility()" style="width:20px; height:20px; margin:0;">
-    </div>
-    <div id="ota-admin-key-group" style="display:none;">
-      <label for="ota-admin-key">OTA administrator key:</label>
-      <div class="password-field">
-        <input type="password" id="ota-admin-key" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Required only to change beta enrollment">
-        <button type="button" class="btn-toggle-pass" onclick="togglePassVisibility('ota-admin-key', this)">Show</button>
-      </div>
-      <small>The key is sent only with this request and is never returned to or stored by the browser.</small>
+      <input type="checkbox" id="ota-beta-enabled" style="width:20px; height:20px; margin:0;">
     </div>
     <button class="btn-secondary" id="btn-save-ota-policy" onclick="saveOtaPolicy()">Save Update Settings</button>
     <div class="progress-track" style="height:8px; margin:8px 0 12px;"><div id="ota-progress-bar" class="progress-fill progress-green" style="width:0%;"></div></div>
@@ -1648,8 +1640,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('sys-debug-logs').checked = !!cfg.debug_logs;
           document.getElementById('ota-beta-enabled').checked = !!cfg.ota_beta_enabled;
           document.getElementById('ota-auto-update').checked = cfg.ota_auto_update_enabled !== false;
-          document.getElementById('ota-admin-key').value = '';
-          updateOtaAdminKeyVisibility();
 
           // Tailscale fields. Interactive browser enrollment is keyless.
           document.getElementById('view-tailscale-name').innerText = cfg.tailscale_device_name || 'meshgate';
@@ -1826,12 +1816,28 @@ const char index_html[] PROGMEM = R"rawliteral(
         popup.document.body.style.cssText = 'margin:0;padding:32px;background:#0a0c10;color:#c8d6e5;font:16px Segoe UI,sans-serif;';
         popup.document.body.innerHTML = '<h2 style="color:#5eed97">MeshGate is preparing Tailscale…</h2><p>The device is restarting and requesting its secure one-time login. Keep this tab open.</p>';
         const script = popup.document.createElement('script');
-        script.text = '(function poll(){fetch(' + JSON.stringify(statusUrl) + ',{cache:"no-store"}).then(function(r){return r.json();}).then(function(s){if(s.connected&&s.vpn_ip){location.replace(' + JSON.stringify(deviceUrl) + ');return;}if(s.auth_url){location.replace(s.auth_url);return;}setTimeout(poll,2000);}).catch(function(){setTimeout(poll,2000);});})();';
+        script.text = '(function(){var started=Date.now();function failed(){document.body.innerHTML="<h2 style=\\"color:#ff617f\\">Tailscale setup needs attention</h2><p>MeshGate did not provide a login link after two minutes.</p><p><a style=\\"color:#5eed97\\" href=\\""+' + JSON.stringify(deviceUrl) + '+"\\">Return to Remote VPN</a></p>";}function poll(){if(Date.now()-started>120000){failed();return;}fetch(' + JSON.stringify(statusUrl) + ',{cache:"no-store"}).then(function(r){return r.json();}).then(function(s){if(s.connected&&s.vpn_ip){location.replace(' + JSON.stringify(deviceUrl) + ');return;}if(s.auth_url){location.replace(s.auth_url);return;}setTimeout(poll,2000);}).catch(function(){setTimeout(poll,2000);});}poll();})();';
         popup.document.head.appendChild(script);
         return popup;
       } catch (e) {
         return null;
       }
+    }
+
+    function showTailscaleWaitingWindowError(message) {
+      if (!tailscaleEnrollmentWindow || tailscaleEnrollmentWindow.closed) return;
+      try {
+        const doc = tailscaleEnrollmentWindow.document;
+        doc.body.innerHTML = '<h2 style="color:#ff617f">Tailscale setup could not continue</h2>';
+        const detail = doc.createElement('p');
+        detail.innerText = message;
+        doc.body.appendChild(detail);
+        const back = doc.createElement('a');
+        back.href = window.location.origin + '/#remote';
+        back.innerText = 'Return to Remote VPN';
+        back.style.color = '#5eed97';
+        doc.body.appendChild(back);
+      } catch (e) {}
     }
 
     function redirectTailscaleWaitingWindowToDevice() {
@@ -1877,9 +1883,14 @@ const char index_html[] PROGMEM = R"rawliteral(
         pollTailscaleEnrollment();
         return fetch('/reboot', { method: 'POST' })
           .then(r => {
-            if (!r.ok && r.status !== 202) throw new Error('Settings were saved, but reboot could not be scheduled. Use Reboot & Start Bridge below.');
+            if (!r.ok && r.status !== 202) {
+              const err = new Error('Settings were saved, but reboot could not be scheduled. Use Reboot & Start Bridge below.');
+              err.rebootRejected = true;
+              throw err;
+            }
           })
-          .catch(() => {
+          .catch(err => {
+            if (err && err.rebootRejected) throw err;
             // A connection reset is expected when the restart wins the race
             // against the HTTP response. Enrollment polling determines the
             // real result after the device returns.
@@ -1892,6 +1903,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           clearInterval(tailscaleEnrollmentTimer);
           tailscaleEnrollmentTimer = null;
         }
+        showTailscaleWaitingWindowError(err.message || 'Network error saving Tailscale.');
         setTailscaleEnrollmentState('error', 'Setup could not start', err.message || 'Network error saving Tailscale.');
         showAlert('tailscale-alert', 'error', err.message || 'Network error saving Tailscale.');
       });
@@ -2639,26 +2651,12 @@ const char index_html[] PROGMEM = R"rawliteral(
       });
     }
 
-    function updateOtaAdminKeyVisibility() {
-      const betaEnabled = document.getElementById('ota-beta-enabled').checked;
-      const betaChanged = !!currentConfig && betaEnabled !== !!currentConfig.ota_beta_enabled;
-      document.getElementById('ota-admin-key-group').style.display = betaChanged ? 'block' : 'none';
-      if (!betaChanged) document.getElementById('ota-admin-key').value = '';
-    }
-
     function submitOtaPolicy() {
       const betaEnabled = document.getElementById('ota-beta-enabled').checked;
       const autoUpdateEnabled = document.getElementById('ota-auto-update').checked;
-      const betaChanged = !!currentConfig && betaEnabled !== !!currentConfig.ota_beta_enabled;
-      const adminKey = document.getElementById('ota-admin-key').value.trim();
-      if (betaChanged && !/^[0-9a-fA-F]{64}$/.test(adminKey)) {
-        showAlert('ota-alert', 'error', 'Changing beta enrollment requires the 64-character OTA administrator key.');
-        return;
-      }
 
       const button = document.getElementById('btn-save-ota-policy');
       const headers = { 'Content-Type':'application/x-www-form-urlencoded' };
-      if (betaChanged) headers['X-OTA-Key'] = adminKey;
       button.disabled = true;
       fetch('/api/ota/settings', {
         method:'POST',
@@ -2669,8 +2667,6 @@ const char index_html[] PROGMEM = R"rawliteral(
         if (!result.ok || !result.body.success) throw new Error(result.body.error || 'Update settings could not be saved.');
         currentConfig.ota_beta_enabled = betaEnabled;
         currentConfig.ota_auto_update_enabled = autoUpdateEnabled;
-        document.getElementById('ota-admin-key').value = '';
-        updateOtaAdminKeyVisibility();
         showAlert('ota-alert', 'success', betaEnabled
           ? 'Beta channel enabled. This device now follows UNSTABLE candidate releases.'
           : 'Update settings saved. This device follows stable releases.');
@@ -2688,7 +2684,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (betaChanged && betaEnabled) {
         showModal(
           'Enable UNSTABLE Beta Firmware',
-          'This administrator-only channel may install untested beta or release-candidate firmware automatically. Continue only on a test device.',
+          'This channel may install untested beta or release-candidate firmware automatically. Continue only if you accept possible instability.',
           'Enable Beta',
           'btn-warning',
           submitOtaPolicy
@@ -3391,9 +3387,8 @@ void config_ui_start_server() {
         request->send(response);
     });
 
-    // Auto-update is a normal user preference. Moving a device onto or off
-    // the beta channel changes its trust policy and therefore additionally
-    // requires the existing write-only OTA administrator key.
+    // Stable/Beta selection and automatic updates are normal user preferences.
+    // The raw developer upload endpoint remains independently authenticated.
     server.on("/api/ota/settings", HTTP_POST, [](AsyncWebServerRequest* request) {
         if (ota_update_is_busy()) {
             request->send(409, "application/json", "{\"success\":false,\"error\":\"OTA settings cannot change while an update is active\"}");
@@ -3414,10 +3409,6 @@ void config_ui_start_server() {
         const bool betaEnabled = betaValue == "true";
         const bool autoUpdateEnabled = autoValue == "true";
         const BridgeConfig current = config_ui_load();
-        if (betaEnabled != current.ota_beta_enabled && !ota_update_is_authorized(request)) {
-            request->send(401, "application/json", "{\"success\":false,\"error\":\"The OTA administrator key is required to change the beta channel\"}");
-            return;
-        }
 
         const bool persisted = preferences.putBool("ota_beta", betaEnabled) > 0 &&
                                preferences.putBool("ota_auto", autoUpdateEnabled) > 0 &&
