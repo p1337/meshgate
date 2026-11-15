@@ -1128,6 +1128,21 @@ void bridge_clear_mqtt_to_ble_queue() {
     }
 }
 
+bool bridge_enqueue_control_to_ble(const uint8_t* data, size_t len) {
+    if (!tcp_to_ble_queue || !data || len == 0 || len > MESHTASTIC_MAX_PACKET_SIZE) {
+        return false;
+    }
+
+    BridgePacket packet = {};
+    memcpy(packet.data, data, len);
+    packet.len = len;
+    if (xQueueSend(tcp_to_ble_queue, &packet, pdMS_TO_TICKS(25)) != pdTRUE) {
+        log_w("[Bridge-Control] App-to-BLE queue full, retrying later");
+        return false;
+    }
+    return true;
+}
+
 /**
  * Initialize Bridge.
  * @param ble_name Advertised BLE name used to disambiguate recovery scans.

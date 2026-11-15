@@ -66,9 +66,13 @@ footer so the two destinations cannot diverge.
   * Displays feature enable/disable toggle, live radio sync status, active broker address/port/TLS mode, Client Status pill, and live MQTT **Traffic** counters (sent, received, invalid).
   * In Edit mode, offers:
     * **Enable MQTT Gateway** toggle.
+    * An explicit **automatic Bluetooth radio setup** or **manual checklist** choice. Automatic mode shows every planned radio-side change and lets the owner select channel uplink/downlink flags before a transactional, verified write.
     * **Skip Certificate Validation** toggle (for self-signed / local LAN brokers).
     * **Custom CA Root Certificate** textarea for uploading private PEM certificates.
   * Independent **Save MQTT Settings** button persists settings to NVS and applies them immediately.
+* **Radio Device Telemetry Card:**
+  * Enables the attached node's built-in device metrics at a selected 15/30/60-minute interval with one click.
+  * Reads and preserves the complete Telemetry module configuration, changes only `device_telemetry_enabled` and `device_update_interval`, then verifies the radio read-back.
 * **Tailscale Card (IDF-5 Nano build):**
   * Displays enablement, live connection state, device name, assigned VPN IPv4 address, known peer count, and enrollment state.
   * Includes a self-contained three-step one-click setup wizard with an
@@ -180,6 +184,7 @@ footer so the two destinations cannot diverge.
      the complete ring and never requests a TCP-window-sized send buffer.
    * **`GET /metrics`**: Standards-compliant Prometheus / OpenMetrics scraping endpoint (`text/plain; version=0.0.4; charset=utf-8`). Streams line-by-line metrics (`meshbridge_*`) directly into lwIP network output buffers via `AsyncResponseStream` with zero large heap allocations. Suitable for scraping by Prometheus, VictoriaMetrics, Grafana Agent, and Home Assistant.
    * **`OPTIONS|PUT /api/v1/toradio`**: Standard Meshtastic HTTP PhoneAPI write endpoint. The PUT body is one bounded raw `ToRadio` protobuf and returns `204` after it is queued for BLE.
+   * **`POST /api/radio/telemetry/enable`**: Starts the user-approved, transactional device-telemetry activation on the connected BLE radio. The form field `interval` accepts 60–86400 seconds; the UI offers 900, 1800 and 3600 seconds.
    * **`OPTIONS|GET /api/v1/fromradio`**: Standard Meshtastic HTTP PhoneAPI polling endpoint. Returns one raw `FromRadio` protobuf, an empty body, or all queued packets when `all=true`. Responses include CORS and Private Network Access headers for local browser clients.
    * **`OPTIONS|GET /api/mailbox`**: Returns retained decoded text messages as
      JSON. The default response contains the newest 32 entries in chronological

@@ -64,6 +64,14 @@ In the Meshtastic App (or Web UI / CLI), navigate to **Radio Configuration ➔ M
 6. **`Root Topic` (`root`):** Root topic prefix for your mesh (e.g. `msh` or `msh/US`).
 7. **Channel Uplink / Downlink:** In **Channels ➔ [Channel Name] ➔ Module Settings**, ensure **Uplink Enabled** and/or **Downlink Enabled** is toggled ON for the channel(s) you wish to bridge to MQTT.
 
+MeshGate `v0.7.26-beta.1` can perform items 1, 2, LoRa
+`config_ok_to_mqtt`, and the explicitly selected channel flags itself over the
+existing BLE PhoneAPI path. The owner must select automatic mode in the MQTT
+card after reviewing the displayed plan. MeshGate first captures the complete
+radio configuration, uses the radio's short-lived admin session key, applies a
+single settings transaction, and verifies a fresh read-back. Manual mode keeps
+the checklist and performs no radio write.
+
 Before the first radio configuration arrives, the bridge uses the public
 MeshRadar preset (`meshradar.pl:8883`, user/password `meshradar`, TLS enabled,
 root `msh`). During the initial BLE connection, the bridge sends a
@@ -416,6 +424,9 @@ when packets arrive but map content is missing:
 - [x] Implement REST endpoints `/save_mqtt` and `/mqtt_status`.
 - [x] Add client-side validation and live status polling in WebUI.
 - [x] Ensure AP/Setup mode only persists settings to NVS without launching runtime client until Normal boot.
+- [x] Add explicit automatic/manual radio preparation with per-channel consent,
+      short-lived admin authorization, transactional writes and read-back verification.
+- [x] Add one-click device telemetry activation on the same verified BLE control path without overwriting sensor settings.
 
 ### Phase 5: Bridge Pipeline Multiplexing ✅
 - [x] Update `bridge.cpp` to inspect incoming `FromRadio` packets for field 14 (`MqttClientProxyMessage`) and config packets.

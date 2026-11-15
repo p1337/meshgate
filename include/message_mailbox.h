@@ -39,6 +39,9 @@ struct MessageMailboxChannel {
     uint8_t index;
     bool primary;
     bool public_default;
+    bool uplink_enabled;
+    bool downlink_enabled;
+    uint32_t position_precision;
     char name[MESSAGE_MAILBOX_CHANNEL_NAME_MAX];
 };
 

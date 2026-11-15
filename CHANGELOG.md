@@ -4,6 +4,19 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.26-beta.1] - 2026-11-15
+
+- Added an explicit Auto/Manual choice when enabling the MQTT gateway. Auto
+  mode reads the attached radio first, shows the exact planned changes, enables
+  MQTT, Proxy to Client, LoRa MQTT consent and only the selected channel
+  uplink/downlink flags, then verifies the complete read-back.
+- Added one-click device-telemetry activation for the attached BLE radio with
+  selectable 15/30/60-minute intervals. Existing environment, air-quality,
+  health and power-sensor settings are preserved and verified.
+- Radio writes use short-lived Meshtastic admin session keys, a single settings
+  transaction and the existing high-priority BLE queue. Static protobuf buffers
+  avoid new runtime heap fragmentation on the Nano ESP32.
+
 ## [v0.7.25] - 2026-11-15
 
 - Made Stable/Beta release-channel selection a normal device-owner setting.

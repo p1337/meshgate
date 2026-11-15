@@ -979,6 +979,10 @@ const char index_html[] PROGMEM = R"rawliteral(
           <span class="info-label">Radio Proxy:</span>
           <span class="info-val" id="view-mqtt-radio-proxy">(Unknown)</span>
         </div>
+        <div class="info-row" id="view-mqtt-radio-setup-row" style="display:none;">
+          <span class="info-label">Radio Setup:</span>
+          <span class="info-val"><span id="view-mqtt-radio-setup" class="status-pill waiting">Idle</span><br><small id="view-mqtt-radio-setup-detail"></small></span>
+        </div>
         <div class="info-row">
           <span class="info-label">Detected Broker:</span>
           <span class="info-val" id="view-mqtt-broker">(Waiting for radio)</span>
@@ -1014,6 +1018,41 @@ const char index_html[] PROGMEM = R"rawliteral(
         </small>
       </div>
 
+      <div id="mqtt-radio-setup-options" style="margin:14px 0; padding:12px; border:1px solid var(--border); border-radius:6px;">
+        <div style="font-weight:700; margin-bottom:8px;">Attached radio setup</div>
+        <label style="display:flex; gap:8px; align-items:flex-start; margin:8px 0;">
+          <input type="radio" name="mqtt-radio-setup" id="input-mqtt-radio-auto" value="auto" checked onchange="renderMqttRadioSetupMode()" style="width:18px; height:18px; margin:1px 0 0;">
+          <span><strong>Configure the radio automatically over Bluetooth</strong><br><small>MeshGate reads the complete radio configuration first and changes only the MQTT-related fields listed below.</small></span>
+        </label>
+        <label style="display:flex; gap:8px; align-items:flex-start; margin:8px 0;">
+          <input type="radio" name="mqtt-radio-setup" id="input-mqtt-radio-manual" value="manual" onchange="renderMqttRadioSetupMode()" style="width:18px; height:18px; margin:1px 0 0;">
+          <span><strong>I will configure the radio myself</strong><br><small>MeshGate stores only its own gateway switch and shows the required checklist.</small></span>
+        </label>
+
+        <div id="mqtt-radio-auto-plan" class="alert alert-info" style="display:block; margin:12px 0 8px;">
+          <strong>Automatic plan:</strong>
+          <ol style="margin:8px 0 8px 20px; padding:0;">
+            <li>Enable the radio's MQTT module.</li>
+            <li>Enable <strong>Proxy to Client</strong> so MeshGate provides the internet connection over BLE.</li>
+            <li>Enable <strong>LoRa OK to MQTT</strong>.</li>
+            <li>Enable uplink/downlink only for the channels selected below.</li>
+          </ol>
+          Channel names, keys, broker credentials and all unrelated radio settings are preserved. The update is committed as one transaction and read back for verification.
+          <div id="mqtt-radio-channel-list" style="margin-top:12px;">Waiting for radio channels…</div>
+        </div>
+
+        <div id="mqtt-radio-manual-checklist" class="alert alert-warning" style="display:none; margin:12px 0 8px;">
+          <strong>Manual radio checklist:</strong>
+          <ol style="margin:8px 0 0 20px; padding:0;">
+            <li>Module Configuration → MQTT → <strong>Enabled ON</strong>.</li>
+            <li>Module Configuration → MQTT → <strong>Proxy to Client ON</strong>.</li>
+            <li>LoRa Configuration → <strong>OK to MQTT ON</strong>.</li>
+            <li>For every desired channel: <strong>Uplink ON</strong>; enable Downlink only if broker traffic may enter the mesh.</li>
+            <li>For public map position reports, the channel position precision must be greater than zero.</li>
+          </ol>
+        </div>
+      </div>
+
       <div style="margin: 10px 0 6px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
           <label for="input-mqtt-tls-insecure" style="margin:0; font-size:13px;">Skip Certificate Validation</label>
@@ -1043,6 +1082,25 @@ const char index_html[] PROGMEM = R"rawliteral(
         <button class="btn-secondary" onclick="toggleEditMqtt(false)">Cancel</button>
       </div>
     </div>
+  </div>
+
+  <div class="card" id="card-radio-telemetry">
+    <div class="card-header">
+      <div class="card-title">Radio Device Telemetry</div>
+      <span id="view-radio-telemetry-status" class="status-pill disabled">Not requested</span>
+    </div>
+    <div class="alert alert-info" style="display:block; margin-bottom:12px;">
+      One click configures the connected Meshtastic node over Bluetooth to broadcast its built-in device metrics (battery, voltage, channel utilization and uptime). MeshGate first reads the current Telemetry configuration, preserves all environment, air-quality, health and power-sensor settings, commits one change transaction and verifies the result.
+    </div>
+    <label for="input-radio-telemetry-interval">Device telemetry interval</label>
+    <select id="input-radio-telemetry-interval" style="width:100%; margin-bottom:10px;">
+      <option value="900">Every 15 minutes</option>
+      <option value="1800" selected>Every 30 minutes (recommended)</option>
+      <option value="3600">Every 60 minutes</option>
+    </select>
+    <div id="radio-telemetry-detail" style="font-size:12px; color:var(--muted); margin-bottom:10px;"></div>
+    <div id="radio-telemetry-alert" class="alert"></div>
+    <button class="btn-success" id="btn-enable-radio-telemetry" onclick="enableRadioTelemetry()">Enable & Verify Device Telemetry</button>
   </div>
 
   </section>
@@ -1414,6 +1472,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (chatMetaTimer) clearTimeout(chatMetaTimer);
       return fetchJsonRetry('/api/chat/meta', null, 1).then(meta => {
         chatChannels = meta.channels || [];
+        const mqttEdit = document.getElementById('mqtt-edit');
+        if (mqttEdit && mqttEdit.style.display !== 'none') renderMqttChannelChoices(false);
         chatLocalNode = meta.local_node || null;
         const panel = document.getElementById('chat-panel');
         const toggle = document.getElementById('chat-toggle');
@@ -2026,11 +2086,85 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById('input-mqtt-enabled').checked = !!currentConfig.mqtt_enabled;
         document.getElementById('input-mqtt-tls-insecure').checked = !!currentConfig.mqtt_tls_insecure;
         document.getElementById('input-mqtt-ca').value = currentConfig.mqtt_custom_ca || '';
+        document.getElementById('input-mqtt-radio-auto').checked = true;
+        document.getElementById('input-mqtt-radio-manual').checked = false;
+        renderMqttChannelChoices(true);
+        renderMqttRadioSetupMode();
       }
       document.getElementById('mqtt-view').style.display = edit ? 'none' : 'block';
       document.getElementById('mqtt-edit').style.display = edit ? 'block' : 'none';
       document.getElementById('btn-edit-mqtt').style.display = edit ? 'none' : 'block';
       hideAlert('mqtt-alert');
+    }
+
+    function renderMqttRadioSetupMode() {
+      const automatic = document.getElementById('input-mqtt-radio-auto').checked;
+      document.getElementById('mqtt-radio-auto-plan').style.display = automatic ? 'block' : 'none';
+      document.getElementById('mqtt-radio-manual-checklist').style.display = automatic ? 'none' : 'block';
+    }
+
+    function renderMqttChannelChoices(reset) {
+      const container = document.getElementById('mqtt-radio-channel-list');
+      if (!container || (!reset && container.dataset.ready === 'true')) return;
+      container.textContent = '';
+      if (!chatChannels.length) {
+        container.dataset.ready = 'false';
+        container.textContent = 'Waiting for the connected radio to report its channels…';
+        return;
+      }
+
+      const heading = document.createElement('div');
+      heading.style.fontWeight = '700';
+      heading.style.marginBottom = '6px';
+      heading.textContent = 'Channels MeshGate may enable';
+      container.appendChild(heading);
+
+      chatChannels.forEach(channel => {
+        const index = Number(channel.index);
+        if (!Number.isInteger(index) || index < 0 || index > 7) return;
+        const row = document.createElement('div');
+        row.style.display = 'grid';
+        row.style.gridTemplateColumns = 'minmax(120px, 1fr) auto auto';
+        row.style.gap = '12px';
+        row.style.alignItems = 'center';
+        row.style.padding = '7px 0';
+        row.style.borderTop = '1px solid var(--border)';
+
+        const name = document.createElement('span');
+        name.textContent = channel.name + ' (channel ' + index + ')' +
+          (channel.position_precision === 0 ? ' · position hidden' : '');
+        row.appendChild(name);
+
+        const upLabel = document.createElement('label');
+        upLabel.style.margin = '0';
+        const up = document.createElement('input');
+        up.type = 'checkbox';
+        up.className = 'mqtt-channel-uplink';
+        up.dataset.index = String(index);
+        up.checked = !!channel.uplink_enabled || !!channel.public_default;
+        upLabel.appendChild(up);
+        upLabel.appendChild(document.createTextNode(' Uplink'));
+        row.appendChild(upLabel);
+
+        const downLabel = document.createElement('label');
+        downLabel.style.margin = '0';
+        const down = document.createElement('input');
+        down.type = 'checkbox';
+        down.className = 'mqtt-channel-downlink';
+        down.dataset.index = String(index);
+        down.checked = !!channel.downlink_enabled;
+        downLabel.appendChild(down);
+        downLabel.appendChild(document.createTextNode(' Downlink'));
+        row.appendChild(downLabel);
+        container.appendChild(row);
+      });
+
+      const warning = document.createElement('small');
+      warning.style.display = 'block';
+      warning.style.marginTop = '8px';
+      warning.textContent = 'Uplink forwards the selected channel to the broker. Downlink also permits broker traffic to enter the radio mesh.';
+      container.appendChild(warning);
+      container.dataset.ready = 'true';
     }
 
     function loadCaFile(input) {
@@ -2047,15 +2181,31 @@ const char index_html[] PROGMEM = R"rawliteral(
       const enabled = document.getElementById('input-mqtt-enabled').checked;
       const tls_insecure = document.getElementById('input-mqtt-tls-insecure').checked;
       const custom_ca = document.getElementById('input-mqtt-ca').value.trim();
+      const automaticRadioSetup = enabled && document.getElementById('input-mqtt-radio-auto').checked;
+      let uplinkMask = 0;
+      let downlinkMask = 0;
+      document.querySelectorAll('.mqtt-channel-uplink:checked').forEach(input => {
+        uplinkMask |= (1 << Number(input.dataset.index));
+      });
+      document.querySelectorAll('.mqtt-channel-downlink:checked').forEach(input => {
+        downlinkMask |= (1 << Number(input.dataset.index));
+      });
 
       if (custom_ca.length > 3500) {
         showAlert('mqtt-alert', 'error', 'Custom CA certificate is too large (max 3500 characters).');
         return;
       }
+      if (automaticRadioSetup && (uplinkMask | downlinkMask) === 0) {
+        showAlert('mqtt-alert', 'error', 'Select at least one channel, or choose the manual radio checklist.');
+        return;
+      }
 
       let body = 'mqtt_enabled=' + (enabled ? 'true' : 'false') +
                  '&mqtt_tls_insecure=' + (tls_insecure ? 'true' : 'false') +
-                 '&mqtt_custom_ca=' + encodeURIComponent(custom_ca);
+                 '&mqtt_custom_ca=' + encodeURIComponent(custom_ca) +
+                 '&radio_setup=' + (automaticRadioSetup ? 'auto' : 'manual') +
+                 '&uplink_mask=' + uplinkMask +
+                 '&downlink_mask=' + downlinkMask;
 
       const btnSave = document.getElementById('btn-save-mqtt');
       btnSave.disabled = true;
@@ -2069,19 +2219,47 @@ const char index_html[] PROGMEM = R"rawliteral(
       .then(res => {
         btnSave.disabled = false;
         if (res.success) {
-          showAlert('mqtt-alert', 'success', 'MQTT configuration saved!');
+          showAlert('mqtt-alert', 'success', automaticRadioSetup
+            ? 'MQTT saved. MeshGate is now preparing and verifying the radio over Bluetooth.'
+            : 'MQTT saved. Complete the displayed radio checklist yourself.');
           setTimeout(() => {
             toggleEditMqtt(false);
             loadConfig();
             updateStatus();
           }, 800);
         } else {
-          showAlert('mqtt-alert', 'error', res.error || 'Failed to save MQTT.');
+          const prefix = res.gateway_saved ? 'MeshGate MQTT was saved, but the radio setup could not start: ' : '';
+          showAlert('mqtt-alert', 'error', prefix + (res.error || 'Failed to save MQTT.'));
         }
       })
       .catch(() => {
         btnSave.disabled = false;
         showAlert('mqtt-alert', 'error', 'Network error saving MQTT.');
+      });
+    }
+
+    function enableRadioTelemetry() {
+      const interval = Number(document.getElementById('input-radio-telemetry-interval').value || 1800);
+      const button = document.getElementById('btn-enable-radio-telemetry');
+      button.disabled = true;
+      hideAlert('radio-telemetry-alert');
+      fetch('/api/radio/telemetry/enable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'interval=' + encodeURIComponent(interval)
+      })
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'Could not start radio telemetry setup.');
+        return result;
+      })
+      .then(() => {
+        showAlert('radio-telemetry-alert', 'success', 'Device telemetry setup started. MeshGate will verify the radio read-back.');
+        updateStatus();
+      })
+      .catch(error => {
+        button.disabled = false;
+        showAlert('radio-telemetry-alert', 'error', error.message || 'Could not start radio telemetry setup.');
       });
     }
 
@@ -2182,6 +2360,27 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
 
             document.getElementById('view-mqtt-radio-proxy').innerText = m.radio_proxy_enabled ? 'Enabled (Ready)' : (m.radio_server ? 'Disabled on Radio' : '(Waiting for radio)');
+            const setupRow = document.getElementById('view-mqtt-radio-setup-row');
+            const setupPill = document.getElementById('view-mqtt-radio-setup');
+            const setupDetail = document.getElementById('view-mqtt-radio-setup-detail');
+            if (setupRow && setupPill && setupDetail) {
+              const setupState = m.radio_setup_state || 'Idle';
+              setupRow.style.display = setupState === 'Idle' || m.radio_setup_operation === 'Device telemetry' ? 'none' : 'flex';
+              setupPill.innerText = setupState;
+              setupPill.className = 'status-pill ' + (setupState === 'Complete' ? 'connected' : (setupState === 'Error' ? 'error' : 'waiting'));
+              setupDetail.innerText = m.radio_setup_detail || '';
+            }
+            const telemetryPill = document.getElementById('view-radio-telemetry-status');
+            const telemetryDetail = document.getElementById('radio-telemetry-detail');
+            const telemetryButton = document.getElementById('btn-enable-radio-telemetry');
+            if (telemetryPill && telemetryDetail && telemetryButton) {
+              const telemetryOperation = m.radio_setup_operation === 'Device telemetry';
+              const telemetryState = telemetryOperation ? (m.radio_setup_state || 'Idle') : 'Not requested';
+              telemetryPill.innerText = telemetryState;
+              telemetryPill.className = 'status-pill ' + (telemetryState === 'Complete' ? 'connected' : (telemetryState === 'Error' ? 'error' : (telemetryState === 'Not requested' ? 'disabled' : 'waiting')));
+              telemetryDetail.innerText = telemetryOperation ? (m.radio_setup_detail || '') : '';
+              telemetryButton.disabled = telemetryOperation && !['Complete', 'Error', 'Idle'].includes(telemetryState);
+            }
             if (m.active_server) {
               document.getElementById('view-mqtt-broker').innerText = m.active_server + ':' + m.active_port + (m.active_tls ? ' (TLS)' : '');
             } else if (m.radio_server) {
@@ -3160,6 +3359,12 @@ void config_ui_start_server() {
             response->print(channels[i].primary ? "primary" : "secondary");
             response->print("\",\"public_default\":");
             response->print(channels[i].public_default ? "true" : "false");
+            response->print(",\"uplink_enabled\":");
+            response->print(channels[i].uplink_enabled ? "true" : "false");
+            response->print(",\"downlink_enabled\":");
+            response->print(channels[i].downlink_enabled ? "true" : "false");
+            response->print(",\"position_precision\":");
+            response->print(channels[i].position_precision);
             response->print('}');
         }
         response->print("]}");
@@ -3652,12 +3857,38 @@ void config_ui_start_server() {
         request->send(response);
     });
 
+    server.on("/api/radio/telemetry/enable", HTTP_POST, [](AsyncWebServerRequest* request) {
+        const uint32_t interval = request->hasParam("interval", true)
+            ? static_cast<uint32_t>(request->getParam("interval", true)->value().toInt())
+            : 1800;
+        String setupError;
+        if (!mqtt_net_request_radio_telemetry_setup(interval, setupError)) {
+            setupError.replace("\\", "\\\\");
+            setupError.replace("\"", "\\\"");
+            request->send(
+                409,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"" + setupError + "\"}"
+            );
+            return;
+        }
+        request->send(202, "application/json; charset=utf-8", "{\"success\":true,\"started\":true}");
+    });
+
     // Save MQTT configuration
     server.on("/save_mqtt", HTTP_POST, [](AsyncWebServerRequest *request){
         log_d("[WebUI] POST /save_mqtt requested (Client: %s)", request->client()->remoteIP().toString().c_str());
         bool enabled = request->hasParam("mqtt_enabled", true) && (request->getParam("mqtt_enabled", true)->value() == "true");
         bool tlsInsecureVal = request->hasParam("mqtt_tls_insecure", true) && (request->getParam("mqtt_tls_insecure", true)->value() == "true");
         String customCaVal = request->hasParam("mqtt_custom_ca", true) ? request->getParam("mqtt_custom_ca", true)->value() : "";
+        const bool automaticRadioSetup = enabled && request->hasParam("radio_setup", true) &&
+            request->getParam("radio_setup", true)->value() == "auto";
+        const uint8_t uplinkMask = request->hasParam("uplink_mask", true)
+            ? static_cast<uint8_t>(request->getParam("uplink_mask", true)->value().toInt() & 0xff)
+            : 0;
+        const uint8_t downlinkMask = request->hasParam("downlink_mask", true)
+            ? static_cast<uint8_t>(request->getParam("downlink_mask", true)->value().toInt() & 0xff)
+            : 0;
         if (customCaVal.length() > MQTT_MAX_CUSTOM_CA_LENGTH) {
             customCaVal = customCaVal.substring(0, MQTT_MAX_CUSTOM_CA_LENGTH);
         }
@@ -3680,7 +3911,32 @@ void config_ui_start_server() {
             mqtt_net_apply_config(mcfg);
         }
 
-        request->send(200, "application/json", "{\"success\":true}");
+        if (automaticRadioSetup && wifi_net_is_ap_mode()) {
+            request->send(
+                409,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"gateway_saved\":true,\"error\":\"Automatic radio setup needs normal mode with an active Bluetooth connection.\"}"
+            );
+            return;
+        }
+
+        if (automaticRadioSetup) {
+            String setupError;
+            if (!mqtt_net_request_radio_setup(uplinkMask, downlinkMask, setupError)) {
+                setupError.replace("\\", "\\\\");
+                setupError.replace("\"", "\\\"");
+                request->send(
+                    409,
+                    "application/json; charset=utf-8",
+                    "{\"success\":false,\"gateway_saved\":true,\"error\":\"" + setupError + "\"}"
+                );
+                return;
+            }
+        }
+
+        request->send(200, "application/json", automaticRadioSetup
+            ? "{\"success\":true,\"radio_setup_started\":true}"
+            : "{\"success\":true,\"radio_setup_started\":false}");
     });
 
     // Save WireGuard configuration. Secret fields are write-only: an empty

@@ -9,6 +9,10 @@ bool bridge_pause_for_ota();
 void bridge_resume_after_ota();
 bool bridge_is_ble_connected();
 bool bridge_enqueue_mqtt_to_ble(const uint8_t* data, size_t len);
+// Queues a local control-plane packet (for example an AdminMessage) on the
+// same high-priority path used by interactive clients. Unlike MQTT downlink,
+// this queue is not cleared when the broker session is restarted.
+bool bridge_enqueue_control_to_ble(const uint8_t* data, size_t len);
 void bridge_clear_mqtt_to_ble_queue();
 
 // Meshtastic HTTP PhoneAPI transport. HTTP carries one naked protobuf per

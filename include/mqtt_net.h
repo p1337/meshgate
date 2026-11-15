@@ -45,6 +45,15 @@ struct MqttStatus {
     String active_root = "msh";
     bool active_tls = false;
 
+    // Optional, user-triggered preparation of the attached radio. This never
+    // runs silently: the Web UI must request it explicitly and shows the
+    // planned MQTT/LoRa/channel changes before doing so.
+    String radio_setup_state = "Idle";
+    String radio_setup_operation = "";
+    String radio_setup_detail = "";
+    uint8_t radio_setup_uplink_mask = 0;
+    uint8_t radio_setup_downlink_mask = 0;
+
     // Counters/State.
     uint32_t msgs_published = 0;
     uint32_t msgs_received = 0;
@@ -116,6 +125,19 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len);
  * @return true on success, false on error.
  */
 bool mqtt_net_publish(const char* topic, const uint8_t* payload, size_t len, bool retained);
+
+/**
+ * Prepare the attached Meshtastic radio for client-proxied MQTT over BLE.
+ * Selected channel bits are enabled, never disabled; all unrelated radio
+ * fields, channel keys and broker settings are preserved from the radio's
+ * own configuration snapshot.
+ */
+bool mqtt_net_request_radio_setup(uint8_t uplink_mask, uint8_t downlink_mask, String& error);
+
+/** Enable the attached node's built-in device telemetry over the same
+ * transactional, verified local BLE admin path. Existing sensor telemetry
+ * configuration is preserved. */
+bool mqtt_net_request_radio_telemetry_setup(uint32_t interval_seconds, String& error);
 
 /**
  * Get current MQTT status and telemetry

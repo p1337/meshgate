@@ -11,8 +11,12 @@
 #include <mbedtls/platform.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
+#include "meshtastic/admin.pb.h"
+#include "meshtastic/channel.pb.h"
+#include "meshtastic/config.pb.h"
 #include "meshtastic/mesh.pb.h"
 #include "meshtastic/module_config.pb.h"
+#include "meshtastic/portnums.pb.h"
 #include "utils.h"
 #include <atomic>
 
@@ -158,6 +162,113 @@ static std::atomic<bool> s_start_deferred{false};
 static std::atomic<bool> s_paused_for_ota{false};
 static MqttConfig s_config_before_ota;
 
+namespace {
+constexpr uint8_t RADIO_SETUP_CHANNEL_COUNT = 8;
+constexpr uint32_t RADIO_SETUP_STEP_INTERVAL_MS = 300;
+constexpr uint32_t RADIO_SETUP_CONFIG_TIMEOUT_MS = 30000;
+
+enum class RadioSetupPhase : uint8_t {
+    Idle,
+    WaitingConfig,
+    RequestSessionKey,
+    WaitingSessionKey,
+    BeginEdit,
+    SetMqtt,
+    SetTelemetry,
+    SetLora,
+    SetChannels,
+    Commit,
+    Verifying,
+    Complete,
+    Error,
+};
+
+enum class RadioSetupOperation : uint8_t {
+    None,
+    Mqtt,
+    DeviceTelemetry,
+};
+
+RadioSetupPhase s_radio_setup_phase = RadioSetupPhase::Idle;
+RadioSetupOperation s_radio_setup_operation = RadioSetupOperation::None;
+uint32_t s_radio_setup_config_id = 0;
+uint32_t s_radio_setup_deadline = 0;
+uint32_t s_radio_setup_next_action = 0;
+uint32_t s_radio_setup_node_num = 0;
+uint8_t s_radio_setup_uplink_mask = 0;
+uint8_t s_radio_setup_downlink_mask = 0;
+uint8_t s_radio_setup_channel_cursor = 0;
+bool s_radio_setup_have_mqtt = false;
+bool s_radio_setup_have_lora = false;
+bool s_radio_setup_have_telemetry = false;
+bool s_radio_setup_have_session_key = false;
+bool s_radio_setup_have_channel[RADIO_SETUP_CHANNEL_COUNT] = {};
+meshtastic_ModuleConfig_MQTTConfig s_radio_setup_mqtt = meshtastic_ModuleConfig_MQTTConfig_init_default;
+meshtastic_Config_LoRaConfig s_radio_setup_lora = meshtastic_Config_LoRaConfig_init_default;
+meshtastic_ModuleConfig_TelemetryConfig s_radio_setup_telemetry = meshtastic_ModuleConfig_TelemetryConfig_init_default;
+uint32_t s_radio_setup_telemetry_interval = 1800;
+meshtastic_Channel s_radio_setup_channels[RADIO_SETUP_CHANNEL_COUNT] = {};
+meshtastic_AdminMessage_session_passkey_t s_radio_setup_session_key = {};
+
+// These generated protobuf unions are deliberately static. The network task
+// has very little stack headroom on the Nano ESP32 and radio setup must not
+// turn a configuration convenience into another heap/stack pressure source.
+meshtastic_AdminMessage s_radio_setup_admin = meshtastic_AdminMessage_init_default;
+meshtastic_AdminMessage s_radio_setup_admin_response = meshtastic_AdminMessage_init_default;
+meshtastic_ToRadio s_radio_setup_to_radio = meshtastic_ToRadio_init_default;
+uint8_t s_radio_setup_admin_payload[meshtastic_Constants_DATA_PAYLOAD_LEN] = {};
+uint8_t s_radio_setup_packet[MESHTASTIC_MAX_PACKET_SIZE] = {};
+
+const char* radioSetupPhaseName(RadioSetupPhase phase) {
+    switch (phase) {
+        case RadioSetupPhase::WaitingConfig: return "Reading radio";
+        case RadioSetupPhase::RequestSessionKey:
+        case RadioSetupPhase::WaitingSessionKey: return "Authorizing";
+        case RadioSetupPhase::BeginEdit:
+        case RadioSetupPhase::SetMqtt:
+        case RadioSetupPhase::SetTelemetry:
+        case RadioSetupPhase::SetLora:
+        case RadioSetupPhase::SetChannels:
+        case RadioSetupPhase::Commit: return "Applying";
+        case RadioSetupPhase::Verifying: return "Verifying";
+        case RadioSetupPhase::Complete: return "Complete";
+        case RadioSetupPhase::Error: return "Error";
+        default: return "Idle";
+    }
+}
+
+bool radioSetupActive() {
+    return s_radio_setup_phase != RadioSetupPhase::Idle &&
+           s_radio_setup_phase != RadioSetupPhase::Complete &&
+           s_radio_setup_phase != RadioSetupPhase::Error;
+}
+
+void resetRadioSetupSnapshot() {
+    s_radio_setup_node_num = 0;
+    s_radio_setup_have_mqtt = false;
+    s_radio_setup_have_lora = false;
+    s_radio_setup_have_telemetry = false;
+    s_radio_setup_have_session_key = false;
+    memset(s_radio_setup_have_channel, 0, sizeof(s_radio_setup_have_channel));
+    s_radio_setup_mqtt = meshtastic_ModuleConfig_MQTTConfig_init_default;
+    s_radio_setup_lora = meshtastic_Config_LoRaConfig_init_default;
+    s_radio_setup_telemetry = meshtastic_ModuleConfig_TelemetryConfig_init_default;
+    memset(s_radio_setup_channels, 0, sizeof(s_radio_setup_channels));
+    memset(&s_radio_setup_session_key, 0, sizeof(s_radio_setup_session_key));
+}
+
+void setRadioSetupState(RadioSetupPhase phase, const char* detail) {
+    s_radio_setup_phase = phase;
+    currentStatus.radio_setup_state = radioSetupPhaseName(phase);
+    currentStatus.radio_setup_operation = s_radio_setup_operation == RadioSetupOperation::Mqtt
+        ? "MQTT"
+        : (s_radio_setup_operation == RadioSetupOperation::DeviceTelemetry ? "Device telemetry" : "");
+    currentStatus.radio_setup_detail = detail ? detail : "";
+    currentStatus.radio_setup_uplink_mask = s_radio_setup_uplink_mask;
+    currentStatus.radio_setup_downlink_mask = s_radio_setup_downlink_mask;
+}
+} // namespace
+
 /**
  * Resets grace timer state (assumes caller holds mqttMutex / MqttLockGuard).
  */
@@ -185,6 +296,121 @@ public:
 private:
     bool acquired = false;
 };
+
+static bool queueRadioSetupAdmin(const meshtastic_AdminMessage& admin, bool wantResponse = true) {
+    pb_ostream_t adminStream = pb_ostream_from_buffer(
+        s_radio_setup_admin_payload,
+        sizeof(s_radio_setup_admin_payload)
+    );
+    if (!pb_encode(&adminStream, meshtastic_AdminMessage_fields, &admin)) {
+        log_e("[MQTT Setup] Could not encode AdminMessage: %s", PB_GET_ERROR(&adminStream));
+        return false;
+    }
+
+    s_radio_setup_to_radio = meshtastic_ToRadio_init_default;
+    s_radio_setup_to_radio.which_payload_variant = meshtastic_ToRadio_packet_tag;
+    meshtastic_MeshPacket& packet = s_radio_setup_to_radio.packet;
+    packet.to = s_radio_setup_node_num;
+    packet.channel = 0;
+    packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
+    packet.decoded.portnum = meshtastic_PortNum_ADMIN_APP;
+    packet.decoded.want_response = wantResponse;
+    packet.decoded.payload.size = adminStream.bytes_written;
+    memcpy(packet.decoded.payload.bytes, s_radio_setup_admin_payload, adminStream.bytes_written);
+    packet.id = esp_random();
+    if (packet.id == 0) packet.id = 1;
+    packet.want_ack = true;
+    packet.priority = meshtastic_MeshPacket_Priority_RELIABLE;
+    packet.pki_encrypted = true;
+
+    pb_ostream_t packetStream = pb_ostream_from_buffer(
+        s_radio_setup_packet,
+        sizeof(s_radio_setup_packet)
+    );
+    if (!pb_encode(&packetStream, meshtastic_ToRadio_fields, &s_radio_setup_to_radio)) {
+        log_e("[MQTT Setup] Could not encode ToRadio packet: %s", PB_GET_ERROR(&packetStream));
+        return false;
+    }
+    return bridge_enqueue_control_to_ble(s_radio_setup_packet, packetStream.bytes_written);
+}
+
+static bool queueRadioSetupStep() {
+    s_radio_setup_admin = meshtastic_AdminMessage_init_default;
+    switch (s_radio_setup_phase) {
+        case RadioSetupPhase::RequestSessionKey:
+            s_radio_setup_admin.which_payload_variant = meshtastic_AdminMessage_get_config_request_tag;
+            s_radio_setup_admin.get_config_request = meshtastic_AdminMessage_ConfigType_SESSIONKEY_CONFIG;
+            return queueRadioSetupAdmin(s_radio_setup_admin, true);
+
+        case RadioSetupPhase::BeginEdit:
+            s_radio_setup_admin.which_payload_variant = meshtastic_AdminMessage_begin_edit_settings_tag;
+            s_radio_setup_admin.begin_edit_settings = true;
+            s_radio_setup_admin.session_passkey = s_radio_setup_session_key;
+            return queueRadioSetupAdmin(s_radio_setup_admin);
+
+        case RadioSetupPhase::SetTelemetry:
+            s_radio_setup_admin.which_payload_variant = meshtastic_AdminMessage_set_module_config_tag;
+            s_radio_setup_admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_telemetry_tag;
+            s_radio_setup_admin.set_module_config.payload_variant.telemetry = s_radio_setup_telemetry;
+            s_radio_setup_admin.set_module_config.payload_variant.telemetry.device_telemetry_enabled = true;
+            s_radio_setup_admin.set_module_config.payload_variant.telemetry.device_update_interval =
+                s_radio_setup_telemetry_interval;
+            s_radio_setup_admin.session_passkey = s_radio_setup_session_key;
+            return queueRadioSetupAdmin(s_radio_setup_admin);
+
+        case RadioSetupPhase::SetMqtt:
+            s_radio_setup_admin.which_payload_variant = meshtastic_AdminMessage_set_module_config_tag;
+            s_radio_setup_admin.set_module_config.which_payload_variant = meshtastic_ModuleConfig_mqtt_tag;
+            s_radio_setup_admin.set_module_config.payload_variant.mqtt = s_radio_setup_mqtt;
+            s_radio_setup_admin.set_module_config.payload_variant.mqtt.enabled = true;
+            s_radio_setup_admin.set_module_config.payload_variant.mqtt.proxy_to_client_enabled = true;
+            s_radio_setup_admin.session_passkey = s_radio_setup_session_key;
+            return queueRadioSetupAdmin(s_radio_setup_admin);
+
+        case RadioSetupPhase::SetLora:
+            s_radio_setup_admin.which_payload_variant = meshtastic_AdminMessage_set_config_tag;
+            s_radio_setup_admin.set_config.which_payload_variant = meshtastic_Config_lora_tag;
+            s_radio_setup_admin.set_config.payload_variant.lora = s_radio_setup_lora;
+            s_radio_setup_admin.set_config.payload_variant.lora.config_ok_to_mqtt = true;
+            s_radio_setup_admin.session_passkey = s_radio_setup_session_key;
+            return queueRadioSetupAdmin(s_radio_setup_admin);
+
+        case RadioSetupPhase::SetChannels: {
+            while (s_radio_setup_channel_cursor < RADIO_SETUP_CHANNEL_COUNT) {
+                const uint8_t channel = s_radio_setup_channel_cursor;
+                const uint8_t bit = static_cast<uint8_t>(1u << channel);
+                if (((s_radio_setup_uplink_mask | s_radio_setup_downlink_mask) & bit) == 0) {
+                    ++s_radio_setup_channel_cursor;
+                    continue;
+                }
+                s_radio_setup_admin.which_payload_variant = meshtastic_AdminMessage_set_channel_tag;
+                s_radio_setup_admin.set_channel = s_radio_setup_channels[channel];
+                if (s_radio_setup_uplink_mask & bit) {
+                    s_radio_setup_admin.set_channel.settings.uplink_enabled = true;
+                }
+                if (s_radio_setup_downlink_mask & bit) {
+                    s_radio_setup_admin.set_channel.settings.downlink_enabled = true;
+                }
+                s_radio_setup_admin.session_passkey = s_radio_setup_session_key;
+                if (queueRadioSetupAdmin(s_radio_setup_admin)) {
+                    ++s_radio_setup_channel_cursor;
+                    return true;
+                }
+                return false;
+            }
+            return true;
+        }
+
+        case RadioSetupPhase::Commit:
+            s_radio_setup_admin.which_payload_variant = meshtastic_AdminMessage_commit_edit_settings_tag;
+            s_radio_setup_admin.commit_edit_settings = true;
+            s_radio_setup_admin.session_passkey = s_radio_setup_session_key;
+            return queueRadioSetupAdmin(s_radio_setup_admin);
+
+        default:
+            return false;
+    }
+}
 
 /**
  * State mapping helper.
@@ -631,7 +857,101 @@ void mqtt_net_init() {
 #endif
 }
 
+static uint32_t mqtt_net_request_radio_config();
+
+static void mqtt_net_radio_setup_loop() {
+    MqttLockGuard lock(0);
+    if (!lock.is_locked() || !radioSetupActive()) {
+        return;
+    }
+
+    const uint32_t now = millis();
+    if ((s_radio_setup_phase == RadioSetupPhase::WaitingConfig ||
+         s_radio_setup_phase == RadioSetupPhase::WaitingSessionKey ||
+         s_radio_setup_phase == RadioSetupPhase::Verifying) &&
+        s_radio_setup_deadline != 0 &&
+        static_cast<int32_t>(now - s_radio_setup_deadline) >= 0) {
+        setRadioSetupState(RadioSetupPhase::Error, "The radio did not answer the setup verification in time.");
+        log_e("[MQTT Setup] Timed out waiting for the radio");
+        return;
+    }
+
+    if (s_radio_setup_phase == RadioSetupPhase::WaitingConfig ||
+        s_radio_setup_phase == RadioSetupPhase::WaitingSessionKey) {
+        return;
+    }
+
+    if (s_radio_setup_phase == RadioSetupPhase::Verifying) {
+        if (s_radio_setup_config_id == 0 &&
+            static_cast<int32_t>(now - s_radio_setup_next_action) >= 0 &&
+            bridge_is_ble_connected()) {
+            resetRadioSetupSnapshot();
+            s_radio_setup_config_id = mqtt_net_request_radio_config();
+            if (s_radio_setup_config_id != 0) {
+                s_radio_setup_deadline = now + RADIO_SETUP_CONFIG_TIMEOUT_MS;
+                currentStatus.radio_setup_detail = "Reading the radio back to verify every requested change.";
+            }
+        }
+        return;
+    }
+
+    if (!bridge_is_ble_connected()) {
+        setRadioSetupState(RadioSetupPhase::Error, "Bluetooth disconnected before the radio setup transaction was committed. Retry when connected.");
+        return;
+    }
+    if (static_cast<int32_t>(now - s_radio_setup_next_action) < 0) {
+        return;
+    }
+
+    const RadioSetupPhase sentPhase = s_radio_setup_phase;
+    if (!queueRadioSetupStep()) {
+        s_radio_setup_next_action = now + RADIO_SETUP_STEP_INTERVAL_MS;
+        return;
+    }
+
+    switch (sentPhase) {
+        case RadioSetupPhase::RequestSessionKey:
+            setRadioSetupState(RadioSetupPhase::WaitingSessionKey, "Waiting for the radio's short-lived local admin session key.");
+            s_radio_setup_deadline = now + RADIO_SETUP_CONFIG_TIMEOUT_MS;
+            break;
+        case RadioSetupPhase::BeginEdit:
+            if (s_radio_setup_operation == RadioSetupOperation::DeviceTelemetry) {
+                setRadioSetupState(RadioSetupPhase::SetTelemetry, "Enabling built-in device telemetry while preserving all sensor telemetry settings.");
+            } else {
+                setRadioSetupState(RadioSetupPhase::SetMqtt, "Enabling MQTT and Proxy to Client while preserving broker settings.");
+            }
+            break;
+        case RadioSetupPhase::SetMqtt:
+            setRadioSetupState(RadioSetupPhase::SetLora, "Allowing outgoing packets to be marked for MQTT.");
+            break;
+        case RadioSetupPhase::SetTelemetry:
+            setRadioSetupState(RadioSetupPhase::Commit, "Committing the device telemetry setting as one transaction.");
+            break;
+        case RadioSetupPhase::SetLora:
+            s_radio_setup_channel_cursor = 0;
+            setRadioSetupState(RadioSetupPhase::SetChannels, "Enabling the approved channel uplink/downlink selections.");
+            break;
+        case RadioSetupPhase::SetChannels:
+            if (s_radio_setup_channel_cursor >= RADIO_SETUP_CHANNEL_COUNT) {
+                setRadioSetupState(RadioSetupPhase::Commit, "Committing the radio settings as one transaction.");
+            }
+            break;
+        case RadioSetupPhase::Commit:
+            setRadioSetupState(RadioSetupPhase::Verifying, "Settings committed; waiting for the radio and verifying the read-back.");
+            s_radio_setup_config_id = 0;
+            s_radio_setup_deadline = now + RADIO_SETUP_CONFIG_TIMEOUT_MS;
+            s_radio_setup_next_action = now + 1500;
+            log_i("[MQTT Setup] Radio configuration transaction committed; verifying read-back");
+            return;
+        default:
+            break;
+    }
+    s_radio_setup_next_action = now + RADIO_SETUP_STEP_INTERVAL_MS;
+}
+
 void mqtt_net_loop() {
+    mqtt_net_radio_setup_loop();
+
     if (s_start_deferred.load(std::memory_order_relaxed)) {
         if (!tailscale_net_is_enabled() || tailscale_net_is_derp_connected()) {
             s_start_deferred.store(false, std::memory_order_relaxed);
@@ -667,7 +987,7 @@ void mqtt_net_loop() {
  * Asks the connected Meshtastic radio to send its configuration (ModuleConfig, NodeInfo, Channels)
  * by sending a ToRadio packet with a random want_config_id nonce.
  */
-static void mqtt_net_request_radio_config() {
+static uint32_t mqtt_net_request_radio_config() {
     meshtastic_ToRadio req = meshtastic_ToRadio_init_default;
     req.which_payload_variant = meshtastic_ToRadio_want_config_id_tag;
     uint32_t nonce = esp_random();
@@ -676,15 +996,15 @@ static void mqtt_net_request_radio_config() {
     uint8_t buf[16];
     pb_ostream_t stream = pb_ostream_from_buffer(buf, sizeof(buf));
     if (pb_encode(&stream, meshtastic_ToRadio_fields, &req)) {
-        if (downlinkCallback) {
-            log_i("[MQTT] Requesting radio configuration (want_config_id: %u)...", req.want_config_id);
-            downlinkCallback(buf, stream.bytes_written);
-        } else {
-            log_w("[MQTT] Cannot request radio config: no downlink callback registered to push message to.");
+        log_i("[MQTT] Requesting radio configuration (want_config_id: %u)...", req.want_config_id);
+        if (bridge_enqueue_control_to_ble(buf, stream.bytes_written)) {
+            return req.want_config_id;
         }
+        log_w("[MQTT] Cannot request radio config: BLE control queue is unavailable or full.");
     } else {
         log_e("[MQTT] Failed to encode want_config_id protobuf: %s", PB_GET_ERROR(&stream));
     }
+    return 0;
 }
 
 /**
@@ -730,6 +1050,86 @@ void mqtt_net_apply_config(const MqttConfig& cfg) {
         log_i("[MQTT] Factory broker profile ready; Bluetooth is not required for broker startup.");
         mqtt_net_start_or_defer();
     }
+}
+
+bool mqtt_net_request_radio_setup(uint8_t uplink_mask, uint8_t downlink_mask, String& error) {
+    mqtt_net_init();
+    MqttLockGuard lock(pdMS_TO_TICKS(250));
+    if (!lock.is_locked()) {
+        error = "MQTT subsystem is busy; try again.";
+        return false;
+    }
+    if (!bridge_is_ble_connected()) {
+        error = "The Meshtastic radio is not connected over Bluetooth.";
+        return false;
+    }
+    if (radioSetupActive()) {
+        error = "Radio setup is already running.";
+        return false;
+    }
+    if (uplink_mask == 0 && downlink_mask == 0) {
+        error = "Select at least one channel for MQTT uplink or downlink.";
+        return false;
+    }
+
+    s_radio_setup_uplink_mask = uplink_mask;
+    s_radio_setup_downlink_mask = downlink_mask;
+    s_radio_setup_operation = RadioSetupOperation::Mqtt;
+    s_radio_setup_channel_cursor = 0;
+    resetRadioSetupSnapshot();
+    setRadioSetupState(RadioSetupPhase::WaitingConfig, "Reading the current radio configuration before making changes.");
+    s_radio_setup_config_id = mqtt_net_request_radio_config();
+    if (s_radio_setup_config_id == 0) {
+        setRadioSetupState(RadioSetupPhase::Error, "Could not queue the radio configuration request.");
+        error = currentStatus.radio_setup_detail;
+        return false;
+    }
+    s_radio_setup_deadline = millis() + RADIO_SETUP_CONFIG_TIMEOUT_MS;
+    log_i(
+        "[MQTT Setup] User-approved radio preparation started (uplink mask 0x%02x, downlink mask 0x%02x)",
+        uplink_mask,
+        downlink_mask
+    );
+    return true;
+}
+
+bool mqtt_net_request_radio_telemetry_setup(uint32_t interval_seconds, String& error) {
+    mqtt_net_init();
+    MqttLockGuard lock(pdMS_TO_TICKS(250));
+    if (!lock.is_locked()) {
+        error = "Radio configurator is busy; try again.";
+        return false;
+    }
+    if (!bridge_is_ble_connected()) {
+        error = "The Meshtastic radio is not connected over Bluetooth.";
+        return false;
+    }
+    if (radioSetupActive()) {
+        error = "Another radio setup is already running.";
+        return false;
+    }
+    if (interval_seconds < 60 || interval_seconds > 86400) {
+        error = "Telemetry interval must be between 60 and 86400 seconds.";
+        return false;
+    }
+
+    s_radio_setup_operation = RadioSetupOperation::DeviceTelemetry;
+    s_radio_setup_telemetry_interval = interval_seconds;
+    s_radio_setup_uplink_mask = 0;
+    s_radio_setup_downlink_mask = 0;
+    s_radio_setup_channel_cursor = 0;
+    resetRadioSetupSnapshot();
+    setRadioSetupState(RadioSetupPhase::WaitingConfig, "Reading the current telemetry configuration before making changes.");
+    s_radio_setup_config_id = mqtt_net_request_radio_config();
+    if (s_radio_setup_config_id == 0) {
+        setRadioSetupState(RadioSetupPhase::Error, "Could not queue the radio configuration request.");
+        error = currentStatus.radio_setup_detail;
+        return false;
+    }
+    s_radio_setup_deadline = millis() + RADIO_SETUP_CONFIG_TIMEOUT_MS;
+    log_i("[Radio Setup] User-approved device telemetry activation started (%lu seconds)",
+          static_cast<unsigned long>(interval_seconds));
+    return true;
 }
 
 /**
@@ -869,6 +1269,132 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
 
     if (radio_msg.which_payload_variant == meshtastic_FromRadio_my_info_tag) {
         device_presence_set_meshtastic_node(radio_msg.my_info.my_node_num);
+        MqttLockGuard lock;
+        if (radioSetupActive()) {
+            s_radio_setup_node_num = radio_msg.my_info.my_node_num;
+        }
+    }
+
+    if (radio_msg.which_payload_variant == meshtastic_FromRadio_config_tag &&
+        radio_msg.config.which_payload_variant == meshtastic_Config_lora_tag) {
+        MqttLockGuard lock;
+        if (radioSetupActive()) {
+            s_radio_setup_lora = radio_msg.config.payload_variant.lora;
+            s_radio_setup_have_lora = true;
+        }
+    }
+
+    if (radio_msg.which_payload_variant == meshtastic_FromRadio_channel_tag &&
+        radio_msg.channel.index >= 0 &&
+        radio_msg.channel.index < RADIO_SETUP_CHANNEL_COUNT) {
+        MqttLockGuard lock;
+        if (radioSetupActive()) {
+            const uint8_t channel = static_cast<uint8_t>(radio_msg.channel.index);
+            s_radio_setup_channels[channel] = radio_msg.channel;
+            s_radio_setup_have_channel[channel] = radio_msg.channel.has_settings &&
+                radio_msg.channel.role != meshtastic_Channel_Role_DISABLED;
+        }
+    }
+
+    if (radio_msg.which_payload_variant == meshtastic_FromRadio_moduleConfig_tag &&
+        radio_msg.moduleConfig.which_payload_variant == meshtastic_ModuleConfig_telemetry_tag) {
+        MqttLockGuard lock;
+        if (radioSetupActive()) {
+            s_radio_setup_telemetry = radio_msg.moduleConfig.payload_variant.telemetry;
+            s_radio_setup_have_telemetry = true;
+        }
+    }
+
+    if (radio_msg.which_payload_variant == meshtastic_FromRadio_packet_tag &&
+        radio_msg.packet.which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
+        radio_msg.packet.decoded.portnum == meshtastic_PortNum_ADMIN_APP &&
+        radio_msg.packet.decoded.payload.size > 0) {
+        MqttLockGuard lock;
+        if (s_radio_setup_phase == RadioSetupPhase::WaitingSessionKey) {
+            s_radio_setup_admin_response = meshtastic_AdminMessage_init_default;
+            pb_istream_t adminStream = pb_istream_from_buffer(
+                radio_msg.packet.decoded.payload.bytes,
+                radio_msg.packet.decoded.payload.size
+            );
+            if (pb_decode(&adminStream, meshtastic_AdminMessage_fields, &s_radio_setup_admin_response) &&
+                s_radio_setup_admin_response.session_passkey.size > 0) {
+                s_radio_setup_session_key = s_radio_setup_admin_response.session_passkey;
+                s_radio_setup_have_session_key = true;
+                s_radio_setup_next_action = millis();
+                setRadioSetupState(RadioSetupPhase::BeginEdit, "Authorized locally; starting one transactional radio update.");
+                log_i("[MQTT Setup] Received short-lived radio admin session key");
+            }
+        }
+    }
+
+    if (radio_msg.which_payload_variant == meshtastic_FromRadio_config_complete_id_tag) {
+        MqttLockGuard lock;
+        if (radioSetupActive() && radio_msg.config_complete_id == s_radio_setup_config_id) {
+            const uint8_t selectedMask = static_cast<uint8_t>(s_radio_setup_uplink_mask | s_radio_setup_downlink_mask);
+            bool channelsReady = true;
+            for (uint8_t channel = 0; channel < RADIO_SETUP_CHANNEL_COUNT; ++channel) {
+                if ((selectedMask & static_cast<uint8_t>(1u << channel)) && !s_radio_setup_have_channel[channel]) {
+                    channelsReady = false;
+                }
+            }
+
+            if (s_radio_setup_phase == RadioSetupPhase::WaitingConfig) {
+                const bool snapshotReady = s_radio_setup_operation == RadioSetupOperation::DeviceTelemetry
+                    ? (s_radio_setup_node_num != 0 && s_radio_setup_have_telemetry)
+                    : (s_radio_setup_node_num != 0 && s_radio_setup_have_mqtt && s_radio_setup_have_lora && channelsReady);
+                if (!snapshotReady) {
+                    setRadioSetupState(
+                        RadioSetupPhase::Error,
+                        s_radio_setup_operation == RadioSetupOperation::DeviceTelemetry
+                            ? "The radio did not return its telemetry configuration."
+                            : "The radio did not return every selected channel and required MQTT/LoRa setting."
+                    );
+                } else {
+                    s_radio_setup_next_action = millis();
+                    setRadioSetupState(RadioSetupPhase::RequestSessionKey, "Requesting a short-lived local admin session key from the radio.");
+                }
+            } else if (s_radio_setup_phase == RadioSetupPhase::Verifying) {
+                bool verified = false;
+                if (s_radio_setup_operation == RadioSetupOperation::DeviceTelemetry) {
+                    verified = s_radio_setup_have_telemetry &&
+                        s_radio_setup_telemetry.device_telemetry_enabled &&
+                        s_radio_setup_telemetry.device_update_interval == s_radio_setup_telemetry_interval;
+                } else {
+                    verified = s_radio_setup_have_mqtt &&
+                        s_radio_setup_mqtt.enabled &&
+                        s_radio_setup_mqtt.proxy_to_client_enabled &&
+                        s_radio_setup_have_lora &&
+                        s_radio_setup_lora.config_ok_to_mqtt &&
+                        channelsReady;
+                    for (uint8_t channel = 0; verified && channel < RADIO_SETUP_CHANNEL_COUNT; ++channel) {
+                        const uint8_t bit = static_cast<uint8_t>(1u << channel);
+                        if ((s_radio_setup_uplink_mask & bit) && !s_radio_setup_channels[channel].settings.uplink_enabled) {
+                            verified = false;
+                        }
+                        if ((s_radio_setup_downlink_mask & bit) && !s_radio_setup_channels[channel].settings.downlink_enabled) {
+                            verified = false;
+                        }
+                    }
+                }
+                if (verified) {
+                    setRadioSetupState(
+                        RadioSetupPhase::Complete,
+                        s_radio_setup_operation == RadioSetupOperation::DeviceTelemetry
+                            ? "Radio verified: device telemetry is enabled and broadcasting at the selected interval."
+                            : "Radio verified: MQTT, client proxy, LoRa consent and selected channels are ready."
+                    );
+                    log_i("[Radio Setup] Radio read-back verified successfully");
+                } else {
+                    setRadioSetupState(
+                        RadioSetupPhase::Error,
+                        s_radio_setup_operation == RadioSetupOperation::DeviceTelemetry
+                            ? "Radio read-back did not confirm device telemetry. No sensor settings were overwritten."
+                            : "Radio read-back did not contain every requested MQTT setting. No unrelated settings were changed."
+                    );
+                    log_e("[Radio Setup] Radio read-back verification failed");
+                }
+            }
+        }
     }
 
     // 1. Check for ModuleConfig.mqtt packets (Auto-Sync from Radio)
@@ -887,6 +1413,10 @@ bool mqtt_net_handle_from_radio(const uint8_t* data, size_t len) {
             bool shouldStart = false;
             {
                 MqttLockGuard lock;
+                if (radioSetupActive()) {
+                    s_radio_setup_mqtt = mqtt_cfg;
+                    s_radio_setup_have_mqtt = true;
+                }
                 String rawAddress = String(mqtt_cfg.address);
                 const bool useMeshRadarPreset = rawAddress.isEmpty() || rawAddress.equalsIgnoreCase(MQTT_DEFAULT_SERVER);
                 currentStatus.radio_proxy_enabled = (mqtt_cfg.enabled && mqtt_cfg.proxy_to_client_enabled);

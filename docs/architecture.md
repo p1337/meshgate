@@ -212,7 +212,25 @@ To provide the best user experience, configuration is handled via a web-based ca
         while the browser has not drained it yet.
     *   **Keep-alives:** Handle reconnections if the TCP client drops or the BLE radio goes out of range.
 
-### 5. Persistent message mailbox
+### 5. User-approved BLE radio configuration
+
+MeshGate can perform narrowly scoped configuration changes on the directly
+attached Meshtastic radio for MQTT onboarding and device telemetry. Physical
+BLE ownership is not treated as permission for silent mutation: the control
+page first displays the exact operation and the owner explicitly starts it.
+
+The runtime requests a complete `want_config_id` snapshot, obtains the radio's
+short-lived admin session key, sends `begin_edit_settings`, the minimum
+`set_config` / `set_module_config` / `set_channel` messages, and one
+`commit_edit_settings`. It then requests a second complete snapshot and marks
+the operation successful only when every requested field is present. Full
+radio structures are copied before individual fields are changed, preserving
+channel keys, broker credentials and unrelated sensor settings. Admin and
+`ToRadio` protobuf buffers are statically allocated and use the existing
+high-priority BLE queue so this path adds no page-sized or transaction-sized
+runtime heap allocation.
+
+### 6. Persistent message mailbox
 
 `message_mailbox.cpp` mounts LittleFS on the already provisioned `spiffs` data
 partition; it does not change the partition table and does not consume the

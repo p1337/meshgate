@@ -132,6 +132,11 @@ void upsertChannelLocked(const meshtastic_Channel& source) {
     channel.index = static_cast<uint8_t>(source.index);
     channel.primary = source.role == meshtastic_Channel_Role_PRIMARY;
     channel.public_default = source.settings.psk.size == 1 && source.settings.psk.bytes[0] == 1;
+    channel.uplink_enabled = source.settings.uplink_enabled;
+    channel.downlink_enabled = source.settings.downlink_enabled;
+    channel.position_precision = source.settings.has_module_settings
+        ? source.settings.module_settings.position_precision
+        : 0;
     if (channel.public_default) {
         copyCString(channel.name, "Public (AQ==)");
     } else if (source.settings.name[0] != '\0') {

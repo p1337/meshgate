@@ -188,23 +188,33 @@ MeshGate starts with MeshRadar's public preset: broker `meshradar.pl`, port
 These values are published by the service. A complete custom broker
 configuration stored on the radio overrides the preset.
 
-### 1. Configure the Radio (via Meshtastic Mobile App)
-In the Meshtastic App on your phone:
-1. Go to **Radio Configuration ➔ Module Configuration ➔ MQTT**.
-2. Turn **MQTT Enabled** ON.
-3. Turn **Proxy to Client Enabled** (or "Proxy") ON.
-4. Set the **Server Address** (e.g. `mqtt.meshtastic.org` or your private broker IP).
-5. Set **Username** and **Password** if required by your broker.
-6. Turn **TLS Enabled** ON if connecting securely to port 8883.
-7. Under **Channels ➔ [Your Channel] ➔ Module Settings**, ensure **Uplink Enabled** and/or **Downlink Enabled** is toggled ON.
-
-### 2. Enable on the Bridge Web UI
+### Enable on the Bridge Web UI
 1. Connect to the bridge's Web UI (in Setup Mode or by navigating to `http://<bridge-name>.local`).
 2. In the **MQTT Gateway** card, toggle **Enable MQTT Gateway** ON.
-3. If using a private broker with a self-signed cert, check **Skip Certificate Validation** or paste your **Custom CA Root Certificate (PEM)**.
-4. Click **Save MQTT Settings**.
+3. Choose one radio setup mode:
+   - **Configure the radio automatically over Bluetooth** reads the complete
+     radio configuration, enables MQTT, Proxy to Client and LoRa MQTT consent,
+     and enables uplink/downlink only on the channels selected in the card.
+     MeshGate preserves channel keys, names, broker credentials and all
+     unrelated fields, commits the changes as one transaction, and reads them
+     back for verification.
+   - **I will configure the radio myself** performs no radio write and displays
+     the complete checklist for the Meshtastic app.
+4. If using a private broker with a self-signed certificate, check **Skip
+   Certificate Validation** or paste your **Custom CA Root Certificate (PEM)**.
+   Prefer a valid public or private CA over the insecure bypass.
+5. Click **Save MQTT**.
 
 The bridge will automatically discover the radio's MQTT configuration over Bluetooth and maintain an active broker connection.
+
+### One-click radio device telemetry
+
+The **Radio Device Telemetry** card in the Services tab can enable the attached
+node's built-in battery, voltage, utilization and uptime broadcasts at a 15,
+30 or 60 minute interval. This action also uses the local BLE admin session,
+preserves environment, air-quality, health and power-sensor settings, commits
+once, and verifies the read-back. It does not fabricate readings for sensors
+that are not physically installed.
 
 ---
 
