@@ -64,7 +64,7 @@ In the Meshtastic App (or Web UI / CLI), navigate to **Radio Configuration ➔ M
 6. **`Root Topic` (`root`):** Root topic prefix for your mesh (e.g. `msh` or `msh/US`).
 7. **Channel Uplink / Downlink:** In **Channels ➔ [Channel Name] ➔ Module Settings**, ensure **Uplink Enabled** and/or **Downlink Enabled** is toggled ON for the channel(s) you wish to bridge to MQTT.
 
-MeshGate `v0.7.26-beta.2` can perform items 1, 2, LoRa
+MeshGate `v0.7.26-beta.3` can perform items 1, 2, LoRa
 `config_ok_to_mqtt`, and the explicitly selected channel flags itself over the
 existing BLE PhoneAPI path. The owner must select automatic mode in the MQTT
 card after reviewing the displayed plan. MeshGate first captures the complete

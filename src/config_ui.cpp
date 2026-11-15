@@ -61,6 +61,20 @@ constexpr size_t WEB_FLASH_STREAM_CHUNK_BYTES = 4096;
 constexpr uint32_t CHAT_SEND_MIN_INTERVAL_MS = 1500;
 std::atomic<uint32_t> s_last_chat_send_ms{0};
 
+// Allocate the requested bounded send block, reducing it under heap pressure.
+// A final response tail can legitimately be smaller than 256 bytes and must be
+// attempted at its exact size; otherwise that response can never complete.
+uint8_t* allocateBoundedResponseBuffer(size_t& wanted) {
+    while (wanted > 0) {
+        uint8_t* buffer = static_cast<uint8_t*>(malloc(wanted));
+        if (buffer != nullptr) return buffer;
+        if (wanted <= 256) break;
+        wanted /= 2;
+        if (wanted < 256) wanted = 256;
+    }
+    return nullptr;
+}
+
 // ESPAsyncWebServer's stock AsyncProgmemResponse sizes each temporary send
 // allocation to the complete currently available TCP window. After TLS, BLE
 // and DERP have fragmented internal RAM, that window can be larger than the
@@ -134,11 +148,7 @@ public:
             wanted = WEB_FLASH_STREAM_CHUNK_BYTES;
         }
 
-        uint8_t* buffer = nullptr;
-        while (wanted >= 256 && buffer == nullptr) {
-            buffer = static_cast<uint8_t*>(malloc(wanted));
-            if (buffer == nullptr) wanted /= 2;
-        }
+        uint8_t* buffer = allocateBoundedResponseBuffer(wanted);
         if (buffer == nullptr) return 0;
 
         memcpy_P(buffer, content_ + _sentLength, wanted);
@@ -221,11 +231,7 @@ public:
         }
 
         size_t wanted = min(remaining, min(space, WEB_FLASH_STREAM_CHUNK_BYTES));
-        uint8_t* buffer = nullptr;
-        while (wanted >= 256 && buffer == nullptr) {
-            buffer = static_cast<uint8_t*>(malloc(wanted));
-            if (buffer == nullptr) wanted /= 2;
-        }
+        uint8_t* buffer = allocateBoundedResponseBuffer(wanted);
         if (buffer == nullptr) return 0;
 
         const size_t copied = web_log_snapshot_read(cursor_, _sentLength, buffer, wanted);
