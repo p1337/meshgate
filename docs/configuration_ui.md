@@ -132,6 +132,11 @@ footer so the two destinations cannot diverge.
     current release reports `NO UPDATE NEEDED` without interruption or reboot;
     an available release pauses the nonessential services, installs into the
     inactive slot and performs one ordinary reboot.
+  * Shows an animated OTA status immediately after the button press. During the
+    metadata check, chat remains available. Once installation pauses runtime
+    services, the chat column changes to **Service disabled**, explains the
+    firmware maintenance and keeps reconnecting until the restarted control
+    page is available.
   * Downloads only the production ESP32-S3 image named by the official release
     metadata and verifies TLS, board identity, size and SHA-256 before activation.
 * **Community Card:**

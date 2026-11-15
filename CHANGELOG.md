@@ -4,6 +4,17 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.26-beta.6] - 2026-11-15
+
+- Gives immediate, persistent visual feedback after **Check & Install**: the
+  OTA status and button show an animated working state instead of the
+  misleading `Ready` label.
+- Replaces the unavailable message panel with a **Service disabled** maintenance
+  state while runtime services are paused, then reconnects and reloads the
+  control page automatically after the update restart.
+- Keeps the message service active during the metadata-only release check and
+  reports `NO UPDATE NEEDED` without showing a maintenance interruption.
+
 ## [v0.7.26-beta.5] - 2026-11-15
 
 - Recognizes the untouched Meshtastic public broker profile as a factory

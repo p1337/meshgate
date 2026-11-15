@@ -1263,6 +1263,12 @@ const char index_html[] PROGMEM = R"rawliteral(
     let chatPollTimer = null;
     let chatMetaTimer = null;
     let chatLocalNode = null;
+    let otaMaintenanceActive = false;
+    let officialOtaUserStarted = false;
+    let officialOtaSawBusy = false;
+    let officialOtaDisconnected = false;
+    let officialOtaStartedAt = 0;
+    let officialOtaPollTimer = null;
 
     const meshGateTabs = ['connection', 'remote', 'services', 'system'];
 
@@ -1298,6 +1304,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     function setChatLoadingState(state, message) {
+      if (otaMaintenanceActive && state !== 'maintenance') return;
       const panel = document.getElementById('chat-panel');
       const loading = document.getElementById('chat-loading');
       const text = document.getElementById('chat-loading-text');
@@ -1306,6 +1313,26 @@ const char index_html[] PROGMEM = R"rawliteral(
       panel.classList.toggle('loading', active);
       loading.classList.toggle('error', state === 'error');
       if (message) text.innerText = message;
+    }
+
+    function enterOtaMaintenanceMode() {
+      if (!otaMaintenanceActive) {
+        otaMaintenanceActive = true;
+        const heading = document.querySelector('.chat-heading');
+        const identity = document.getElementById('chat-identity');
+        if (heading) heading.innerText = 'Service disabled';
+        if (identity) identity.innerText = 'Firmware maintenance';
+      }
+      setChatLoadingState('maintenance', 'Firmware update in progress. Mesh messages will return automatically after MeshGate reconnects.');
+    }
+
+    function leaveOtaMaintenanceMode() {
+      if (!otaMaintenanceActive) return;
+      otaMaintenanceActive = false;
+      const heading = document.querySelector('.chat-heading');
+      if (heading) heading.innerText = 'Mesh messages';
+      setChatLoadingState(chatInitialLoadComplete ? 'ready' : 'loading', chatInitialLoadComplete ? '' : 'Chat wird geladen …');
+      refreshChatMetadata().catch(() => {});
     }
 
     function chatUtf8Length(value) {
@@ -2911,14 +2938,18 @@ const char index_html[] PROGMEM = R"rawliteral(
       const btn = document.getElementById('btn-ota-update');
       const bar = document.getElementById('ota-progress-bar');
       const labels = {
-        idle: 'Ready', checking: 'Checking GitHub', current: 'NO UPDATE NEEDED',
+        idle: 'Ready to check', checking: 'Checking release', current: 'NO UPDATE NEEDED',
         available: 'Update available',
         downloading: 'Downloading', verifying: 'Verifying', installing: 'Installing',
         rebooting: 'Rebooting', failed: 'Failed', unsupported: 'Unsupported'
       };
-      pill.innerText = labels[status.state] || status.state || 'Unknown';
+      const working = !!status.busy || ['checking','downloading','verifying','installing','rebooting'].includes(status.state) ||
+        (officialOtaUserStarted && status.state === 'available');
+      pill.innerText = status.state === 'idle' && working
+        ? labels.checking
+        : (labels[status.state] || status.state || 'Unknown');
       pill.className = 'status-pill ' + (status.state === 'failed' ? 'error' :
-        (status.state === 'available' || status.busy ? 'waiting' : 'connected'));
+        (status.state === 'available' || working ? 'waiting' : 'connected')) + (working ? ' working' : '');
       const betaChannel = status.channel === 'beta';
       document.getElementById('view-ota-channel').innerText = betaChannel ? 'Beta · UNSTABLE' : 'Stable';
       document.getElementById('view-ota-channel').style.color = betaChannel ? 'var(--yellow)' : 'var(--green)';
@@ -2927,20 +2958,26 @@ const char index_html[] PROGMEM = R"rawliteral(
       betaWarning.innerText = betaChannel
         ? 'UNSTABLE: This device follows beta and release-candidate firmware intended for administrator testing.'
         : 'UNSTABLE firmware is currently running. The device is back on the stable channel and will advance when a newer stable release is available.';
-      btn.disabled = !!status.busy || !status.supported;
+      btn.disabled = working || !status.supported;
       if (status.latest_version) document.getElementById('view-ota-latest').innerText = status.latest_version;
       if (status.changelog_url) {
         document.getElementById('view-ota-version').href = status.changelog_url;
         document.getElementById('view-ota-latest').href = status.changelog_url;
       }
-      btn.innerText = status.state === 'available' && status.latest_version
-        ? 'Install ' + status.latest_version
-        : 'Check & Install Latest ' + (betaChannel ? 'Candidate' : 'Stable Release');
+      btn.innerText = working
+        ? 'Update in progress…'
+        : (status.state === 'available' && status.latest_version
+          ? 'Install ' + status.latest_version
+          : 'Check & Install Latest ' + (betaChannel ? 'Candidate' : 'Stable Release'));
       const total = Number(status.total_bytes || 0);
       const downloaded = Number(status.downloaded_bytes || 0);
       const percent = total > 0 ? Math.min(100, Math.round(downloaded * 100 / total)) : 0;
       bar.style.width = (status.state === 'verifying' || status.state === 'installing' || status.state === 'rebooting' ? 100 : percent) + '%';
       bar.className = 'progress-fill ' + (status.state === 'failed' ? 'progress-red' : 'progress-green');
+      if (status.state === 'idle' && !officialOtaUserStarted) hideAlert('ota-alert');
+      if (status.state === 'checking') showAlert('ota-alert', 'info', 'Checking the selected official release channel. Services are still running.');
+      if (status.state === 'downloading') showAlert('ota-alert', 'info', 'Firmware download is running. The control page may be temporarily unreachable.');
+      if (status.state === 'verifying' || status.state === 'installing') showAlert('ota-alert', 'info', 'Firmware is being verified and installed into the inactive slot.');
       if (status.state === 'failed') showAlert('ota-alert', 'error', status.error || 'Official update failed.');
       if (status.state === 'current') showAlert('ota-alert', 'success', 'NO UPDATE NEEDED — MeshGate already runs the selected channel release. No service was stopped and no reboot is required.');
       if (status.state === 'available') showAlert('ota-alert', 'warning', status.channel_reconcile_pending
@@ -2949,29 +2986,119 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (status.state === 'rebooting') showAlert('ota-alert', 'success', 'Official release verified and installed. MeshGate is rebooting now.');
     }
 
+    function scheduleOfficialOtaPoll(delay) {
+      if (officialOtaPollTimer) clearTimeout(officialOtaPollTimer);
+      officialOtaPollTimer = setTimeout(pollOfficialOta, delay);
+    }
+
+    function showOfficialOtaReconnectState() {
+      const pill = document.getElementById('view-ota-status');
+      const btn = document.getElementById('btn-ota-update');
+      pill.innerText = 'Updating · reconnecting';
+      pill.className = 'status-pill waiting working';
+      btn.disabled = true;
+      btn.innerText = 'Update in progress…';
+      showAlert('ota-alert', 'info', 'MeshGate paused its web service for the firmware update. This page reconnects automatically after the device restarts.');
+      enterOtaMaintenanceMode();
+    }
+
+    function finishOfficialOtaUi() {
+      if (officialOtaPollTimer) clearTimeout(officialOtaPollTimer);
+      officialOtaPollTimer = null;
+      officialOtaUserStarted = false;
+      officialOtaSawBusy = false;
+      officialOtaDisconnected = false;
+      officialOtaStartedAt = 0;
+      leaveOtaMaintenanceMode();
+    }
+
     function pollOfficialOta() {
-      fetch('/api/ota/official', { cache: 'no-store' }).then(r => r.json()).then(status => {
-        updateOfficialOtaDisplay(status);
-        if (status.busy) setTimeout(pollOfficialOta, 1000);
-      }).catch(() => {
-        showAlert('ota-alert', 'info', 'MeshGate may be rebooting. Reopen this page in about 15 seconds.');
-      });
+      fetch('/api/ota/official', { cache: 'no-store' })
+        .then(r => {
+          if (!r.ok) throw new Error('MeshGate returned HTTP ' + r.status);
+          return r.json();
+        })
+        .then(status => {
+          const elapsed = Date.now() - officialOtaStartedAt;
+          const activeState = ['checking','downloading','verifying','installing','rebooting'].includes(status.state) ||
+            (officialOtaUserStarted && status.state === 'available');
+          if (status.busy || activeState) officialOtaSawBusy = true;
+
+          // The worker starts asynchronously. Do not let its short initial idle
+          // window erase the visible response to the user's button press.
+          if (officialOtaUserStarted && status.state === 'idle' && !officialOtaSawBusy && elapsed < 12000) {
+            scheduleOfficialOtaPoll(700);
+            return;
+          }
+
+          if (officialOtaUserStarted && ['available','downloading','verifying','installing','rebooting'].includes(status.state)) {
+            enterOtaMaintenanceMode();
+          }
+          updateOfficialOtaDisplay(status);
+
+          if (status.busy || activeState) {
+            scheduleOfficialOtaPoll(status.state === 'available' ? 500 : 1000);
+            return;
+          }
+          if (status.state === 'failed' || status.state === 'current' || status.state === 'unsupported') {
+            finishOfficialOtaUi();
+            return;
+          }
+          if (officialOtaUserStarted && (officialOtaDisconnected || officialOtaSawBusy)) {
+            window.location.reload();
+            return;
+          }
+          finishOfficialOtaUi();
+        })
+        .catch(() => {
+          if (!officialOtaUserStarted) return;
+          officialOtaDisconnected = true;
+          showOfficialOtaReconnectState();
+          if (Date.now() - officialOtaStartedAt > 22 * 60 * 1000) {
+            finishOfficialOtaUi();
+            showAlert('ota-alert', 'error', 'MeshGate did not return within the update window. Reconnect to the device and check its firmware status.');
+            return;
+          }
+          scheduleOfficialOtaPoll(2000);
+        });
     }
 
     function startOfficialOta() {
       const btn = document.getElementById('btn-ota-update');
+      const pill = document.getElementById('view-ota-status');
+      if (officialOtaPollTimer) clearTimeout(officialOtaPollTimer);
+      officialOtaUserStarted = true;
+      officialOtaSawBusy = false;
+      officialOtaDisconnected = false;
+      officialOtaStartedAt = Date.now();
       btn.disabled = true;
+      btn.innerText = 'Checking release…';
+      pill.innerText = 'Checking release';
+      pill.className = 'status-pill waiting working';
       document.getElementById('ota-progress-bar').style.width = '0%';
-      showAlert('ota-alert', 'info', 'Checking the official GitHub release...');
+      showAlert('ota-alert', 'info', 'Checking the selected official release channel. Services are still running.');
       fetch('/api/ota/official', { method: 'POST' })
         .then(r => r.json().then(body => ({ ok: r.ok, body: body })))
         .then(result => {
-          if (!result.ok || !result.body.success) throw new Error(result.body.error || 'The update could not be started.');
+          if (!result.ok || !result.body.success) {
+            const error = new Error(result.body.error || 'The update could not be started.');
+            error.definitive = true;
+            throw error;
+          }
           pollOfficialOta();
         })
         .catch(err => {
-          btn.disabled = false;
-          showAlert('ota-alert', 'error', err.message || 'The update could not be started.');
+          if (err.definitive) {
+            finishOfficialOtaUi();
+            btn.disabled = false;
+            pill.innerText = 'Failed';
+            pill.className = 'status-pill error';
+            showAlert('ota-alert', 'error', err.message || 'The update could not be started.');
+            return;
+          }
+          officialOtaDisconnected = true;
+          showOfficialOtaReconnectState();
+          scheduleOfficialOtaPoll(2000);
         });
     }
 

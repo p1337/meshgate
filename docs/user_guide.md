@@ -174,6 +174,13 @@ Automatic stable updates are enabled by default. To opt out or update manually:
    selected GitHub Pages channel, validates TLS, board identity, image size and
    SHA-256, writes the inactive slot and reboots.
 
+The OTA card shows a spinner from the moment the manual action is accepted.
+The message panel remains active while MeshGate only checks release metadata.
+When an image is available and runtime services pause for installation, the
+panel instead shows **Service disabled** and the browser reconnects
+automatically after MeshGate restarts. Keep that browser tab open; no manual
+refresh is normally required.
+
 Stable is the default channel. Every device owner may enable or disable
 **Beta firmware · UNSTABLE** directly in the System tab; no administrator key
 is required. Beta and release-candidate firmware may contain untested changes,
