@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="820" height="603" viewBox="0 0 820 603" role="img"
+     aria-labelledby="title description">
+  <title id="title">Arduino Nano ESP32 first-flash bridge</title>
+  <desc id="description">Arduino Nano ESP32 with a red dashed temporary bridge between the GND and B1 pads.</desc>
+
+  <defs>
+    <pattern id="white-hatch" width="6" height="6" patternUnits="userSpaceOnUse"
+             patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="rgba(255,255,255,0.15)"/>
+      <line x1="0" y1="0" x2="0" y2="6" stroke="#ffffff" stroke-width="2"/>
+    </pattern>
+    <filter id="label-shadow" x="-20%" y="-30%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <image href="arduino-nano-esp32.png" xlink:href="arduino-nano-esp32.png"
+         x="0" y="0" width="820" height="603"/>
+
+  <!-- Official Nano ESP32 edge order at this end: VIN, GND, B1, VBUS, A7. -->
+  <g aria-label="Temporary B1 to GND bridge">
+    <ellipse cx="675" cy="190" rx="13" ry="9" transform="rotate(-43 675 190)"
+             fill="url(#white-hatch)" stroke="#ffffff" stroke-width="2"/>
+    <ellipse cx="648" cy="216" rx="13" ry="9" transform="rotate(-43 648 216)"
+             fill="url(#white-hatch)" stroke="#ffffff" stroke-width="2"/>
+
+    <path d="M 680 185
+             C 735 182, 777 216, 780 265
+             C 783 316, 752 343, 713 333
+             C 675 323, 675 270, 650 222"
+          fill="none" stroke="#ef1b19" stroke-width="7" stroke-linecap="round"
+          stroke-linejoin="round" stroke-dasharray="13 11"/>
+
+    <circle cx="675" cy="190" r="5" fill="#ef1b19" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="648" cy="216" r="5" fill="#ef1b19" stroke="#ffffff" stroke-width="2"/>
+
+    <g filter="url(#label-shadow)" font-family="'JetBrains Mono', Consolas, monospace"
+       font-size="18" font-weight="700">
+      <path d="M 702 174 L 681 187" fill="none" stroke="#111820" stroke-width="3"/>
+      <rect x="702" y="151" width="66" height="36" rx="7" fill="#ffffff" stroke="#111820" stroke-width="3"/>
+      <text x="735" y="175" text-anchor="middle" fill="#111820">GND</text>
+
+      <path d="M 681 237 L 653 220" fill="none" stroke="#111820" stroke-width="3"/>
+      <rect x="681" y="223" width="55" height="36" rx="7" fill="#ffffff" stroke="#111820" stroke-width="3"/>
+      <text x="708.5" y="247" text-anchor="middle" fill="#111820">B1</text>
+    </g>
+  </g>
+</svg>
