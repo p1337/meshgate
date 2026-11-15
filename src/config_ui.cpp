@@ -52,7 +52,12 @@ constexpr uint8_t LOW_MEMORY_NORMAL_WEB_REQUESTS = 2;
 constexpr uint8_t LOW_MEMORY_RESERVED_WEB_REQUESTS = 2;
 constexpr uint32_t WEB_LOW_FREE_HEAP_BYTES = 32 * 1024;
 constexpr uint32_t WEB_LOW_LARGEST_BLOCK_BYTES = 16 * 1024;
-constexpr size_t WEB_FLASH_STREAM_CHUNK_BYTES = 1024;
+// One 1 KiB block per TCP acknowledgement makes the 30 KiB compressed control
+// page take many seconds because receivers legitimately use delayed ACKs for
+// sub-MSS writes. Four KiB stays safely below the low-memory largest-block
+// threshold, spans multiple TCP segments (prompting immediate ACKs), and still
+// backs down to 256 bytes when fragmented heap cannot provide the full block.
+constexpr size_t WEB_FLASH_STREAM_CHUNK_BYTES = 4096;
 constexpr uint32_t CHAT_SEND_MIN_INTERVAL_MS = 1500;
 std::atomic<uint32_t> s_last_chat_send_ms{0};
 
@@ -486,7 +491,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   body { font-family:var(--sans); padding:16px; max-width:680px; margin:auto; background:var(--bg); color:var(--text); }
   .chat-panel { position:fixed; inset:0 auto 0 0; z-index:35; display:none; width:390px; padding:12px; border-right:1px solid var(--border); background:rgba(10,12,16,.985); box-shadow:12px 0 32px rgba(0,0,0,.35); }
   .chat-panel.ready { display:flex; flex-direction:column; }
-  .chat-header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 4px 10px; border-bottom:1px solid var(--border); }
+  .chat-header { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 4px 10px; border-bottom:1px solid var(--border); }
   .chat-heading { color:var(--accent); font:700 14px var(--mono); letter-spacing:1px; text-transform:uppercase; }
   .chat-identity { color:var(--dim); font:10px var(--mono); text-align:right; max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .chat-close { display:none; width:auto; margin:0; padding:4px 8px; color:var(--text); background:transparent; }
@@ -497,13 +502,13 @@ const char index_html[] PROGMEM = R"rawliteral(
   .chat-loading.error .chat-loading-spinner { display:none; }
   .chat-loading.error { color:var(--yellow); }
   @keyframes chat-loading-spin { to { transform:rotate(360deg); } }
-  .chat-channels { display:flex; gap:6px; padding:10px 0; overflow-x:auto; scrollbar-width:thin; }
-  .chat-channel { position:relative; flex:0 0 auto; width:auto; min-width:78px; margin:0; padding:7px 24px 7px 9px; border-color:var(--border); color:var(--dim); background:var(--panel); text-align:left; font-size:11px; }
+  .chat-channels { flex:0 0 auto; display:flex; gap:6px; min-height:44px; padding:10px 0; overflow-x:auto; overflow-y:visible; scrollbar-width:thin; }
+  .chat-channel { position:relative; flex:0 0 auto; width:auto; min-width:78px; min-height:30px; margin:0; padding:7px 24px 7px 9px; border-color:var(--border); color:var(--dim); background:var(--panel); text-align:left; font-size:11px; line-height:1.2; white-space:nowrap; }
   .chat-channel.active { color:#07110b; border-color:var(--accent); background:var(--accent); }
   .chat-unread { position:absolute; top:-6px; right:-5px; display:none; min-width:20px; height:20px; padding:0 5px; align-items:center; justify-content:center; border:2px solid var(--bg); border-radius:12px; color:#fff; background:var(--red); font:700 10px var(--mono); }
   .chat-unread.visible { display:flex; }
-  .chat-state { min-height:18px; margin:0 2px 6px; color:var(--dim); font:10px var(--mono); }
-  .chat-messages { flex:1 1 auto; min-height:180px; overflow-y:auto; padding:2px 4px 10px; overscroll-behavior:contain; }
+  .chat-state { flex:0 0 auto; min-height:18px; margin:0 2px 6px; color:var(--dim); font:10px var(--mono); }
+  .chat-messages { flex:1 1 0; min-height:0; overflow-y:auto; padding:2px 4px 10px; overscroll-behavior:contain; }
   .chat-empty { margin:28px 8px; color:var(--muted); font:12px/1.5 var(--mono); text-align:center; }
   .chat-message { max-width:88%; margin:8px 0; padding:9px 10px; border:1px solid var(--border); border-radius:5px; background:var(--panel2); }
   .chat-message.sent { margin-left:auto; border-color:rgba(94,237,151,.45); background:rgba(94,237,151,.06); }

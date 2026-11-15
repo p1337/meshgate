@@ -172,10 +172,11 @@ footer so the two destinations cannot diverge.
    * **`GET /`**: Serves the single-page HTML/CSS/JS application directly from
      flash. Browsers advertising gzip receive a deterministic pre-compressed
      build asset; older clients receive the raw `PROGMEM` fallback. A bounded
-     1 KiB flash streamer deliberately avoids sizing temporary allocations to
-     the complete TCP send window, so the page can still make progress when
-     TLS/BLE/VPN activity has fragmented internal RAM. Neither path allocates
-     a page-sized runtime buffer.
+     4 KiB flash streamer deliberately avoids sizing temporary allocations to
+     the complete TCP send window and automatically backs down as far as 256
+     bytes under fragmented heap. Four KiB spans multiple TCP segments so
+     normal browsers acknowledge promptly instead of applying delayed ACK to
+     every sub-MSS block. Neither path allocates a page-sized runtime buffer.
    * **`GET /assets/meshgate-logo.svg`**: Serves the official vector logo directly from embedded flash with a versioned cache key; no filesystem mount or external network is required.
    * **`GET /config`**: Returns current settings as JSON, including WiFi/BLE/MQTT/WireGuard values plus `tailscale_enabled`, `tailscale_supported`, `tailscale_device_name`, and `tailscale_has_auth_key`. Secret WiFi, BLE PIN, WireGuard, OTA, and Tailscale values are never returned. `ble_has_pin` reports only whether a PIN is stored.
    * **`GET /status`**: Returns unified live diagnostic and telemetry JSON polled every 7 seconds by the client: contains `uptime_seconds`, `heap` (free, min_free, max_alloc), `wifi` (connected, is_ap_mode, ip, rssi, mdns_host), `ble` (connected, rx_count, tx_count, invalid_count), `tcp` (connected_clients, max_clients, rx_count, tx_count, invalid_count), `traffic` (ble, tcp, mqtt rx/tx/invalid), `queues` (waiting, capacity, dropped for `tcp_to_ble`, `ble_to_tcp`, `mqtt_to_ble`), `stacks` (ble_task, net_task free bytes), and `mqtt` (gateway_enabled, state, radio_proxy_enabled, broker, root, published, received, dropped, invalid).

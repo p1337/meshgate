@@ -4,6 +4,16 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.26-beta.2] - 2026-11-15
+
+- Increased the bounded control-page flash stream from 1 KiB to 4 KiB per TCP
+  acknowledgement. The allocation still backs down under fragmented heap, but
+  normal LAN browsers no longer wait through dozens of delayed ACK cycles
+  before the page's JavaScript can start.
+- Prevented the chat channel row and mailbox state from shrinking underneath
+  retained messages. The message list now owns the flexible scroll area, while
+  channel tabs remain full-height and scroll horizontally when necessary.
+
 ## [v0.7.26-beta.1] - 2026-11-15
 
 - Added an explicit Auto/Manual choice when enabling the MQTT gateway. Auto
