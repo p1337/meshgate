@@ -129,20 +129,21 @@ UDP candidate, producing a repeated handshake loop and no TCP connectivity.
 
 #### Official stable and beta OTA channels
 
-The normal update action never accepts a firmware file or URL. Only the
-separate beta-enrollment setting accepts the write-only administrator key and
-does not retain it in the browser. The update action starts an internal task
-which fetches the selected fixed metadata URL over the embedded Mozilla CA
-bundle. `latest_ota.json` always names the newest stable
-release. `latest_beta_ota.json` names the highest SemVer candidate across stable
-and GitHub pre-releases, so a beta-enrolled device also advances from a release
-candidate to its final stable version. Each feed fixes the production board,
-firmware URL, byte length and SHA-256 digest.
+The normal update action never accepts a firmware file, URL or credential.
+Stable/Beta is a normal device-owner setting; enabling the clearly marked beta
+channel requires an explicit `UNSTABLE` confirmation but no administrator key.
+The update action starts an internal task which fetches the selected fixed
+metadata URL over the embedded Mozilla CA bundle. `latest_ota.json` always
+names the newest stable release. `latest_beta_ota.json` names the highest
+SemVer candidate across stable and GitHub pre-releases, so a beta-enrolled
+device also advances from a release candidate to its final stable version.
+Each feed fixes the production board, firmware URL, byte length and SHA-256
+digest.
 
 Stable is the persistent default. Automatic installation is enabled by default
-with an opt-out in the System tab. Changing beta enrollment in either direction
-requires the write-only OTA administrator key and displays an `UNSTABLE`
-warning. The scheduler starts only in normal connected mode, waits five minutes
+with an opt-out in the System tab. Every device owner can change the channel;
+enabling beta displays an `UNSTABLE` warning and requires confirmation. The
+scheduler starts only in normal connected mode, waits five minutes
 plus deterministic per-device jitter, and checks at six-hour intervals. Setup
 AP mode never runs it. The public Web Flasher consumes stable releases only.
 Installed and available version values link to the repository's newest-first
@@ -150,7 +151,8 @@ technical `CHANGELOG.md`.
 Firmware is streamed into the inactive OTA slot and hashed simultaneously;
 the slot is activated only after all metadata, size and digest checks succeed.
 The older authenticated raw endpoint is retained solely for development and
-recovery and shares a process-wide lock with the official updater.
+recovery, remains protected by its separate write-only device token and shares
+a process-wide lock with the official updater.
 
 `CHANGELOG.md` is the release-note source of truth. The release workflow fails
 when a firmware tag has no matching heading and publishes that technical entry

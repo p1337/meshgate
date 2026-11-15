@@ -4,6 +4,20 @@ Firmware, runtime, security, compatibility, API, build and release-pipeline
 changes are listed newest first. Documentation-only and promotional changes
 are intentionally omitted.
 
+## [v0.7.26] - 2026-11-15
+
+- Added read-back-verified one-click radio preparation for client-proxied MQTT
+  and device telemetry while preserving channel keys and unrelated settings.
+- Fixed MQTT client lifecycle locking that could stall **Save MQTT** and trip
+  the task watchdog, and recognizes the untouched Meshtastic broker profile as
+  a factory default instead of an intentional custom configuration.
+- Fixed incomplete bounded HTTP responses for final fragments below 256 bytes,
+  accelerated control-page delivery and kept channel tabs visible while the
+  retained message list scrolls.
+- Added persistent OTA progress and maintenance feedback, and made
+  Tailscale/MicroLink shutdown wait for confirmed task exits before releasing
+  shared resources during an official update.
+
 ## [v0.7.26-beta.7] - 2026-11-15
 
 - Fixed a reset before official OTA downloads when Tailscale/MicroLink was

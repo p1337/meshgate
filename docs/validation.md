@@ -96,8 +96,9 @@ Complete the applicable checks before promoting a public-beta build:
 - [ ] MQTT TLS and BLE remain connected during ordinary Web UI use.
 - [ ] Official OTA validates metadata, image size and SHA-256, switches slots
       and retains NVS plus mailbox data.
-- [ ] A device without beta enrollment sees only stable metadata; changing beta
-      enrollment fails without the OTA administrator key and succeeds with it.
+- [ ] A device without beta enrollment sees only stable metadata; enabling beta
+      requires the visible `UNSTABLE` confirmation but no administrator key.
+      The separate raw developer/recovery upload remains token-protected.
 - [ ] Automatic OTA defaults on, respects opt-out and never runs in setup AP
       mode. Manual and automatic paths stop no service when current; when an
       image is required they quiesce nonessential services before allocating
